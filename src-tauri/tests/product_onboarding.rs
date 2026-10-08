@@ -1,0 +1,366 @@
+use repuestos_autos::application::catalog::{
+    create_category, create_product, AttributeValueInput, CategoryFieldInput, CreateCategoryInput,
+    CreateProductError, CreateProductInput,
+};
+use repuestos_autos::commands::confirm_sale::{
+    confirm_sale, ConfirmSaleRequest, ConfirmSaleResponse, PaymentInputRequest, RequestedLine,
+};
+use repuestos_autos::infrastructure::sqlite::open_seeded_catalog;
+
+fn create_configured_category(connection: &mut rusqlite::Connection) -> i64 {
+    create_category(
+        connection,
+        CreateCategoryInput {
+            name: "Belts".into(),
+            fields: vec![
+                CategoryFieldInput {
+                    label: "Length".into(),
+                    field_type: "number".into(),
+                    required: true,
+                    options: vec![],
+                },
+                CategoryFieldInput {
+                    label: "Material".into(),
+                    field_type: "option".into(),
+                    required: false,
+                    options: vec!["Rubber".into(), "Polyurethane".into()],
+                },
+            ],
+        },
+    )
+    .unwrap()
+    .category_id
+}
+
+fn valid_product(category_id: i64, definitions: &[(i64, &str)]) -> CreateProductInput {
+    CreateProductInput {
+        sku: "BEL-101".into(),
+        name: "Accessory belt".into(),
+        category_id,
+        purchase_price_centavos: 2_000,
+        sale_price_centavos: 4_500,
+        minimum_sale_price_centavos: 3_500,
+        low_stock_threshold: None,
+        opening_quantity: 6,
+        attribute_values: definitions
+            .iter()
+            .map(|(definition_id, value)| AttributeValueInput {
+                definition_id: *definition_id,
+                value: (*value).into(),
+            })
+            .collect(),
+    }
+}
+
+fn definition_ids(connection: &rusqlite::Connection, category_id: i64) -> Vec<i64> {
+    let mut statement = connection
+        .prepare("SELECT id FROM attribute_definitions WHERE category_id = ?1 ORDER BY id")
+        .unwrap();
+    statement
+        .query_map([category_id], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+}
+
+#[test]
+fn same_name_products_keep_distinct_skus_attributes_and_search_identity() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category = create_configured_category(&mut connection);
+    let definitions = definition_ids(&connection, category);
+    connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (99, ?1, 'Brand', 'text', 1)", [category]).unwrap();
+    let first = create_product(&mut connection, valid_product(category, &[(definitions[0], "1050"), (definitions[1], "Rubber"), (99, "Denso")])).unwrap();
+    let mut second = valid_product(category, &[(definitions[0], "1050"), (definitions[1], "Polyurethane"), (99, "NGK")]);
+    second.sku = "BEL-102".into();
+    let second = create_product(&mut connection, second).unwrap();
+    assert_ne!(first.product_id, second.product_id);
+    let results = repuestos_autos::catalog::search_active_products(&connection, "accessory").unwrap();
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().any(|p| p.product_id == first.product_id && p.sku == "BEL-101"));
+    assert!(results.iter().any(|p| p.product_id == second.product_id && p.sku == "BEL-102"));
+    for (id, material) in [(first.product_id, "Rubber"), (second.product_id, "Polyurethane")] {
+        assert_eq!(connection.query_row("SELECT option_value FROM product_attribute_values WHERE product_id = ?1 AND definition_id = ?2", rusqlite::params![id, definitions[1]], |row| row.get::<_, String>(0)).unwrap(), material);
+    }
+    let mut empty = valid_product(category, &[(definitions[0], "1050"), (99, "Denso")]);
+    empty.sku = "BEL-103".into();
+    empty.name = "   ".into();
+    assert!(create_product(&mut connection, empty).is_err());
+}
+
+#[test]
+fn creation_reports_duplicate_sku_for_legacy_padding_across_archived_categories() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute("UPDATE products SET sku = '  fLt-001  ', active = 0 WHERE id = 1", []).unwrap();
+    let mut input = valid_product(2, &[]);
+    input.sku = " FLT-001 ".into();
+    assert_eq!(create_product(&mut connection, input).unwrap_err(), CreateProductError::DuplicateSku);
+}
+
+#[test]
+fn onboarding_hides_retired_fields_while_catalog_listing_preserves_history() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let ids = definition_ids(&connection, category_id);
+    connection
+        .execute("UPDATE attribute_definitions SET active = 0 WHERE id = ?1", [ids[1]])
+        .unwrap();
+
+    let catalog = repuestos_autos::application::catalog::list_categories(&connection).unwrap();
+    let onboarding = repuestos_autos::commands::onboarding::list_categories(&connection).unwrap();
+    let onboarding = serde_json::to_value(onboarding).unwrap();
+
+    assert_eq!(catalog[0].fields.len(), 2, "Catalog keeps historical fields");
+    assert_eq!(onboarding["categories"][0]["fields"].as_array().unwrap().len(), 1);
+    assert_eq!(onboarding["categories"][0]["fields"][0]["definition_id"], ids[0]);
+}
+
+#[test]
+fn creates_product_attributes_balance_and_opening_movement_atomically() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let definitions = definition_ids(&connection, category_id);
+
+    let result = create_product(
+        &mut connection,
+        valid_product(
+            category_id,
+            &[(definitions[0], "1050.5"), (definitions[1], "Rubber")],
+        ),
+    )
+    .unwrap();
+
+    let persisted = connection
+        .query_row(
+            "SELECT p.active, p.purchase_price_centavos, p.list_price_centavos, p.minimum_unit_price_centavos, p.low_stock_threshold, b.quantity, m.quantity_delta, m.movement_type, length(m.occurred_at) > 0, m.sale_id IS NULL, COUNT(v.definition_id) FROM products p JOIN stock_balances b ON b.product_id = p.id JOIN inventory_movements m ON m.product_id = p.id LEFT JOIN product_attribute_values v ON v.product_id = p.id WHERE p.id = ?1 GROUP BY p.id",
+            [result.product_id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?, row.get::<_, i64>(6)?, row.get::<_, String>(7)?, row.get::<_, bool>(8)?, row.get::<_, bool>(9)?, row.get::<_, i64>(10)?)),
+        )
+        .unwrap();
+
+    assert_eq!(
+        persisted,
+        (1, 2_000, 4_500, 3_500, 1, 6, 6, "opening_stock".into(), true, true, 2)
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT content FROM catalog_product_search WHERE rowid = ?1",
+                [result.product_id],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+        "bel-101 accessory belt belts 1050.5 rubber"
+    );
+    assert!(connection
+        .execute(
+            "UPDATE inventory_movements SET quantity_delta = 1 WHERE product_id = ?1",
+            [result.product_id],
+        )
+        .is_err());
+}
+
+#[test]
+fn missing_required_field_persists_nothing() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+
+    let error = create_product(&mut connection, valid_product(category_id, &[])).unwrap_err();
+
+    assert_eq!(error, CreateProductError::MissingRequiredField);
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM products WHERE sku = 'BEL-101'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn rejects_duplicate_sku_invalid_price_quantity_number_and_option_with_stable_errors() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let definitions = definition_ids(&connection, category_id);
+    let valid = valid_product(category_id, &[(definitions[0], "1050")]);
+    create_product(&mut connection, valid).unwrap();
+
+    let cases = [
+        (
+            valid_product(category_id, &[(definitions[0], "1050")]),
+            CreateProductError::DuplicateSku,
+        ),
+        (
+            CreateProductInput {
+                sku: "BEL-102".into(),
+                purchase_price_centavos: 0,
+                sale_price_centavos: 4_500,
+                minimum_sale_price_centavos: 0,
+                ..valid_product(category_id, &[(definitions[0], "1050")])
+            },
+            CreateProductError::InvalidPurchasePrice,
+        ),
+        (
+            CreateProductInput {
+                sku: "BEL-106".into(),
+                purchase_price_centavos: 2_000,
+                sale_price_centavos: 4_500,
+                minimum_sale_price_centavos: 5_000,
+                ..valid_product(category_id, &[(definitions[0], "1050")])
+            },
+            CreateProductError::MinimumSalePriceExceedsSalePrice,
+        ),
+        (
+            CreateProductInput {
+                sku: "BEL-103".into(),
+                opening_quantity: 0,
+                ..valid_product(category_id, &[(definitions[0], "1050")])
+            },
+            CreateProductError::InvalidOpeningQuantity,
+        ),
+        (
+            CreateProductInput {
+                sku: "BEL-103-THRESHOLD".into(),
+                low_stock_threshold: Some(0),
+                ..valid_product(category_id, &[(definitions[0], "1050")])
+            },
+            CreateProductError::InvalidLowStockThreshold,
+        ),
+        (
+            CreateProductInput {
+                sku: "BEL-104".into(),
+                ..valid_product(category_id, &[(definitions[0], "wide")])
+            },
+            CreateProductError::InvalidAttributeValueForField(
+                repuestos_autos::domain::catalog::AttributeValueFailure {
+                    definition_id: definitions[0],
+                    reason: repuestos_autos::domain::catalog::AttributeValueFailureReason::InvalidNumber,
+                },
+            ),
+        ),
+        (
+            CreateProductInput {
+                sku: "BEL-105".into(),
+                ..valid_product(
+                    category_id,
+                    &[(definitions[0], "1050"), (definitions[1], "Leather")],
+                )
+            },
+            CreateProductError::InvalidAttributeValueForField(
+                repuestos_autos::domain::catalog::AttributeValueFailure {
+                    definition_id: definitions[1],
+                    reason: repuestos_autos::domain::catalog::AttributeValueFailureReason::InvalidOption,
+                },
+            ),
+        ),
+        (
+            valid_product(category_id, &[(999, "unknown")]),
+            CreateProductError::InvalidAttributeValue,
+        ),
+    ];
+
+    for (input, expected) in cases {
+        assert_eq!(
+            create_product(&mut connection, input).unwrap_err(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn create_product_command_returns_only_safe_field_validation_detail() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let definition_id = definition_ids(&connection, category_id)[0];
+    let response = repuestos_autos::commands::onboarding::create_product(
+        &mut connection,
+        CreateProductInput {
+            sku: "BEL-INVALID".into(),
+            ..valid_product(category_id, &[(definition_id, "not-a-number")])
+        },
+    )
+    .unwrap();
+    let json = serde_json::to_value(response).unwrap();
+    assert_eq!(json["kind"], "error");
+    assert_eq!(json["code"], "invalid_attribute_value");
+    assert_eq!(json["message"], "A category field value is invalid.");
+    assert_eq!(json["field_error"]["definition_id"], definition_id);
+    assert_eq!(json["field_error"]["reason"], "invalid_number");
+    assert!(!json.to_string().contains("not-a-number"));
+}
+
+#[test]
+fn rolls_back_product_when_opening_movement_cannot_be_written() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let definitions = definition_ids(&connection, category_id);
+    connection
+        .execute_batch("CREATE TRIGGER reject_opening BEFORE INSERT ON inventory_movements WHEN new.movement_type = 'opening_stock' BEGIN SELECT RAISE(ABORT, 'test failure'); END;")
+        .unwrap();
+
+    let error = create_product(
+        &mut connection,
+        valid_product(category_id, &[(definitions[0], "1050")]),
+    )
+    .unwrap_err();
+
+    assert_eq!(error, CreateProductError::Persistence);
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM products WHERE sku = 'BEL-101'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn onboarded_product_is_searchable_and_can_complete_fixed_price_checkout() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let definitions = definition_ids(&connection, category_id);
+    let product = create_product(
+        &mut connection,
+        valid_product(
+            category_id,
+            &[(definitions[0], "1050"), (definitions[1], "Polyurethane")],
+        ),
+    )
+    .unwrap();
+
+    for query in ["BEL-101", "Accessory", "Belts", "Polyurethane"] {
+        let results = repuestos_autos::catalog::search_active_products(&connection, query).unwrap();
+        assert_eq!(results[0].product_id, product.product_id, "query {query}");
+        assert_eq!(results[0].available_quantity, 6);
+        assert_eq!(results[0].sale_price_centavos, 4_500);
+            assert_eq!(results[0].minimum_sale_price_centavos, 3_500);
+        assert_eq!(results[0].purchase_price_centavos, Some(2_000));
+    }
+
+    let response = confirm_sale(
+        &mut connection,
+        ConfirmSaleRequest {
+            request_id: "550e8400-e29b-41d4-a716-446655440060".into(),
+            lines: vec![RequestedLine {
+                product_id: product.product_id,
+                quantity: 2,
+                captured_unit_price_centavos: 4_500,
+                captured_revision: 0,
+                final_unit_price_centavos: None,
+                acknowledged_price_centavos: None,
+                acknowledged_revision: None,
+            }],
+            payment: PaymentInputRequest {
+                amount_tendered_centavos: None,
+                qr_applied_centavos: Some(9_000),
+            },
+        },
+    )
+    .unwrap();
+    let ConfirmSaleResponse::Success(summary) = response else {
+        panic!("expected confirmed sale");
+    };
+    assert_eq!(summary.lines[0].unit_price_centavos, 4_500);
+    assert_eq!(summary.total_centavos, 9_000);
+}

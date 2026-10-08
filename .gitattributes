@@ -1,0 +1,8 @@
+# Preserve vendored project skills byte-for-byte with their upstream sources.
+.agents/skills/** -whitespace
+.agents/licenses/*.txt -whitespace
+.claude/skills/** -whitespace
+.pi/skills/** -whitespace
+
+# Keep the Cargo manifest LF on Windows, regardless of core.autocrlf.
+/src-tauri/Cargo.toml text eol=lf

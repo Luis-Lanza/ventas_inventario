@@ -1,0 +1,555 @@
+import type {
+  SalesHistoryDetail,
+  SalesHistorySummary,
+} from "../../commands/sales-history.ts";
+
+export type CorrectionValidation = {
+  message: string;
+  focus_target: string | null;
+};
+
+export type ReturnIntent = {
+  sale_id: number;
+  request_id: string;
+  lines: Record<number, string>;
+  modal_open: boolean;
+  status: "open" | "pending" | "error" | "reload_requested";
+  error: string | null;
+  validation: CorrectionValidation | null;
+};
+
+export type CancellationIntent = {
+  sale_id: number;
+  request_id: string;
+  reason: string;
+  confirmed: boolean;
+  modal_open: boolean;
+  status: "open" | "pending" | "error" | "reload_requested";
+  error: string | null;
+  validation: CorrectionValidation | null;
+};
+
+export type HistoryState = {
+  view: "list" | "detail";
+  status: "idle" | "loading" | "ready" | "empty" | "error";
+  sales: SalesHistorySummary[];
+  has_more: boolean;
+  selected_id: number | null;
+  detail: SalesHistoryDetail | null;
+  message: string | null;
+  return_intent: ReturnIntent | null;
+  cancellation_intent: CancellationIntent | null;
+};
+
+export const initialHistoryState: HistoryState = {
+  view: "list",
+  status: "idle",
+  sales: [],
+  has_more: false,
+  selected_id: null,
+  detail: null,
+  message: null,
+  return_intent: null,
+  cancellation_intent: null,
+};
+
+export type HistoryAction =
+  | { type: "list_started" }
+  | { type: "list_loaded"; sales: SalesHistorySummary[]; has_more: boolean }
+  | { type: "list_failed"; message: string }
+  | { type: "detail_started"; sale_id: number }
+  | { type: "detail_loaded"; detail: SalesHistoryDetail }
+  | { type: "detail_failed"; message: string }
+  | { type: "return_intent_opened"; request_id: string }
+  | { type: "return_line_selected"; sale_line_id: number; selected: boolean }
+  | { type: "return_quantity_changed"; sale_line_id: number; value: string }
+  | { type: "return_modal_closed" }
+  | { type: "return_submit_started" }
+  | { type: "return_submit_failed"; request_id: string; message: string }
+  | { type: "return_submit_succeeded"; request_id: string }
+  | { type: "cancellation_intent_opened"; request_id: string }
+  | { type: "cancellation_reason_changed"; value: string }
+  | { type: "cancellation_confirmation_changed"; confirmed: boolean }
+  | { type: "cancellation_confirmation_requested" }
+  | { type: "cancellation_modal_closed" }
+  | { type: "cancellation_intent_closed" }
+  | { type: "cancellation_submit_started" }
+  | { type: "cancellation_submit_failed"; request_id: string; message: string }
+  | { type: "cancellation_submit_succeeded"; request_id: string }
+  | { type: "back_to_list" };
+
+const returnableLine = (detail: SalesHistoryDetail, saleLineId: number) =>
+  detail.lines.find((line) => line.sale_line_id === saleLineId);
+
+const detailReloadFailure = "No se pudo cargar el detalle de venta. Recargá nuevamente.";
+
+export function canOpenReturn(state: HistoryState): boolean {
+  return (
+    state.return_intent === null &&
+    state.cancellation_intent === null &&
+    state.detail?.status === "confirmed" &&
+    state.detail.lines.some(
+      (line) =>
+        Number.isSafeInteger(line.remaining_returnable_quantity) &&
+        line.remaining_returnable_quantity > 0,
+    )
+  );
+}
+
+export function canOpenCancellation(state: HistoryState): boolean {
+  return (
+    state.cancellation_intent === null &&
+    state.return_intent === null &&
+    state.detail?.status === "confirmed"
+  );
+}
+
+function returnFocusTarget(
+  state: HistoryState,
+  intent: ReturnIntent,
+): string | null {
+  const selectedLineId = state.detail?.lines.find(
+    (line) => String(line.sale_line_id) in intent.lines,
+  )?.sale_line_id;
+  if (selectedLineId !== undefined) return `return-quantity-${selectedLineId}`;
+  const firstReturnableLineId = state.detail?.lines.find(
+    (line) =>
+      Number.isSafeInteger(line.remaining_returnable_quantity) &&
+      line.remaining_returnable_quantity > 0,
+  )?.sale_line_id;
+  return firstReturnableLineId === undefined
+    ? null
+    : `return-line-${firstReturnableLineId}`;
+}
+
+function returnIntentValidation(
+  state: HistoryState,
+  intent: ReturnIntent,
+): CorrectionValidation | null {
+  if (
+    state.detail?.sale_id !== intent.sale_id ||
+    state.detail.status !== "confirmed"
+  )
+    return {
+      message: "Esta venta ya no admite devoluciones. Recargá el detalle.",
+      focus_target: returnFocusTarget(state, intent),
+    };
+  const entries = [
+    ...(state.detail?.lines
+      .filter((line) => String(line.sale_line_id) in intent.lines)
+      .map((line) => [String(line.sale_line_id), intent.lines[line.sale_line_id]] as const) ?? []),
+    ...Object.entries(intent.lines).filter(
+      ([saleLineId]) => !state.detail?.lines.some((line) => line.sale_line_id === Number(saleLineId)),
+    ),
+  ];
+  if (!entries.length)
+    return {
+      message: "Seleccioná al menos una línea para devolver.",
+      focus_target: returnFocusTarget(state, intent),
+    };
+  for (const [saleLineId, value] of entries) {
+    const line = returnableLine(state.detail, Number(saleLineId));
+    const focusTarget = `return-quantity-${saleLineId}`;
+    if (
+      !line ||
+      !Number.isSafeInteger(line.remaining_returnable_quantity) ||
+      line.remaining_returnable_quantity <= 0
+    )
+      return {
+        message: "Esta línea ya no admite devoluciones.",
+        focus_target: focusTarget,
+      };
+    const quantity = Number(value);
+    if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(quantity))
+      return {
+        message: "Ingresá una cantidad entera positiva.",
+        focus_target: focusTarget,
+      };
+    if (quantity > line.remaining_returnable_quantity)
+      return {
+        message:
+          "La cantidad supera las unidades disponibles guardadas.",
+        focus_target: focusTarget,
+      };
+  }
+  return null;
+}
+
+function editableReturnIntent(intent: ReturnIntent): boolean {
+  return intent.status === "open" || intent.status === "error";
+}
+
+function cancellationIntentValidation(
+  state: HistoryState,
+  intent: CancellationIntent,
+): CorrectionValidation | null {
+  if (
+    state.detail?.sale_id !== intent.sale_id ||
+    state.detail.status !== "confirmed"
+  )
+    return {
+      message:
+        "Esta venta ya no admite cancelación. Recargá el detalle.",
+      focus_target: "cancellation-reason",
+    };
+  if (!intent.reason.trim())
+    return {
+      message: "Ingresá un motivo de cancelación.",
+      focus_target: "cancellation-reason",
+    };
+  if (!intent.confirmed)
+    return {
+      message: "Confirmá la corrección de inventario antes de continuar.",
+      focus_target: "cancellation-confirmation",
+    };
+  return null;
+}
+
+export function correctionFocusTarget(state: HistoryState): string | null {
+  if (state.return_intent?.status === "error")
+    return state.return_intent.validation?.focus_target ?? null;
+  if (state.cancellation_intent?.status === "error")
+    return state.cancellation_intent.validation?.focus_target ?? null;
+  return null;
+}
+
+function editableCancellationIntent(intent: CancellationIntent): boolean {
+  return intent.status === "open" || intent.status === "error";
+}
+
+export function createHistoryFlow(
+  state: HistoryState,
+  action: HistoryAction,
+): HistoryState {
+  switch (action.type) {
+    case "list_started":
+      return {
+        ...state,
+        view: "list",
+        status: "loading",
+        detail: null,
+        message: null,
+        return_intent: null,
+        cancellation_intent: null,
+      };
+    case "list_loaded":
+      return {
+        ...state,
+        view: "list",
+        status: action.sales.length ? "ready" : "empty",
+        sales: action.sales,
+        has_more: action.has_more,
+        selected_id: null,
+        detail: null,
+        message: null,
+        return_intent: null,
+        cancellation_intent: null,
+      };
+    case "list_failed":
+      return {
+        ...state,
+        view: "list",
+        status: "error",
+        sales: [],
+        has_more: false,
+        detail: null,
+        message: action.message,
+        return_intent: null,
+        cancellation_intent: null,
+      };
+    case "detail_started":
+      return {
+        ...state,
+        view: "detail",
+        status: "loading",
+        selected_id: action.sale_id,
+        detail: null,
+        message: null,
+        return_intent:
+          state.return_intent?.sale_id === action.sale_id
+            ? state.return_intent
+            : null,
+        cancellation_intent:
+          state.cancellation_intent?.sale_id === action.sale_id
+            ? state.cancellation_intent
+            : null,
+      };
+    case "detail_loaded": {
+      const returnIntent = state.return_intent?.sale_id === action.detail.sale_id ? state.return_intent : null;
+      const cancellationIntent = state.cancellation_intent?.sale_id === action.detail.sale_id ? state.cancellation_intent : null;
+      const hasPersistedReturn = returnIntent
+        ? action.detail.returns.some((record) => record.request_id === returnIntent.request_id)
+        : false;
+      const hasPersistedCancellation = cancellationIntent
+        ? action.detail.cancellation?.request_id === cancellationIntent.request_id
+        : false;
+      return {
+        ...state,
+        view: "detail",
+        status: "ready",
+        selected_id: action.detail.sale_id,
+        detail: action.detail,
+        message: null,
+        return_intent: !returnIntent || hasPersistedReturn ? null
+          : returnIntent.status === "reload_requested" ? {
+              ...returnIntent, status: "error", validation: null,
+              error: "La devolución todavía no aparece en el detalle guardado. Recargá nuevamente.",
+            } : returnIntent,
+        cancellation_intent: !cancellationIntent || hasPersistedCancellation ? null
+          : cancellationIntent.status === "reload_requested" ? {
+              ...cancellationIntent, status: "error", modal_open: true, validation: null,
+              error: "La cancelación todavía no aparece en el detalle guardado. Recargá nuevamente.",
+            } : cancellationIntent,
+      };
+    }
+    case "detail_failed":
+      return {
+        ...state,
+        view: "detail",
+        status: "error",
+        detail: null,
+        message: action.message,
+        return_intent: state.return_intent && state.return_intent.status !== "pending"
+          ? {
+              ...state.return_intent,
+              status: "error",
+              error: detailReloadFailure,
+              validation: null,
+            }
+          : state.return_intent,
+        cancellation_intent: state.cancellation_intent && state.cancellation_intent.status !== "pending"
+          ? {
+              ...state.cancellation_intent,
+              status: "error",
+              error: detailReloadFailure,
+              validation: null,
+            }
+          : state.cancellation_intent,
+      };
+    case "return_intent_opened":
+      return canOpenReturn(state)
+        ? {
+            ...state,
+            return_intent: {
+              sale_id: state.detail!.sale_id,
+              request_id: action.request_id,
+              lines: {},
+              modal_open: true,
+              status: "open",
+              error: null,
+              validation: null,
+            },
+          }
+        : state;
+    case "return_line_selected": {
+      const intent = state.return_intent;
+      const line =
+        state.detail && returnableLine(state.detail, action.sale_line_id);
+      if (
+        !intent ||
+        !editableReturnIntent(intent) ||
+        !line ||
+        line.remaining_returnable_quantity <= 0
+      )
+        return state;
+      const lines = { ...intent.lines };
+      if (action.selected) lines[action.sale_line_id] ??= "";
+      else delete lines[action.sale_line_id];
+      return {
+        ...state,
+        return_intent: {
+          ...intent,
+          lines,
+          status: "open",
+          error: null,
+          validation: null,
+        },
+      };
+    }
+    case "return_quantity_changed": {
+      const intent = state.return_intent;
+      if (
+        !intent ||
+        !editableReturnIntent(intent) ||
+        !(action.sale_line_id in intent.lines)
+      )
+        return state;
+      return {
+        ...state,
+        return_intent: {
+          ...intent,
+          lines: { ...intent.lines, [action.sale_line_id]: action.value },
+          status: "open",
+          error: null,
+          validation: null,
+        },
+      };
+    }
+    case "return_modal_closed":
+      return state.return_intent && editableReturnIntent(state.return_intent)
+        ? { ...state, return_intent: null }
+        : state;
+    case "return_submit_started": {
+      const intent = state.return_intent;
+      if (
+        !intent ||
+        intent.status === "pending" ||
+        intent.status === "reload_requested"
+      )
+        return state;
+      const validation = returnIntentValidation(state, intent);
+      return {
+        ...state,
+        return_intent: validation
+          ? {
+              ...intent,
+              status: "error",
+              error: validation.message,
+              validation,
+            }
+          : { ...intent, status: "pending", error: null, validation: null },
+      };
+    }
+    case "return_submit_failed":
+      return state.return_intent?.request_id === action.request_id &&
+        (state.return_intent.status === "pending" ||
+          state.return_intent.status === "reload_requested")
+        ? {
+            ...state,
+            return_intent: {
+              ...state.return_intent,
+              status: "error",
+              error: action.message,
+              validation: null,
+            },
+          }
+        : state;
+    case "return_submit_succeeded":
+      return state.return_intent?.status === "pending" &&
+        state.return_intent.request_id === action.request_id
+        ? {
+            ...state,
+            return_intent: {
+              ...state.return_intent,
+              status: "reload_requested",
+              error: null,
+              validation: null,
+            },
+          }
+        : state;
+    case "cancellation_intent_opened":
+      return canOpenCancellation(state)
+        ? {
+            ...state,
+            cancellation_intent: {
+              sale_id: state.detail!.sale_id,
+              request_id: action.request_id,
+              reason: "",
+              confirmed: false,
+              modal_open: true,
+              status: "open",
+              error: null,
+              validation: null,
+            },
+          }
+        : state;
+    case "cancellation_reason_changed": {
+      const intent = state.cancellation_intent;
+      if (!intent || !editableCancellationIntent(intent)) return state;
+      return {
+        ...state,
+        cancellation_intent: {
+          ...intent,
+          reason: action.value,
+          status: "open",
+          error: null,
+          validation: null,
+        },
+      };
+    }
+    case "cancellation_confirmation_changed": {
+      const intent = state.cancellation_intent;
+      if (!intent || !editableCancellationIntent(intent)) return state;
+      return {
+        ...state,
+        cancellation_intent: {
+          ...intent,
+          confirmed: action.confirmed,
+          status: "open",
+          error: null,
+          validation: null,
+        },
+      };
+    }
+    case "cancellation_confirmation_requested": {
+      const intent = state.cancellation_intent;
+      if (!intent || !editableCancellationIntent(intent)) return state;
+      const validation = cancellationIntentValidation(state, intent);
+      return { ...state, cancellation_intent: validation
+        ? { ...intent, modal_open: true, status: "error", error: validation.message, validation }
+        : { ...intent, modal_open: false, status: "open", error: null, validation: null } };
+    }
+    case "cancellation_modal_closed":
+      return state.cancellation_intent && editableCancellationIntent(state.cancellation_intent)
+        ? { ...state, cancellation_intent: { ...state.cancellation_intent, modal_open: true } }
+        : state;
+    case "cancellation_intent_closed":
+      return state.cancellation_intent && editableCancellationIntent(state.cancellation_intent)
+        ? { ...state, cancellation_intent: null }
+        : state;
+    case "cancellation_submit_started": {
+      const intent = state.cancellation_intent;
+      if (!intent || intent.modal_open || !editableCancellationIntent(intent)) return state;
+      const validation = cancellationIntentValidation(state, intent);
+      return {
+        ...state,
+        cancellation_intent: validation
+          ? {
+              ...intent,
+              status: "error",
+              error: validation.message,
+              validation,
+            }
+          : { ...intent, status: "pending", error: null, validation: null },
+      };
+    }
+    case "cancellation_submit_failed":
+      return state.cancellation_intent?.request_id === action.request_id &&
+        (state.cancellation_intent.status === "pending" ||
+          state.cancellation_intent.status === "reload_requested")
+        ? {
+            ...state,
+            cancellation_intent: {
+              ...state.cancellation_intent,
+              status: "error",
+              error: action.message,
+              validation: null,
+            },
+          }
+        : state;
+    case "cancellation_submit_succeeded":
+      return state.cancellation_intent?.status === "pending" &&
+        state.cancellation_intent.request_id === action.request_id
+        ? {
+            ...state,
+            cancellation_intent: {
+              ...state.cancellation_intent,
+              status: "reload_requested",
+              error: null,
+              validation: null,
+            },
+          }
+        : state;
+    case "back_to_list":
+      return {
+        ...state,
+        view: "list",
+        status: state.sales.length ? "ready" : "empty",
+        selected_id: null,
+        detail: null,
+        message: null,
+        return_intent: null,
+        cancellation_intent: null,
+      };
+  }
+}

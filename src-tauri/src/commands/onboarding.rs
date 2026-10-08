@@ -1,0 +1,156 @@
+use serde::Serialize;
+
+use crate::application::catalog::{
+    self, Category, CreateCategoryError, CreateCategoryInput, CreateProductError,
+    CreateProductInput, CreatedProduct,
+};
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CreateCategoryResponse {
+    Success(Category),
+    Error(OnboardingError),
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CreateProductResponse {
+    Success(CreatedProduct),
+    Error(OnboardingError),
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ListCategoriesResponse {
+    Success { categories: Vec<Category> },
+    Error(OnboardingError),
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct OnboardingError {
+    pub code: &'static str,
+    pub message: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_error: Option<OnboardingFieldError>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct OnboardingFieldError {
+    pub definition_id: i64,
+    pub reason: &'static str,
+}
+
+pub fn list_categories(
+    connection: &rusqlite::Connection,
+) -> Result<ListCategoriesResponse, String> {
+    Ok(match catalog::list_onboarding_categories(connection) {
+        Ok(categories) => ListCategoriesResponse::Success { categories },
+        Err(_) => ListCategoriesResponse::Error(OnboardingError {
+            code: "persistence_failure",
+            message: "Categories could not be loaded.",
+            field_error: None,
+        }),
+    })
+}
+
+pub fn create_category(
+    connection: &mut rusqlite::Connection,
+    request: CreateCategoryInput,
+) -> Result<CreateCategoryResponse, String> {
+    Ok(match catalog::create_category(connection, request) {
+        Ok(category) => CreateCategoryResponse::Success(category),
+        Err(error) => CreateCategoryResponse::Error(map_category_error(error)),
+    })
+}
+
+pub fn create_product(
+    connection: &mut rusqlite::Connection,
+    request: CreateProductInput,
+) -> Result<CreateProductResponse, String> {
+    Ok(match catalog::create_product(connection, request) {
+        Ok(product) => CreateProductResponse::Success(product),
+        Err(error) => CreateProductResponse::Error(map_product_error(error)),
+    })
+}
+
+fn map_category_error(error: CreateCategoryError) -> OnboardingError {
+    let (code, message) = match error {
+        CreateCategoryError::InvalidCategory => ("invalid_category", "Category name is required."),
+        CreateCategoryError::InvalidFieldDefinition => (
+            "invalid_field_definition",
+            "Category field definitions are invalid.",
+        ),
+        CreateCategoryError::DuplicateCategory => {
+            ("duplicate_category", "Category name already exists.")
+        }
+        CreateCategoryError::Persistence => (
+            "persistence_failure",
+            "The category could not be persisted.",
+        ),
+    };
+    OnboardingError { code, message, field_error: None }
+}
+
+fn map_product_error(error: CreateProductError) -> OnboardingError {
+    let error = match error {
+        CreateProductError::InvalidAttributeValueForField(failure) => {
+            let reason = match failure.reason {
+                crate::domain::catalog::AttributeValueFailureReason::InvalidNumber => "invalid_number",
+                crate::domain::catalog::AttributeValueFailureReason::InvalidOption => "invalid_option",
+                crate::domain::catalog::AttributeValueFailureReason::InvalidValue => "invalid_value",
+            };
+            return OnboardingError {
+                code: "invalid_attribute_value",
+                message: "A category field value is invalid.",
+                field_error: Some(OnboardingFieldError { definition_id: failure.definition_id, reason }),
+            };
+        }
+        other => other,
+    };
+    let (code, message) = match error {
+        CreateProductError::InvalidProduct => {
+            ("invalid_product", "SKU and product name are required.")
+        }
+        CreateProductError::MissingCategory => {
+            ("missing_category", "The selected category was not found.")
+        }
+        CreateProductError::DuplicateSku => ("duplicate_sku", "SKU already exists."),
+        CreateProductError::InvalidPurchasePrice => (
+            "invalid_purchase_price",
+            "Purchase price must be a positive whole number of centavos.",
+        ),
+        CreateProductError::InvalidSalePrice => (
+            "invalid_sale_price",
+            "Sale price must be a positive whole number of centavos.",
+        ),
+        CreateProductError::InvalidMinimumSalePrice => (
+            "invalid_minimum_sale_price",
+            "Minimum sale price must be a positive whole number of centavos.",
+        ),
+        CreateProductError::MinimumSalePriceExceedsSalePrice => (
+            "minimum_sale_price_exceeds_sale_price",
+            "Minimum sale price cannot exceed sale price.",
+        ),
+        CreateProductError::InvalidOpeningQuantity => (
+            "invalid_opening_quantity",
+            "Opening stock must be a positive whole number.",
+        ),
+        CreateProductError::InvalidLowStockThreshold => (
+            "invalid_low_stock_threshold",
+            "Low-stock threshold must be a whole number greater than zero.",
+        ),
+        CreateProductError::MissingRequiredField => (
+            "missing_required_field",
+            "A required category field is missing.",
+        ),
+        CreateProductError::InvalidAttributeValue => (
+            "invalid_attribute_value",
+            "A category field value is invalid.",
+        ),
+        CreateProductError::InvalidAttributeValueForField(_) => unreachable!("handled above"),
+        CreateProductError::Persistence => {
+            ("persistence_failure", "The product could not be persisted.")
+        }
+    };
+    OnboardingError { code, message, field_error: None }
+}

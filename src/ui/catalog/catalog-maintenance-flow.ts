@@ -1,0 +1,76 @@
+import { ATTRIBUTE_FIELD_TYPE, CATALOG_TARGET, type CatalogCategoryMaintenanceRecord, type CatalogEditInput, type CatalogMaintenanceError, type CatalogMaintenanceRecord, type CatalogMetadataDetail } from "../../commands/catalog.ts";
+
+const STATUS = { LOADING: "loading", READY: "ready", PENDING: "pending", UNAVAILABLE: "unavailable" } as const;
+export interface CategorySchemaDraft { definition_id: number | null; label: string; field_type: (typeof ATTRIBUTE_FIELD_TYPE)[keyof typeof ATTRIBUTE_FIELD_TYPE]; required: boolean; options: string; active: boolean; }
+export interface CatalogEditForm { name: string; sku?: string; purchase_price_centavos?: string; sale_price_centavos?: string; minimum_sale_price_centavos?: string; low_stock_threshold?: string; primary_location_id?: number | null; attribute_values: Record<number, string>; category_fields?: CategorySchemaDraft[]; }
+export type CatalogEditFieldErrors = Record<string, string>;
+export interface CatalogMaintenanceState { status: (typeof STATUS)[keyof typeof STATUS]; records: CatalogMaintenanceRecord[]; selected: CatalogMaintenanceRecord | null; detail: CatalogMetadataDetail | null; feedback: string | null; lifecycle_feedback: string | null; field_errors: CatalogEditFieldErrors; success_notice: string | null; recovery_required: boolean; }
+export const initialCatalogMaintenanceState: CatalogMaintenanceState = { status: STATUS.LOADING, records: [], selected: null, detail: null, feedback: null, lifecycle_feedback: null, field_errors: {}, success_notice: null, recovery_required: false };
+export type CatalogMaintenanceAction = { type: "load_started" } | { type: "loaded"; records: CatalogMaintenanceRecord[] } | { type: "load_failed" } | { type: "refresh_started" } | { type: "refresh_list_succeeded"; records: CatalogMaintenanceRecord[] } | { type: "refresh_succeeded"; records: CatalogMaintenanceRecord[]; keep_recovery_locked?: boolean } | { type: "refresh_failed" } | { type: "detail_started"; record: CatalogMaintenanceRecord } | { type: "detail_loaded"; detail: CatalogMetadataDetail } | { type: "detail_failed"; code: CatalogMaintenanceError["code"] } | { type: "selection_cleared" } | { type: "mutation_started" | "edit_started" } | { type: "mutation_succeeded"; record: CatalogMaintenanceRecord } | { type: "edit_succeeded"; record: CatalogMaintenanceRecord } | { type: "edit_validation_failed"; field_errors: CatalogEditFieldErrors } | { type: "location_assignment_failed" } | { type: "mutation_failed" | "edit_failed"; code: CatalogMaintenanceError["code"] };
+const message = (code: CatalogMaintenanceError["code"]) => code === "duplicate_sku" ? "El SKU ya existe. Usá otro SKU." : code === "validation_error" ? "Revisá los valores del catálogo e intentá nuevamente." : code === "stale_catalog_record" ? "Registro desactualizado. Recargá los registros del catálogo." : code === "stale_category_schema" ? "Los campos de la categoría cambiaron. Recargá antes de guardar este producto." : code === "lifecycle_blocked" ? "Este cambio de estado no está permitido." : code === "catalog_unavailable" ? "Este registro no está disponible. Recargá el catálogo." : "No se pudo completar el cambio del catálogo.";
+export function filterCatalogCategories(records: CatalogMaintenanceRecord[], query: string) {
+  const normalized = query.trim().toLocaleLowerCase();
+  return records.filter((record): record is CatalogCategoryMaintenanceRecord => record.target === CATALOG_TARGET.CATEGORY && typeof record.active_product_count === "number" && record.label.toLocaleLowerCase().includes(normalized));
+}
+export function formatCatalogBs(centavos: number) { return `${Math.trunc(centavos / 100)},${String(Math.abs(centavos % 100)).padStart(2, "0")}`; }
+export function parseCatalogBs(value: string) { const match = value.trim().match(/^(\d+)(?:[,.](\d{1,2}))?$/); if (!match) return null; const centavos = Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0")); return Number.isSafeInteger(centavos) && centavos > 0 ? centavos : null; }
+export function formForCatalogDetail(detail: CatalogMetadataDetail): CatalogEditForm {
+  if (detail.target === CATALOG_TARGET.CATEGORY) return { name: detail.name, attribute_values: {}, category_fields: detail.attribute_definitions.map((field) => ({ definition_id: field.definition_id, label: field.label, field_type: field.field_type, required: field.required, options: field.options.join(", "), active: field.active !== false })) };
+  const prices = detail as typeof detail & { list_price_centavos?: number };
+  const salePrice = prices.sale_price_centavos ?? prices.list_price_centavos;
+  const activeDefinitions = detail.attribute_definitions.filter((field) => field.active !== false);
+  return { sku: detail.sku, name: detail.name, purchase_price_centavos: detail.purchase_price_centavos == null ? "" : formatCatalogBs(detail.purchase_price_centavos), sale_price_centavos: salePrice == null ? "" : formatCatalogBs(salePrice), minimum_sale_price_centavos: formatCatalogBs(detail.minimum_sale_price_centavos), low_stock_threshold: String(detail.low_stock_threshold ?? 1), primary_location_id: detail.primary_location_id, attribute_values: Object.fromEntries(detail.attribute_values.filter((value) => activeDefinitions.some((field) => field.definition_id === value.definition_id)).map((value) => [value.definition_id, value.value])) };
+}
+export function fieldErrorsForCatalogEdit(detail: CatalogMetadataDetail, form: CatalogEditForm): CatalogEditFieldErrors {
+  const errors: CatalogEditFieldErrors = {};
+  if (form.name.trim() === "") errors.name = "Ingresá un nombre.";
+  if (detail.target === CATALOG_TARGET.CATEGORY) return errors;
+  if (form.sku?.trim() === "") errors.sku = "Ingresá un SKU.";
+  if (parseCatalogBs(form.purchase_price_centavos ?? "") === null) errors.purchase_price_centavos = "Ingresá un precio actual de compra válido en Bs.";
+  const salePrice = parseCatalogBs(form.sale_price_centavos ?? "");
+  if (salePrice === null) errors.sale_price_centavos = "Ingresá un precio de venta válido en Bs.";
+  const minimumPrice = parseCatalogBs(form.minimum_sale_price_centavos ?? "");
+  if (minimumPrice === null) errors.minimum_sale_price_centavos = "Ingresá un precio mínimo de venta válido en Bs.";
+  else if (salePrice !== null && minimumPrice > salePrice) errors.minimum_sale_price_centavos = "El precio mínimo no puede superar el precio de venta.";
+  const thresholdText = form.low_stock_threshold ?? "";
+  const threshold = thresholdText.trim() === "" ? 1 : /^\d+$/.test(thresholdText.trim()) ? Number(thresholdText.trim()) : null;
+  if (threshold === null || !Number.isSafeInteger(threshold) || threshold < 1) errors.low_stock_threshold = "Ingresá un umbral entero mayor o igual a 1.";
+  detail.attribute_definitions.filter((field) => field.active !== false).forEach((field) => { const value = form.attribute_values[field.definition_id] ?? ""; if (field.required && value.trim() === "") errors[`attribute-${field.definition_id}`] = "Ingresá un valor."; else if (field.field_type === ATTRIBUTE_FIELD_TYPE.OPTION && value !== "" && !field.options.includes(value)) errors[`attribute-${field.definition_id}`] = "Elegí una opción de la lista."; else if (field.field_type === ATTRIBUTE_FIELD_TYPE.NUMBER && value !== "" && !Number.isFinite(Number(value))) errors[`attribute-${field.definition_id}`] = "Ingresá un número."; });
+  return errors;
+}
+export function createCategorySchemaEditRequest(detail: CatalogMetadataDetail, form: CatalogEditForm) {
+  if (detail.target !== CATALOG_TARGET.CATEGORY || !form.category_fields) return null;
+  const fields = form.category_fields.filter((field) => field.active).map((field) => ({ definition_id: field.definition_id, label: field.label.trim(), field_type: field.field_type, required: field.required, options: field.field_type === ATTRIBUTE_FIELD_TYPE.OPTION ? field.options.split(",").map((option) => option.trim()).filter(Boolean) : [] }));
+  if (fields.some((field) => !field.label || (field.field_type === ATTRIBUTE_FIELD_TYPE.OPTION && field.options.length === 0))) return null;
+  return { category_id: detail.entity_id, expected_revision: detail.revision, fields };
+}
+export function createCatalogEditRequest(detail: CatalogMetadataDetail, form: CatalogEditForm): CatalogEditInput | null {
+  if (Object.keys(fieldErrorsForCatalogEdit(detail, form)).length > 0) return null;
+  if (detail.target === CATALOG_TARGET.CATEGORY) return { target: detail.target, entity_id: detail.entity_id, expected_revision: detail.revision, name: form.name };
+  const activeDefinitions = detail.attribute_definitions.filter((field) => field.active !== false);
+  const values = activeDefinitions.map((field) => ({ definition_id: field.definition_id, value: form.attribute_values[field.definition_id] ?? "" }));
+  return { target: detail.target, entity_id: detail.entity_id, expected_revision: detail.revision, expected_category_revision: detail.category_revision, sku: form.sku ?? "", name: form.name, purchase_price_centavos: parseCatalogBs(form.purchase_price_centavos ?? "") as number, sale_price_centavos: parseCatalogBs(form.sale_price_centavos ?? "") as number, minimum_sale_price_centavos: parseCatalogBs(form.minimum_sale_price_centavos ?? "") as number, low_stock_threshold: (form.low_stock_threshold ?? "").trim() === "" ? 1 : Number(form.low_stock_threshold), attribute_values: values.filter((value) => activeDefinitions.find((field) => field.definition_id === value.definition_id)?.required || value.value !== "") };
+}
+export function createCatalogMaintenanceFlow(state: CatalogMaintenanceState, action: CatalogMaintenanceAction): CatalogMaintenanceState {
+  switch (action.type) {
+    case "load_started": return { ...state, status: STATUS.LOADING, feedback: null, field_errors: {}, recovery_required: false };
+    case "loaded": return { ...state, status: STATUS.READY, records: action.records, feedback: null, field_errors: {}, recovery_required: false };
+    case "load_failed": return { ...state, status: STATUS.UNAVAILABLE, feedback: "El catálogo no está disponible. Reintentá.", lifecycle_feedback: null, field_errors: {}, success_notice: null, recovery_required: false };
+    case "refresh_started": return { ...state, status: STATUS.LOADING, feedback: null, lifecycle_feedback: "Actualizando los registros del catálogo…", field_errors: {}, recovery_required: true };
+    case "refresh_list_succeeded": return { ...state, status: STATUS.LOADING, records: action.records, feedback: null, lifecycle_feedback: "Actualizando los registros del catálogo…", field_errors: {}, recovery_required: true };
+    case "refresh_succeeded": return { ...state, status: STATUS.READY, records: action.records, feedback: null, lifecycle_feedback: state.success_notice ? "Catálogo actualizado." : null, field_errors: {}, recovery_required: action.keep_recovery_locked ?? false };
+    case "refresh_failed": return { ...state, status: STATUS.READY, feedback: "No se pudieron actualizar los registros del catálogo. Reintentá.", lifecycle_feedback: "No se pudieron actualizar los registros del catálogo. Reintentá.", field_errors: {}, recovery_required: true };
+    case "detail_started": return { ...state, status: STATUS.LOADING, selected: action.record, detail: null, feedback: null, lifecycle_feedback: null, field_errors: {}, recovery_required: false };
+    case "detail_loaded": return { ...state, status: STATUS.READY, detail: action.detail, feedback: null, lifecycle_feedback: null, field_errors: {}, recovery_required: false };
+    case "detail_failed": return { ...state, status: STATUS.UNAVAILABLE, detail: null, feedback: message(action.code), lifecycle_feedback: null, field_errors: {}, success_notice: null, recovery_required: action.code === "stale_catalog_record" };
+    case "selection_cleared": return { ...state, status: STATUS.READY, selected: null, detail: null, feedback: null, lifecycle_feedback: null, field_errors: {}, recovery_required: false };
+    case "mutation_started": return { ...state, status: STATUS.PENDING, feedback: null, lifecycle_feedback: null, field_errors: {}, success_notice: null, recovery_required: false };
+    case "edit_started": return { ...state, status: STATUS.PENDING, feedback: null, lifecycle_feedback: null, field_errors: {}, success_notice: null, recovery_required: false };
+    case "mutation_succeeded": return { ...state, status: STATUS.READY, feedback: null, lifecycle_feedback: "Catálogo actualizado.", success_notice: "Catálogo actualizado.", field_errors: {}, recovery_required: false, records: state.records.map((record) => record.entity_id === action.record.entity_id && record.target === action.record.target ? { ...record, activity: action.record.activity, revision: action.record.revision } : record), selected: state.selected?.entity_id === action.record.entity_id && state.selected.target === action.record.target ? { ...state.selected, activity: action.record.activity, revision: action.record.revision } : state.selected, detail: state.detail?.entity_id === action.record.entity_id && state.detail.target === action.record.target ? { ...state.detail, activity: action.record.activity, revision: action.record.revision } : state.detail };
+    case "edit_succeeded": return { ...state, status: STATUS.READY, feedback: null, lifecycle_feedback: null, field_errors: {}, success_notice: "Catálogo actualizado.", recovery_required: false, records: state.records.map((record) => record.entity_id === action.record.entity_id && record.target === action.record.target ? { ...record, activity: action.record.activity, revision: action.record.revision } : record), selected: state.selected?.entity_id === action.record.entity_id && state.selected.target === action.record.target ? { ...state.selected, activity: action.record.activity, revision: action.record.revision } : state.selected, detail: state.detail?.entity_id === action.record.entity_id && state.detail.target === action.record.target ? { ...state.detail, activity: action.record.activity, revision: action.record.revision } : state.detail };
+    case "edit_validation_failed": return { ...state, status: STATUS.READY, feedback: "Corregí los campos indicados e intentá nuevamente.", lifecycle_feedback: null, field_errors: action.field_errors, success_notice: null, recovery_required: false };
+    case "location_assignment_failed": return { ...state, status: STATUS.READY, feedback: "No se pudo asignar la ubicación principal. Recargá para revisar el producto antes de volver a intentar.", lifecycle_feedback: null, field_errors: {}, success_notice: null, recovery_required: true };
+    case "mutation_failed": return { ...state, status: STATUS.READY, feedback: message(action.code), lifecycle_feedback: message(action.code), field_errors: {}, success_notice: null, recovery_required: action.code === "stale_catalog_record" };
+    case "edit_failed": return { ...state, status: STATUS.READY, feedback: message(action.code), lifecycle_feedback: null, field_errors: {}, success_notice: null, recovery_required: action.code === "stale_catalog_record" || action.code === "stale_category_schema" };
+  }
+}

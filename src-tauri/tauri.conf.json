@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Repuestos Autos",
+  "version": "1.4.0",
+  "identifier": "com.repuestosautos.app",
+  "build": {
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../dist",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Repuestos Autos",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ]
+  },
+  "bundle": {
+    "icon": ["icons/windows-executable/icon.ico"],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon-installer.ico",
+        "uninstallerIcon": "icons/icon-installer.ico"
+      }
+    }
+  }
+}

@@ -1,0 +1,302 @@
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+
+use crate::application::inventory::InventoryRepository;
+use crate::domain::inventory::{
+    InventoryAlert, InventoryError, InventoryIdentity, InventoryOperation, OperationKind,
+    PersistedInventoryOperation,
+};
+use crate::domain::RequestId;
+
+pub struct SqliteInventoryRepository<'connection> {
+    connection: &'connection mut Connection,
+}
+
+impl<'connection> SqliteInventoryRepository<'connection> {
+    pub fn new(connection: &'connection mut Connection) -> Self {
+        Self { connection }
+    }
+}
+
+impl InventoryRepository for SqliteInventoryRepository<'_> {
+    fn confirm(
+        &mut self,
+        operation: InventoryOperation,
+    ) -> Result<PersistedInventoryOperation, InventoryError> {
+        let request_id = match &operation {
+            InventoryOperation::StockEntry { request_id, .. }
+            | InventoryOperation::PhysicalCount { request_id, .. } => {
+                request_id.as_uuid().to_string()
+            }
+        };
+        let identity = operation.identity();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+        if let Some(existing) = load_persisted(&transaction, &request_id)? {
+            let result = validate_existing(&identity, existing)?;
+            transaction
+                .commit()
+                .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+            return Ok(result);
+        }
+
+        let (product_id, kind, delta, counted_quantity, reason, note, purchase_price, sale_price, minimum_price) = match operation {
+            InventoryOperation::StockEntry {
+                product_id,
+                quantity,
+                note,
+                unit_purchase_price,
+                sale_price_centavos,
+                minimum_sale_price_centavos,
+                ..
+            } => (
+                product_id,
+                OperationKind::StockEntry,
+                quantity.value(),
+                None,
+                None,
+                note,
+                unit_purchase_price.map(|price| price.value()),
+                sale_price_centavos,
+                minimum_sale_price_centavos,
+            ),
+            InventoryOperation::PhysicalCount {
+                product_id,
+                count,
+                reason,
+                ..
+            } => (
+                product_id,
+                OperationKind::PhysicalCount,
+                count.value(),
+                Some(count.value()),
+                Some(reason.as_str().to_owned()),
+                None,
+                None,
+                None,
+                None,
+            ),
+        };
+        let product = transaction
+            .query_row(
+                "SELECT p.active, c.active, b.quantity, p.list_price_centavos, p.minimum_sale_price_centavos FROM products p JOIN categories c ON c.id = p.category_id JOIN stock_balances b ON b.product_id = p.id WHERE p.id = ?1",
+                [product_id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
+            )
+            .optional()
+            .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+        let (active, category_active, previous_quantity, current_sale, current_minimum) =
+            product.ok_or(InventoryError::MISSING_PRODUCT)?;
+        if active == 0 || category_active == 0 {
+            return Err(InventoryError::INACTIVE_PRODUCT);
+        }
+        let (quantity_delta, resulting_quantity) = match kind {
+            OperationKind::StockEntry => (
+                delta,
+                previous_quantity
+                    .checked_add(delta)
+                    .ok_or(InventoryError::QUANTITY_OVERFLOW)?,
+            ),
+            OperationKind::PhysicalCount => {
+                let adjustment = delta
+                    .checked_sub(previous_quantity)
+                    .ok_or(InventoryError::QUANTITY_OVERFLOW)?;
+                if adjustment == 0 {
+                    return Err(InventoryError::UNCHANGED_COUNT);
+                }
+                (adjustment, delta)
+            }
+        };
+        let resulting_sale = sale_price.unwrap_or(current_sale);
+        let resulting_minimum = minimum_price.unwrap_or(current_minimum);
+        if resulting_sale <= 0 || resulting_minimum <= 0 || resulting_minimum > resulting_sale {
+            return Err(InventoryError::INVALID_PRICE);
+        }
+        let movement_type = match kind {
+            OperationKind::StockEntry => "stock_entry",
+            OperationKind::PhysicalCount => "adjustment",
+        };
+        if transaction
+            .execute(
+                "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, reason, source_reference, request_id, counted_quantity, resulting_quantity, operation_kind, payload_version, canonical_payload, payload_sha256, unit_purchase_price_centavos) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    product_id,
+                    movement_type,
+                    quantity_delta,
+                    reason,
+                    note,
+                    request_id,
+                    counted_quantity,
+                    resulting_quantity,
+                    identity.operation_kind(),
+                    identity.payload_version(),
+                    identity.canonical_payload(),
+                    identity.payload_sha256(),
+                    purchase_price,
+                ],
+            )
+            .is_err()
+        {
+            let winner = load_persisted(&transaction, &request_id)?;
+            let result = winner
+                .map(|winner| validate_existing(&identity, winner))
+                .transpose()?
+                .ok_or(InventoryError::PERSISTENCE_FAILURE)?;
+            transaction
+                .commit()
+                .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+            return Ok(result);
+        }
+        if transaction
+            .execute(
+                "UPDATE stock_balances SET quantity = ?1 WHERE product_id = ?2 AND quantity = ?3",
+                params![resulting_quantity, product_id, previous_quantity],
+            )
+            .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?
+            != 1
+        {
+            return Err(InventoryError::PERSISTENCE_FAILURE);
+        }
+        if kind == OperationKind::StockEntry {
+            let update = if purchase_price.is_some() {
+                transaction.execute(
+                    "UPDATE products SET purchase_price_centavos = ?1, list_price_centavos = ?2, minimum_unit_price_centavos = ?3 WHERE id = ?4",
+                    params![purchase_price, resulting_sale, resulting_minimum, product_id],
+                )
+            } else {
+                transaction.execute(
+                    "UPDATE products SET list_price_centavos = ?1, minimum_unit_price_centavos = ?2 WHERE id = ?3",
+                    params![resulting_sale, resulting_minimum, product_id],
+                )
+            }.map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+            if update != 1 {
+                return Err(InventoryError::PERSISTENCE_FAILURE);
+            }
+        }
+        let persisted = load_persisted(&transaction, &request_id)?
+            .ok_or(InventoryError::PERSISTED_DATA_INVALID)?;
+        let result = validate_existing(&identity, persisted)?;
+        transaction
+            .commit()
+            .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+        Ok(result)
+    }
+
+    fn list_alerts(&self) -> Result<Vec<InventoryAlert>, InventoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT p.id, p.name, p.active, b.quantity, p.low_stock_threshold FROM products p JOIN categories c ON c.id = p.category_id JOIN stock_balances b ON b.product_id = p.id WHERE p.active = 1 AND c.active = 1 AND (b.quantity = 0 OR (b.quantity BETWEEN 1 AND p.low_stock_threshold)) ORDER BY CASE b.quantity WHEN 0 THEN 0 ELSE 1 END, lower(p.name), p.id",
+        ).map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+        let alerts = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })
+            .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?
+            .map(|row| {
+                row.map_err(|_| InventoryError::PERSISTENCE_FAILURE)
+                    .and_then(|(id, name, active, quantity, threshold)| {
+                        InventoryAlert::for_product_with_threshold(id, &name, active != 0, quantity, threshold)
+                            .ok_or(InventoryError::PERSISTED_DATA_INVALID)
+                    })
+            })
+            .collect();
+        alerts
+    }
+}
+
+struct LoadedInventoryOperation {
+    result: PersistedInventoryOperation,
+    identity: Option<InventoryIdentity>,
+}
+
+fn validate_existing(
+    expected: &InventoryIdentity,
+    existing: LoadedInventoryOperation,
+) -> Result<PersistedInventoryOperation, InventoryError> {
+    let stored = existing.identity.ok_or(InventoryError::REQUEST_CONFLICT)?;
+    if stored != *expected {
+        return Err(InventoryError::REQUEST_CONFLICT);
+    }
+    Ok(existing.result)
+}
+
+fn load_persisted(
+    connection: &Connection,
+    request_id: &str,
+) -> Result<Option<LoadedInventoryOperation>, InventoryError> {
+    connection
+        .query_row(
+            "SELECT movement_type, product_id, quantity_delta, resulting_quantity, occurred_at, source_reference, operation_kind, payload_version, canonical_payload, payload_sha256 FROM inventory_movements WHERE request_id = ?1",
+            [request_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<i64>>(7)?,
+                    row.get::<_, Option<Vec<u8>>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?
+        .map(
+            |(
+                movement_type,
+                product_id,
+                delta,
+                resulting,
+                occurred_at,
+                note,
+                operation_kind,
+                payload_version,
+                canonical_payload,
+                payload_sha256,
+            )| {
+                let kind = match movement_type.as_str() {
+                    "stock_entry" => OperationKind::StockEntry,
+                    "adjustment" => OperationKind::PhysicalCount,
+                    _ => return Err(InventoryError::PERSISTED_DATA_INVALID),
+                };
+                let previous = resulting
+                    .checked_sub(delta)
+                    .ok_or(InventoryError::QUANTITY_OVERFLOW)?;
+                let result = PersistedInventoryOperation::new(
+                    kind,
+                    RequestId::parse(request_id)
+                        .map_err(|_| InventoryError::PERSISTED_DATA_INVALID)?,
+                    product_id,
+                    previous,
+                    delta,
+                    resulting,
+                    &occurred_at,
+                    note,
+                )?;
+                let identity = InventoryIdentity::from_persisted(
+                    operation_kind.as_deref(),
+                    payload_version,
+                    canonical_payload.as_deref(),
+                    payload_sha256.as_deref(),
+                )?;
+                if identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.operation_kind() != kind.as_str())
+                {
+                    return Err(InventoryError::PERSISTENCE_FAILURE);
+                }
+                Ok(LoadedInventoryOperation { result, identity })
+            },
+        )
+        .transpose()
+}

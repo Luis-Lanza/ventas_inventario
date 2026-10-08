@@ -1,0 +1,991 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { createPostSaleCommands } from "../../commands/post-sale.ts";
+import { createSalesHistoryCommands, type SalesHistoryDetail, type SalesHistorySummary } from "../../commands/sales-history.ts";
+import {
+  correctionFocusTarget,
+  createHistoryFlow,
+  initialHistoryState,
+} from "./history-flow.ts";
+import {
+  createSalesHistoryInteraction,
+  HistoryScreen,
+} from "./history-screen.ts";
+import { NAVIGATION_ACTION, SCREEN, screenAfter } from "../app.ts";
+
+const summary: SalesHistorySummary = {
+  sale_id: 71,
+  confirmed_at: "2024-03-10 05:00:00",
+  status: "confirmed",
+  total_centavos: 2_500,
+  line_count: 1,
+  payment_count: 1,
+  payment_methods: ["cash"],
+  has_corrections: false,
+};
+
+const emptyHistoryList = async () => ({
+  kind: "success" as const,
+  sales: [],
+  has_more: false,
+});
+
+const detail: SalesHistoryDetail = {
+  ...summary,
+  lines: [{ sale_line_id: 41, product_id: 4, sku: null, product_name: null, quantity: 1, unit_price_centavos: 2_500, line_total_centavos: 2_500, returned_quantity: 0, cancellation_restored_quantity: 0, remaining_returnable_quantity: 1 }],
+  payments: [{ method: "cash", amount_applied_centavos: 2_000, amount_tendered_centavos: 3_000, change_given_centavos: 500 }, { method: "qr", amount_applied_centavos: 500 }],
+  returns: [],
+  cancellation: null,
+};
+
+test("moves through loading, bounded list, detail, and predictable back navigation", () => {
+  const loading = createHistoryFlow(initialHistoryState, { type: "list_started" });
+  const listed = createHistoryFlow(loading, { type: "list_loaded", sales: [summary], has_more: true });
+  const detailLoading = createHistoryFlow(listed, { type: "detail_started", sale_id: summary.sale_id });
+  const shown = createHistoryFlow(detailLoading, { type: "detail_loaded", detail });
+  const back = createHistoryFlow(shown, { type: "back_to_list" });
+
+  assert.equal(loading.status, "loading");
+  assert.equal(listed.status, "ready");
+  assert.equal(listed.has_more, true);
+  assert.equal(detailLoading.status, "loading");
+  assert.equal(shown.view, "detail");
+  assert.equal(back.view, "list");
+  assert.equal(back.sales[0].sale_id, summary.sale_id);
+});
+
+test("renders empty and error states without manufacturing sale data", () => {
+  const empty = createHistoryFlow(initialHistoryState, { type: "list_loaded", sales: [], has_more: false });
+  const failed = createHistoryFlow(empty, { type: "list_failed", message: "Sales history could not be loaded." });
+
+  assert.equal(empty.status, "empty");
+  assert.equal(failed.status, "error");
+  assert.deepEqual(failed.sales, []);
+  assert.equal(failed.detail, null);
+});
+
+test("top-aligns every ready history list and keeps correction details dense", () => {
+  const render = (state: Parameters<typeof createHistoryFlow>[0]) =>
+    renderToStaticMarkup(createElement(HistoryScreen, {
+      state,
+      onReload: () => undefined,
+      onSelect: () => undefined,
+      onBack: () => undefined,
+    }));
+  const list = (sales: SalesHistorySummary[]) =>
+    createHistoryFlow(initialHistoryState, { type: "list_loaded", sales, has_more: false });
+  assert.match(render(list([])), /data-ui-density="sparse"/);
+  assert.match(render(list([summary])), /data-ui-density="sparse"/);
+  assert.match(render(list([summary, { ...summary, sale_id: 72 }])), /data-ui-density="sparse"/);
+  assert.match(render(list([
+    summary,
+    { ...summary, sale_id: 72 },
+    { ...summary, sale_id: 73 },
+    { ...summary, sale_id: 74 },
+    { ...summary, sale_id: 75 },
+  ])), /data-ui-density="sparse"/);
+
+  const simpleDetail = { ...detail, payments: [detail.payments[0]] };
+  const shown = (currentDetail: SalesHistoryDetail) =>
+    createHistoryFlow(initialHistoryState, { type: "detail_loaded", detail: currentDetail });
+  const simpleMarkup = render(shown(simpleDetail));
+  assert.match(simpleMarkup, /data-ui-density="sparse"/);
+  assert.match(simpleMarkup, /data-ui-history-correction-actions/);
+  assert.match(simpleMarkup, /Iniciar devolución de artículos[\s\S]*Iniciar cancelación de venta/);
+  assert.doesNotMatch(render(shown(detail)), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(shown({
+    ...simpleDetail,
+    lines: [...simpleDetail.lines, { ...simpleDetail.lines[0], sale_line_id: 42 }],
+  })), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(shown({
+    ...simpleDetail,
+    returns: [{ return_id: 8, request_id: "return", occurred_at: "2024-03-11", lines: [] }],
+  })), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(shown({
+    ...simpleDetail,
+    cancellation: { cancellation_id: 9, request_id: "cancel", occurred_at: "2024-03-11", reason: "Duplicate", lines: [] },
+  })), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(flow(shown(simpleDetail), { type: "return_intent_opened", request_id: "active-return" })), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(flow(shown(simpleDetail), { type: "cancellation_intent_opened", request_id: "active-cancel" })), /data-ui-density="sparse"/);
+});
+
+test("opens history from Sales and returns to Sales", () => {
+  const history = screenAfter(SCREEN.SALES, NAVIGATION_ACTION.OPEN_SALES_HISTORY);
+  assert.equal(history, SCREEN.SALES_HISTORY);
+  assert.equal(screenAfter(history, NAVIGATION_ACTION.RETURN_TO_SALES), SCREEN.SALES);
+});
+
+test("runs asynchronous history list, detail, and back through the production UI interaction", async () => {
+  const persistedSales = [summary];
+  const persistedDetail = detail;
+  const calls: Array<{ command: string; payload: Record<string, unknown> }> = [];
+  const interaction = createSalesHistoryInteraction(createSalesHistoryCommands(async (command, payload) => {
+    calls.push({ command, payload });
+    await Promise.resolve();
+    return command === "list_sales_history_command"
+      ? { kind: "success", sales: persistedSales, has_more: true }
+      : { kind: "success", detail: persistedDetail };
+  }));
+  let state = initialHistoryState;
+  const dispatch = (action: Parameters<typeof createHistoryFlow>[1]) => { state = createHistoryFlow(state, action); };
+
+  const listed = interaction.reload("2024-03-10", "2024-03-10", dispatch);
+  assert.equal(state.status, "loading");
+  await listed;
+  assert.equal(state.status, "ready");
+  const selected = interaction.select(state.sales[0], dispatch);
+  assert.equal(state.view, "detail");
+  assert.equal(state.status, "loading");
+  await selected;
+  assert.equal(state.detail?.lines[0].sku, null);
+  assert.match(renderToStaticMarkup(createElement(HistoryScreen, { state, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined })), /Producto no disponible.*SKU no disponible/s);
+  dispatch({ type: "back_to_list" });
+  assert.deepEqual(calls.map(({ command }) => command), ["list_sales_history_command", "sale_history_detail_command"]);
+  assert.equal((calls[1].payload as { saleId: number }).saleId, 71);
+  assert.deepEqual({ state: state.sales, persistedSales, persistedDetail }, { state: [summary], persistedSales: [summary], persistedDetail: detail });
+});
+
+test("projects asynchronous command errors without retaining or fabricating history", async () => {
+  const interaction = createSalesHistoryInteraction({
+    list: async () => ({ kind: "error" as const, code: "persistence_failure" as const, message: "History is unavailable." }),
+    detail: async () => ({ kind: "error" as const, code: "sale_not_found" as const, message: "Sale is unavailable." }),
+  });
+  let state = createHistoryFlow(initialHistoryState, { type: "list_loaded", sales: [summary], has_more: false });
+  const dispatch = (action: Parameters<typeof createHistoryFlow>[1]) => { state = createHistoryFlow(state, action); };
+
+  await interaction.reload("2024-03-10", "2024-03-10", dispatch);
+  assert.deepEqual({ status: state.status, sales: state.sales, detail: state.detail }, { status: "error", sales: [], detail: null });
+  dispatch({ type: "list_loaded", sales: [summary], has_more: false });
+  await interaction.select(summary, dispatch);
+  assert.deepEqual({ view: state.view, status: state.status, detail: state.detail }, { view: "detail", status: "error", detail: null });
+});
+
+test("submits exact return and cancellation requests once, then reloads history", async () => {
+  const requests: unknown[] = [];
+  let resolveReturn: (() => void) | undefined;
+  const returnedDetail = {
+    ...detail,
+    lines: [
+      {
+        ...detail.lines[0],
+        remaining_returnable_quantity: 0,
+        returned_quantity: 1,
+      },
+    ],
+    returns: [
+      {
+        return_id: 12,
+        request_id: "return-uuid",
+        occurred_at: "2024-03-11 05:00:00",
+        lines: [{ sale_line_id: 41, product_id: 4, quantity: 1 }],
+      },
+    ],
+  };
+  const cancelledDetail = {
+    ...returnedDetail,
+    status: "cancelled" as const,
+    cancellation: {
+      cancellation_id: 14,
+      request_id: "cancellation-uuid",
+      occurred_at: "2024-03-11 05:00:00",
+      reason: "Duplicate sale",
+      lines: [{ sale_line_id: 41, product_id: 4, restored_quantity: 0 }],
+    },
+  };
+  let persistedDetail = returnedDetail;
+  const interaction = createSalesHistoryInteraction({
+    list: emptyHistoryList,
+    detail: async () => ({ kind: "success" as const, detail: persistedDetail }),
+    createReturn: async (request) => {
+      requests.push(request);
+      await new Promise<void>((resolve) => {
+        resolveReturn = resolve;
+      });
+      return {
+        kind: "success" as const,
+        result: {
+          request_id: request.request_id,
+          return_id: 12,
+          sale_id: request.sale_id,
+          status: "confirmed" as const,
+          occurred_at: "2024-03-11 05:00:00",
+          lines: [{ sale_line_id: 41, product_id: 4, quantity: 1 }],
+        },
+      };
+    },
+    cancelSale: async (request) => {
+      requests.push(request);
+      return {
+        kind: "success" as const,
+        result: {
+          request_id: request.request_id,
+          cancellation_id: 14,
+          sale_id: request.sale_id,
+          status: "cancelled" as const,
+          occurred_at: "2024-03-11 05:00:00",
+          reason: request.reason,
+          lines: [{ sale_line_id: 41, product_id: 4, restored_quantity: 0 }],
+        },
+      };
+    },
+  });
+  let state = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail },
+    { type: "return_intent_opened", request_id: "return-uuid" },
+    { type: "return_line_selected", sale_line_id: 41, selected: true },
+    { type: "return_quantity_changed", sale_line_id: 41, value: "1" },
+  );
+  const dispatch = (action: Parameters<typeof createHistoryFlow>[1]) => {
+    state = createHistoryFlow(state, action);
+  };
+
+  const first = interaction.submitReturn(state, dispatch);
+  const second = interaction.submitReturn(state, dispatch);
+  assert.equal(state.return_intent?.status, "pending");
+  assert.deepEqual(requests, [
+    {
+      request_id: "return-uuid",
+      sale_id: 71,
+      lines: [{ sale_line_id: 41, quantity: 1 }],
+    },
+  ]);
+  resolveReturn?.();
+  await Promise.all([first, second]);
+  assert.equal(state.detail, returnedDetail);
+  persistedDetail = cancelledDetail;
+  state = flow(
+    state,
+    { type: "cancellation_intent_opened", request_id: "cancellation-uuid" },
+    { type: "cancellation_reason_changed", value: " Duplicate sale " },
+    { type: "cancellation_confirmation_changed", confirmed: true },
+    { type: "cancellation_confirmation_requested" },
+  );
+  await interaction.submitCancellation(state, dispatch);
+  assert.deepEqual(requests[1], {
+    request_id: "cancellation-uuid",
+    sale_id: 71,
+    reason: "Duplicate sale",
+  });
+  assert.equal(state.detail, cancelledDetail);
+});
+
+test("keeps return values for typed conflicts and malformed command results", async () => {
+  let attempt = 0;
+  const interaction = createSalesHistoryInteraction({
+    list: emptyHistoryList,
+    detail: async () => ({ kind: "success" as const, detail }),
+    ...createPostSaleCommands(async () =>
+      ++attempt === 1
+        ? {
+            kind: "error",
+            code: "request_conflict",
+            message: "private backend detail",
+          }
+        : {
+            kind: "success",
+            result: {
+              request_id: "return-uuid",
+              return_id: 12,
+              sale_id: 71,
+              status: "confirmed",
+              occurred_at: "2024-03-11 05:00:00",
+              lines: [{ sale_line_id: 41, product_id: 4, quantity: "wrong" }],
+            },
+          },
+    ),
+  });
+  let state = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail },
+    { type: "return_intent_opened", request_id: "return-uuid" },
+    { type: "return_line_selected", sale_line_id: 41, selected: true },
+    { type: "return_quantity_changed", sale_line_id: 41, value: "1" },
+  );
+  const dispatch = (action: Parameters<typeof createHistoryFlow>[1]) => {
+    state = createHistoryFlow(state, action);
+  };
+
+  await interaction.submitReturn(state, dispatch);
+  assert.equal(state.return_intent?.status, "error");
+  assert.deepEqual(state.return_intent?.lines, { 41: "1" });
+  assert.equal(
+    state.return_intent?.error,
+    "La corrección entró en conflicto con el detalle guardado. Recargá e intentá nuevamente.",
+  );
+  await interaction.submitReturn(state, dispatch);
+  assert.equal(state.return_intent?.status, "error");
+  const markup = renderToStaticMarkup(
+    createElement(HistoryScreen, {
+      state,
+      onReload: () => undefined,
+      onSelect: () => undefined,
+      onBack: () => undefined,
+      onReloadDetail: () => undefined,
+    }),
+  );
+  assert.match(markup, /role="alert"/);
+  assert.match(markup, /Recargar detalle de venta/);
+  state = createHistoryFlow(state, { type: "return_submit_started" });
+  assert.match(
+    renderToStaticMarkup(
+      createElement(HistoryScreen, {
+        state,
+        onReload: () => undefined,
+        onSelect: () => undefined,
+        onBack: () => undefined,
+      }),
+    ),
+    /aria-busy="true"/,
+  );
+});
+
+const flow = (
+  state: Parameters<typeof createHistoryFlow>[0],
+  ...actions: Parameters<typeof createHistoryFlow>[1][]
+) => actions.reduce(createHistoryFlow, state);
+const openedReturn = (currentDetail = detail, request_id = "return-uuid") =>
+  flow(
+    initialHistoryState,
+    { type: "detail_started", sale_id: currentDetail.sale_id },
+    { type: "detail_loaded", detail: currentDetail },
+    { type: "return_intent_opened", request_id },
+  );
+const selectedReturn = (currentDetail = detail, request_id?: string) =>
+  flow(openedReturn(currentDetail, request_id), {
+    type: "return_line_selected",
+    sale_line_id: 41,
+    selected: true,
+  });
+
+test("keeps exact repeated-product lines and requires an explicit retry before reload", () => {
+  const repeatedProductDetail = {
+    ...detail,
+    lines: [
+      { ...detail.lines[0], remaining_returnable_quantity: 1 },
+      {
+        ...detail.lines[0],
+        sale_line_id: 42,
+        remaining_returnable_quantity: 2,
+      },
+    ],
+  };
+  const ready = flow(
+    selectedReturn(repeatedProductDetail, "return-uuid-1"),
+    { type: "return_quantity_changed", sale_line_id: 41, value: "1" },
+    { type: "return_line_selected", sale_line_id: 42, selected: true },
+    { type: "return_quantity_changed", sale_line_id: 42, value: "2" },
+  );
+  const pending = flow(ready, { type: "return_submit_started" });
+  const conflicted = flow(pending, {
+    type: "return_submit_failed",
+    request_id: "return-uuid-1",
+    message: "Return conflicts with current history.",
+  });
+  const staleSuccess = flow(conflicted, { type: "return_submit_succeeded", request_id: "return-uuid-1" });
+  const retried = flow(conflicted, { type: "return_submit_started" });
+  const succeeded = flow(retried, { type: "return_submit_succeeded", request_id: "return-uuid-1" });
+
+  assert.deepEqual(pending.return_intent?.lines, { 41: "1", 42: "2" });
+  assert.equal(conflicted.return_intent?.request_id, "return-uuid-1");
+  assert.equal(staleSuccess, conflicted);
+  assert.equal(retried.return_intent?.status, "pending");
+  assert.equal(succeeded.return_intent?.status, "reload_requested");
+  assert.deepEqual(succeeded.detail?.lines, repeatedProductDetail.lines);
+});
+
+test("prevents pending duplicates and validates local return quantities", () => {
+  const opened = openedReturn();
+  const selected = selectedReturn();
+  const pending = flow(
+    selected,
+    { type: "return_quantity_changed", sale_line_id: 41, value: "1" },
+    { type: "return_submit_started" },
+  );
+  const invalid = (value: string) =>
+    flow(
+      selected,
+      { type: "return_quantity_changed", sale_line_id: 41, value },
+      { type: "return_submit_started" },
+    );
+
+  assert.equal(flow(pending, { type: "return_submit_started" }), pending);
+  assert.equal(
+    flow(opened, { type: "return_submit_started" }).return_intent?.error,
+    "Seleccioná al menos una línea para devolver.",
+  );
+  for (const value of ["", "0", "-1", "1.5", "9007199254740992"])
+    assert.equal(
+      invalid(value).return_intent?.error,
+      "Ingresá una cantidad entera positiva.",
+    );
+  assert.equal(
+    invalid("2").return_intent?.error,
+    "La cantidad supera las unidades disponibles guardadas.",
+  );
+  assert.equal(
+    openedReturn({
+      ...detail,
+      lines: [{ ...detail.lines[0], remaining_returnable_quantity: 0 }],
+    }).return_intent,
+    null,
+  );
+  assert.equal(
+    openedReturn({ ...detail, status: "cancelled" }).return_intent,
+    null,
+  );
+});
+
+test("recovers a return modal after detail reload failure without closing on transient success", () => {
+  const submitted = flow(
+    selectedReturn(),
+    { type: "return_quantity_changed", sale_line_id: 41, value: "1" },
+    { type: "return_submit_started" },
+    { type: "return_submit_succeeded", request_id: "return-uuid" },
+  );
+  const failed = flow(submitted, {
+    type: "detail_failed",
+    message: "private detail failure",
+  });
+  const transientlyClosed = flow(submitted, { type: "return_modal_closed" });
+
+  assert.equal(failed.detail, null);
+  assert.equal(failed.return_intent?.status, "error");
+  assert.equal(failed.return_intent?.modal_open, true);
+  assert.ok(failed.return_intent?.error);
+  assert.equal(failed.return_intent?.validation, null);
+  assert.equal(transientlyClosed.return_intent?.status, "reload_requested");
+  assert.equal(flow(failed, { type: "return_modal_closed" }).return_intent, null);
+});
+
+test("keeps correction work areas exclusive and ignores stale correction completion", () => {
+  const returnOpen = openedReturn(detail, "return-new");
+  const blockedCancellation = flow(returnOpen, {
+    type: "cancellation_intent_opened",
+    request_id: "cancel-blocked",
+  });
+  const cancellationOpen = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail },
+    { type: "cancellation_intent_opened", request_id: "cancel-new" },
+  );
+  const blockedReturn = flow(cancellationOpen, {
+    type: "return_intent_opened",
+    request_id: "return-blocked",
+  });
+  const pending = flow(
+    selectedReturn(detail, "return-new"),
+    { type: "return_quantity_changed", sale_line_id: 41, value: "1" },
+    { type: "return_submit_started" },
+  );
+
+  assert.equal(blockedCancellation.cancellation_intent, null);
+  assert.equal(blockedReturn.return_intent, null);
+  assert.equal(returnOpen.return_intent?.modal_open, true);
+  assert.equal(flow(returnOpen, { type: "return_modal_closed" }).return_intent, null);
+  assert.equal(cancellationOpen.cancellation_intent?.modal_open, true);
+  assert.equal(
+    flow(pending, { type: "return_submit_succeeded", request_id: "return-old" }),
+    pending,
+  );
+  assert.equal(
+    flow(pending, {
+      type: "return_submit_failed",
+      request_id: "return-old",
+      message: "error obsoleto",
+    }),
+    pending,
+  );
+});
+
+test("keeps a cancellation intent stable through validation, retry, and reload", () => {
+  const fullyReturned = {
+    ...detail,
+    lines: [{ ...detail.lines[0], remaining_returnable_quantity: 0 }],
+  };
+  const opened = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail: fullyReturned },
+    { type: "cancellation_intent_opened", request_id: "cancellation-uuid" },
+  );
+  const blank = flow(opened, { type: "cancellation_confirmation_requested" });
+  const whitespace = flow(
+    opened,
+    { type: "cancellation_reason_changed", value: "   " },
+    { type: "cancellation_confirmation_changed", confirmed: true },
+    { type: "cancellation_confirmation_requested" },
+  );
+  const unconfirmed = flow(
+    opened,
+    { type: "cancellation_reason_changed", value: "  Duplicate sale  " },
+    { type: "cancellation_confirmation_changed", confirmed: false },
+    { type: "cancellation_confirmation_requested" },
+  );
+  const prepared = flow(
+    unconfirmed,
+    { type: "cancellation_confirmation_changed", confirmed: true },
+    { type: "cancellation_confirmation_requested" },
+  );
+  const pending = flow(prepared, { type: "cancellation_submit_started" });
+  const failed = flow(pending, {
+    type: "cancellation_submit_failed",
+    request_id: "cancellation-uuid",
+    message: "Cancellation conflicts with current history.",
+  });
+  const staleSuccess = flow(failed, { type: "cancellation_submit_succeeded", request_id: "cancellation-uuid" });
+  const retried = flow(failed, { type: "cancellation_submit_started" });
+  const succeeded = flow(retried, { type: "cancellation_submit_succeeded", request_id: "cancellation-uuid" });
+  const staleReload = flow(succeeded, {
+    type: "detail_loaded",
+    detail: fullyReturned,
+  });
+  const matchingReload = flow(succeeded, {
+    type: "detail_loaded",
+    detail: {
+      ...fullyReturned,
+      status: "cancelled",
+      cancellation: {
+        cancellation_id: 14,
+        request_id: "cancellation-uuid",
+        occurred_at: "2024-03-11 05:00:00",
+        reason: "Duplicate sale",
+        lines: [{ sale_line_id: 41, product_id: 4, restored_quantity: 0 }],
+      },
+    },
+  });
+
+  assert.equal(opened.cancellation_intent?.request_id, "cancellation-uuid");
+  assert.equal(opened.cancellation_intent?.reason, "");
+  assert.equal(
+    blank.cancellation_intent?.error,
+    "Ingresá un motivo de cancelación.",
+  );
+  assert.equal(
+    whitespace.cancellation_intent?.error,
+    "Ingresá un motivo de cancelación.",
+  );
+  assert.equal(unconfirmed.cancellation_intent?.reason, "  Duplicate sale  ");
+  assert.equal(
+    unconfirmed.cancellation_intent?.error,
+    "Confirmá la corrección de inventario antes de continuar.",
+  );
+  assert.equal(prepared.cancellation_intent?.modal_open, false);
+  assert.equal(
+    flow(prepared, { type: "cancellation_modal_closed" }).cancellation_intent?.modal_open,
+    true,
+  );
+  assert.equal(flow(pending, { type: "cancellation_submit_started" }), pending);
+  assert.equal(pending.detail, fullyReturned);
+  assert.equal(failed.cancellation_intent?.request_id, "cancellation-uuid");
+  assert.equal(failed.cancellation_intent?.reason, "  Duplicate sale  ");
+  assert.equal(failed.cancellation_intent?.confirmed, true);
+  assert.equal(failed.detail, fullyReturned);
+  assert.equal(staleSuccess, failed);
+  assert.equal(retried.cancellation_intent?.status, "pending");
+  assert.equal(retried.cancellation_intent?.request_id, "cancellation-uuid");
+  assert.equal(succeeded.cancellation_intent?.status, "reload_requested");
+  assert.equal(succeeded.cancellation_intent?.request_id, "cancellation-uuid");
+  assert.deepEqual(succeeded.detail, fullyReturned);
+  assert.equal(staleReload.cancellation_intent?.status, "error");
+  assert.equal(staleReload.cancellation_intent?.modal_open, true);
+  assert.match(staleReload.cancellation_intent?.error ?? "", /todavía no aparece/);
+  assert.equal(matchingReload.cancellation_intent, null);
+  assert.equal(
+    flow(
+      initialHistoryState,
+      { type: "detail_loaded", detail: { ...detail, status: "cancelled" } },
+      { type: "cancellation_intent_opened", request_id: "other-uuid" },
+      { type: "cancellation_submit_started" },
+    ).cancellation_intent,
+    null,
+  );
+});
+
+test("renders centavo money, unavailable snapshots, payment facts, and the narrowing notice", () => {
+  const state = createHistoryFlow(initialHistoryState, { type: "list_loaded", sales: [summary], has_more: true });
+  const shown = createHistoryFlow(createHistoryFlow(state, { type: "detail_started", sale_id: summary.sale_id }), { type: "detail_loaded", detail });
+  const markup = renderToStaticMarkup(createElement(HistoryScreen, { state: shown, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined }));
+
+  assert.match(markup, /Bs 25,00/);
+  assert.match(markup, /Producto no disponible.*SKU no disponible/s);
+  assert.match(markup, /Efectivo aplicado.*Bs 20,00/s);
+  assert.match(markup, /Efectivo recibido.*Bs 30,00/s);
+  assert.match(markup, /Cambio.*Bs 5,00/s);
+  assert.match(markup, /Pago QR.*Bs 5,00/s);
+  assert.match(renderToStaticMarkup(createElement(HistoryScreen, { state, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined })), /Reducí el rango de fechas/);
+});
+
+test("renders immutable lifecycle facts and persisted correction presentation", () => {
+  const correctedDetail: SalesHistoryDetail = {
+    ...detail,
+    status: "cancelled",
+    lines: [
+      {
+        ...detail.lines[0],
+        sale_line_id: 41,
+        remaining_returnable_quantity: 0,
+      },
+      {
+        ...detail.lines[0],
+        sale_line_id: 42,
+        remaining_returnable_quantity: 0,
+      },
+    ],
+    returns: [
+      {
+        return_id: 81,
+        request_id: "return-request",
+        occurred_at: "2024-03-11 05:00:00",
+        lines: [{ sale_line_id: 41, product_id: 4, quantity: 1 }],
+      },
+    ],
+    cancellation: {
+      cancellation_id: 91,
+      request_id: "cancellation-request",
+      occurred_at: "2024-03-12 05:00:00",
+      reason: "Duplicate sale",
+      lines: [
+        { sale_line_id: 41, product_id: 4, restored_quantity: 0 },
+        { sale_line_id: 42, product_id: 4, restored_quantity: 0 },
+      ],
+    },
+  };
+  const shown = flow(initialHistoryState, {
+    type: "detail_loaded",
+    detail: correctedDetail,
+  });
+  const markup = renderToStaticMarkup(
+    createElement(HistoryScreen, {
+      state: shown,
+      onReload: () => undefined,
+      onSelect: () => undefined,
+      onBack: () => undefined,
+    }),
+  );
+
+  assert.match(markup, /Cancelada/);
+  assert.match(markup, /Artículos originales/);
+  assert.match(markup, /Pagos originales/);
+  assert.match(markup, /Historial de correcciones de inventario/);
+  assert.match(markup, /Devolución #81/);
+  assert.match(markup, /Cantidad devuelta[^]*>1</);
+  assert.match(markup, /Motivo[^]*Duplicate sale/);
+  assert.match(markup, /Cantidad restaurada[^]*>0</);
+});
+
+test("renders sale-line keyed correction forms from persisted status and quantities", () => {
+  const repeatedLines = {
+    ...detail,
+    lines: [
+      {
+        ...detail.lines[0],
+        sale_line_id: 41,
+        remaining_returnable_quantity: 1,
+      },
+      {
+        ...detail.lines[0],
+        sale_line_id: 42,
+        remaining_returnable_quantity: 2,
+      },
+    ],
+  };
+  const returnState = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail: repeatedLines },
+    { type: "return_intent_opened", request_id: "return-id" },
+    { type: "return_line_selected", sale_line_id: 42, selected: true },
+  );
+  const cancellationState = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail: repeatedLines },
+    { type: "cancellation_intent_opened", request_id: "cancellation-id" },
+  );
+  const fullyReturned = flow(initialHistoryState, {
+    type: "detail_loaded",
+    detail: {
+      ...repeatedLines,
+      lines: repeatedLines.lines.map((line) => ({
+        ...line,
+        remaining_returnable_quantity: 0,
+      })),
+    },
+  });
+  const render = (state: typeof returnState) =>
+    renderToStaticMarkup(
+      createElement(HistoryScreen, {
+        state,
+        onReload: () => undefined,
+        onSelect: () => undefined,
+        onBack: () => undefined,
+      }),
+    );
+
+  assert.match(render(returnState), /aria-label="Devolución de artículos"/);
+  assert.match(render(returnState), /name="return-line-41"/);
+  assert.match(render(returnState), /name="return-line-42"/);
+  assert.match(render(returnState), /Máximo disponible: 1 unidad/);
+  assert.match(render(returnState), /Máximo disponible: 2 unidades/);
+  assert.match(render(cancellationState), /Motivo de cancelación/);
+  assert.match(render(cancellationState), /Los pagos originales no cambian/);
+  assert.doesNotMatch(render(fullyReturned), /Iniciar devolución de artículos/);
+  assert.match(render(fullyReturned), /Iniciar cancelación de venta/);
+});
+
+test("renders keyboard-operable correction forms with inventory-only language", () => {
+  const base = flow(initialHistoryState, { type: "detail_loaded", detail });
+  const state = flow(
+    base,
+    { type: "return_intent_opened", request_id: "return-keyboard" },
+    { type: "return_line_selected", sale_line_id: 41, selected: true },
+  );
+  const render = (current: typeof state) => renderToStaticMarkup(
+    createElement(HistoryScreen, { state: current, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined }),
+  );
+  const markup = render(state);
+  const cancellationMarkup = render(flow(base, { type: "cancellation_intent_opened", request_id: "cancellation-keyboard" }));
+
+  assert.match(markup, /<form(?=[^>]*aria-label="Devolución de artículos")/);
+  assert.match(
+    markup,
+    /<input(?=[^>]*id="return-line-41")(?=[^>]*type="checkbox")/,
+  );
+  assert.match(
+    markup,
+    /<input(?=[^>]*id="return-quantity-41")(?=[^>]*type="text")(?=[^>]*inputMode="numeric")/,
+  );
+  assert.match(cancellationMarkup, /<form(?=[^>]*aria-label="Preparar cancelación de venta")/);
+  assert.match(cancellationMarkup, /<input(?=[^>]*id="cancellation-reason")/);
+  assert.match(
+    cancellationMarkup,
+    /<input(?=[^>]*id="cancellation-confirmation")(?=[^>]*type="checkbox")/,
+  );
+  assert.match(
+    markup,
+    /<button(?=[^>]*type="submit")[^>]*>Registrar devolución<\/button>/,
+  );
+  assert.match(
+    cancellationMarkup,
+    /<button(?=[^>]*type="submit")[^>]*>Continuar con la cancelación<\/button>/,
+  );
+  assert.doesNotMatch(
+    markup,
+    /\b(refund|reimbursement|payment reversal|credit|settlement)\b/i,
+  );
+});
+
+test("derives deterministic correction focus in the reducer and applies it through HistoryScreen's effect", () => {
+  const repeatedLines = {
+    ...detail,
+    lines: [
+      {
+        ...detail.lines[0],
+        sale_line_id: 42,
+        remaining_returnable_quantity: 2,
+      },
+      {
+        ...detail.lines[0],
+        sale_line_id: 41,
+        remaining_returnable_quantity: 1,
+      },
+    ],
+  };
+  const invalidReturn = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail: repeatedLines },
+    { type: "return_intent_opened", request_id: "return-focus" },
+    { type: "return_line_selected", sale_line_id: 42, selected: true },
+    { type: "return_quantity_changed", sale_line_id: 42, value: "1" },
+    { type: "return_line_selected", sale_line_id: 41, selected: true },
+    { type: "return_quantity_changed", sale_line_id: 41, value: "0" },
+    { type: "return_submit_started" },
+  );
+  assert.deepEqual(invalidReturn.return_intent?.validation, {
+    message: "Ingresá una cantidad entera positiva.",
+    focus_target: "return-quantity-41",
+  });
+  assert.equal(correctionFocusTarget(invalidReturn), "return-quantity-41");
+  let focused: string | null = null;
+  let scheduledEffects = 0;
+  renderToStaticMarkup(
+    createElement(HistoryScreen, {
+      state: invalidReturn,
+      onReload: () => undefined,
+      onSelect: () => undefined,
+      onBack: () => undefined,
+      runEffect: (effect) => {
+        scheduledEffects += 1;
+        effect();
+      },
+      findFocusable: (id) => ({
+        focus: () => {
+          focused = id;
+        },
+      }),
+    }),
+  );
+  assert.equal(scheduledEffects, 1);
+  assert.equal(focused, "return-quantity-41");
+
+  const missingSelection = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail: repeatedLines },
+    { type: "return_intent_opened", request_id: "return-focus-empty" },
+    { type: "return_submit_started" },
+  );
+  assert.equal(correctionFocusTarget(missingSelection), "return-line-42");
+
+  const missingReason = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail: repeatedLines },
+    { type: "cancellation_intent_opened", request_id: "cancellation-focus" },
+    { type: "cancellation_confirmation_requested" },
+  );
+  const missingConfirmation = flow(
+    missingReason,
+    { type: "cancellation_reason_changed", value: "Duplicate sale" },
+    { type: "cancellation_confirmation_requested" },
+  );
+  assert.equal(correctionFocusTarget(missingReason), "cancellation-reason");
+  assert.equal(
+    correctionFocusTarget(missingConfirmation),
+    "cancellation-confirmation",
+  );
+});
+
+test("guards list and detail retrieval against obsolete completion order", async () => {
+  type Deferred<Value> = {
+    promise: Promise<Value>;
+    resolve: (value: Value) => void;
+  };
+  const deferred = <Value,>(): Deferred<Value> => {
+    let resolve!: (value: Value) => void;
+    const promise = new Promise<Value>((done) => { resolve = done; });
+    return { promise, resolve };
+  };
+  const otherSummary = { ...summary, sale_id: 72 };
+  const otherDetail = { ...detail, sale_id: 72 };
+  const lists = new Map<string, Deferred<Awaited<ReturnType<typeof emptyHistoryList>>>>();
+  const details = new Map<number, Deferred<{ kind: "success"; detail: SalesHistoryDetail }>>();
+  const interaction = createSalesHistoryInteraction({
+    list: (from) => {
+      const request = deferred<Awaited<ReturnType<typeof emptyHistoryList>>>();
+      lists.set(from, request);
+      return request.promise;
+    },
+    detail: (saleId) => {
+      const request = deferred<{ kind: "success"; detail: SalesHistoryDetail }>();
+      details.set(saleId, request);
+      return request.promise;
+    },
+  });
+  let state = initialHistoryState;
+  const dispatch = (action: Parameters<typeof createHistoryFlow>[1]) => {
+    state = createHistoryFlow(state, action);
+  };
+
+  const olderList = interaction.reload("older", "older", dispatch);
+  const newerList = interaction.reload("newer", "newer", dispatch);
+  lists.get("newer")!.resolve({ kind: "success", sales: [otherSummary], has_more: false });
+  await newerList;
+  lists.get("older")!.resolve({ kind: "success", sales: [summary], has_more: false });
+  await olderList;
+  assert.equal(state.sales[0].sale_id, 72);
+
+  const detailA = interaction.select(summary, dispatch);
+  const detailB = interaction.select(otherSummary, dispatch);
+  details.get(72)!.resolve({ kind: "success", detail: otherDetail });
+  await detailB;
+  details.get(71)!.resolve({ kind: "success", detail });
+  await detailA;
+  assert.equal(state.detail?.sale_id, 72);
+
+  const lateList = interaction.reload("late", "late", dispatch);
+  const selected = interaction.select(otherSummary, dispatch);
+  details.get(72)!.resolve({ kind: "success", detail: otherDetail });
+  await selected;
+  lists.get("late")!.resolve({ kind: "success", sales: [summary], has_more: false });
+  await lateList;
+  assert.equal(state.view, "detail");
+  assert.equal(state.detail?.sale_id, 72);
+});
+
+test("invalidates completion after disposal and obsolete correction success", async () => {
+  let resolveList!: (value: Awaited<ReturnType<typeof emptyHistoryList>>) => void;
+  let resolveReturn!: (value: { kind: "success" }) => void;
+  const detailCalls: number[] = [];
+  const interaction = createSalesHistoryInteraction({
+    list: () => new Promise((resolve) => { resolveList = resolve; }),
+    detail: async (saleId) => {
+      detailCalls.push(saleId);
+      return { kind: "success", detail: { ...detail, sale_id: saleId } };
+    },
+    createReturn: () => new Promise((resolve) => { resolveReturn = resolve; }),
+  });
+  let state = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail },
+    { type: "return_intent_opened", request_id: "preserved-uuid" },
+    { type: "return_line_selected", sale_line_id: 41, selected: true },
+    { type: "return_quantity_changed", sale_line_id: 41, value: "1" },
+  );
+  const actions: HistoryAction[] = [];
+  const dispatch = (action: HistoryAction) => {
+    actions.push(action);
+    state = createHistoryFlow(state, action);
+  };
+
+  const correction = interaction.submitReturn(state, dispatch);
+  await interaction.select({ ...summary, sale_id: 72 }, dispatch);
+  resolveReturn({ kind: "success" });
+  await correction;
+  assert.equal(state.detail?.sale_id, 72);
+  assert.deepEqual(detailCalls, [72]);
+  assert.equal(actions.some(({ type }) => type === "return_submit_succeeded"), false);
+
+  const completion = interaction.reload("from", "to", dispatch);
+  const actionCount = actions.length;
+  interaction.dispose();
+  resolveList({ kind: "success", sales: [summary], has_more: false });
+  await completion;
+  assert.equal(actions.length, actionCount);
+});
+
+test("renders correction controls with 44px minimum targets", () => {
+  const base = flow(initialHistoryState, { type: "detail_loaded", detail });
+  const state = flow(base,
+    { type: "return_intent_opened", request_id: "return-target" },
+    { type: "return_line_selected", sale_line_id: 41, selected: true });
+  const render = (current: typeof state) => renderToStaticMarkup(createElement(HistoryScreen, {
+    state: current, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined,
+  }));
+  const markup = render(state);
+  const cancellationMarkup = render(flow(base, { type: "cancellation_intent_opened", request_id: "cancellation-target" }));
+
+  assert.match(
+    markup,
+    /id="return-line-41"(?=[^>]*style="min-width:44px;min-height:44px")/,
+  );
+  assert.match(
+    markup,
+    /id="return-quantity-41"(?=[^>]*style="min-width:44px;min-height:44px")/,
+  );
+  assert.match(
+    cancellationMarkup,
+    /id="cancellation-reason"(?=[^>]*style="min-width:44px;min-height:44px")/,
+  );
+  assert.match(
+    cancellationMarkup,
+    /id="cancellation-confirmation"(?=[^>]*style="min-width:44px;min-height:44px")/,
+  );
+  assert.match(
+    markup,
+    /<button(?=[^>]*style="min-width:44px;min-height:44px")[^>]*>Registrar devolución<\/button>/,
+  );
+  assert.match(
+    cancellationMarkup,
+    /<button(?=[^>]*style="min-width:44px;min-height:44px")[^>]*>Continuar con la cancelación<\/button>/,
+  );
+});

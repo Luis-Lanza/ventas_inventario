@@ -1,0 +1,194 @@
+use serde::{Deserialize, Serialize};
+
+use crate::application::sales::{
+    ApplicationConfirmSaleRequest, ApplicationRequestedLine, ConfirmSaleError, ConfirmSaleUseCase,
+};
+use crate::domain::sales::{Payment, PaymentInput};
+use crate::domain::{MoneyCentavos, Quantity, RequestId};
+use crate::infrastructure::sqlite::sale_repository::SqliteSaleRepository;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfirmSaleRequest {
+    pub request_id: String,
+    pub lines: Vec<RequestedLine>,
+    pub payment: PaymentInputRequest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestedLine {
+    pub product_id: i64,
+    pub quantity: i64,
+    pub captured_unit_price_centavos: i64,
+    /// Explicit negotiated-price route. The backend compares it with current state transactionally.
+    #[serde(default)]
+    pub final_unit_price_centavos: Option<i64>,
+    /// Ignored in serialized IPC; retained only for existing in-process constructors.
+    #[serde(skip)]
+    pub captured_revision: i64,
+    /// Ignored in serialized IPC; stale checks are backend-owned.
+    #[serde(skip)]
+    pub acknowledged_price_centavos: Option<i64>,
+    /// Ignored in serialized IPC; stale checks are backend-owned.
+    #[serde(skip)]
+    pub acknowledged_revision: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PaymentInputRequest {
+    pub amount_tendered_centavos: Option<i64>,
+    pub qr_applied_centavos: Option<i64>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConfirmSaleResponse {
+    Success(PersistedSaleSummary),
+    StaleCatalogRecord(StaleCatalogPrice),
+    MinimumPriceViolation(MinimumPriceViolation),
+    Error(CommandError),
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct StaleCatalogPrice {
+    pub product_id: i64,
+    pub current_unit_price_centavos: i64,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct MinimumPriceViolation {
+    pub product_id: i64,
+    pub current_minimum_unit_price_centavos: i64,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct CommandError {
+    pub code: &'static str,
+    pub message: &'static str,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct PersistedSaleSummary {
+    pub sale_id: i64,
+    pub request_id: String,
+    pub status: String,
+    pub confirmed_at: String,
+    pub outcome: &'static str,
+    pub lines: Vec<PersistedLine>,
+    pub payments: Vec<Payment>,
+    pub total_centavos: i64,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct PersistedLine {
+    pub product_id: i64,
+    pub sku: String,
+    pub product_name: String,
+    pub quantity: i64,
+    pub unit_price_centavos: i64,
+    pub minimum_unit_price_snapshot_centavos: i64,
+    pub list_price_snapshot_centavos: Option<i64>,
+    pub line_total_centavos: i64,
+}
+
+pub fn confirm_sale(
+    connection: &mut rusqlite::Connection,
+    request: ConfirmSaleRequest,
+) -> Result<ConfirmSaleResponse, String> {
+    let request = match parse_request(request) {
+        Ok(request) => request,
+        Err(error) => return Ok(ConfirmSaleResponse::Error(error)),
+    };
+    let repository = SqliteSaleRepository;
+    Ok(match ConfirmSaleUseCase::new(connection, &repository).confirm(request) {
+        Ok(summary) => ConfirmSaleResponse::Success(map_summary(summary)),
+        Err(ConfirmSaleError::StaleCatalogPrice { product_id, current_unit_price, .. }) => ConfirmSaleResponse::StaleCatalogRecord(StaleCatalogPrice {
+            product_id,
+            current_unit_price_centavos: current_unit_price.value(),
+        }),
+        Err(ConfirmSaleError::FinalPriceBelowMinimum {
+            product_id,
+            current_minimum_unit_price,
+        }) => ConfirmSaleResponse::MinimumPriceViolation(MinimumPriceViolation {
+            product_id,
+            current_minimum_unit_price_centavos: current_minimum_unit_price.value(),
+        }),
+        Err(error) => ConfirmSaleResponse::Error(map_error(error)),
+    })
+}
+
+fn parse_request(request: ConfirmSaleRequest) -> Result<ApplicationConfirmSaleRequest, CommandError> {
+    let request_id = RequestId::parse(&request.request_id).map_err(|_| invalid_request())?;
+    let lines = request.lines.into_iter().map(|line| {
+        Ok(ApplicationRequestedLine {
+            product_id: line.product_id,
+            quantity: Quantity::new(line.quantity).map_err(|_| invalid_quantity())?,
+            captured_unit_price: MoneyCentavos::new(line.captured_unit_price_centavos).map_err(|_| invalid_request())?,
+            captured_revision: line.captured_revision,
+            final_unit_price: line.final_unit_price_centavos.map(|price| {
+                if price <= 0 {
+                    return Err(invalid_final_price());
+                }
+                MoneyCentavos::new(price).map_err(|_| invalid_request())
+            }).transpose()?,
+            acknowledged_price: line.acknowledged_price_centavos.map(|price| MoneyCentavos::new(price).map_err(|_| invalid_request())).transpose()?,
+            acknowledged_revision: line.acknowledged_revision,
+        })
+    }).collect::<Result<Vec<_>, _>>()?;
+    Ok(ApplicationConfirmSaleRequest {
+        request_id,
+        lines,
+        payment: PaymentInput {
+            amount_tendered: parse_money(request.payment.amount_tendered_centavos)?,
+            qr_applied: parse_money(request.payment.qr_applied_centavos)?,
+        },
+    })
+}
+
+fn parse_money(value: Option<i64>) -> Result<Option<MoneyCentavos>, CommandError> {
+    value.map(|centavos| MoneyCentavos::new(centavos).map_err(|_| invalid_payment())).transpose()
+}
+
+fn map_summary(summary: crate::application::sales::PersistedSaleSummary) -> PersistedSaleSummary {
+    PersistedSaleSummary {
+        sale_id: summary.sale_id,
+        request_id: summary.request_id.as_uuid().to_string(),
+        status: summary.status,
+        confirmed_at: summary.confirmed_at,
+        outcome: "confirmed",
+        lines: summary.lines.into_iter().map(|line| PersistedLine {
+            product_id: line.product_id,
+            sku: line.sku,
+            product_name: line.product_name,
+            quantity: line.quantity.value(),
+            unit_price_centavos: line.negotiated_unit_price.value(),
+            minimum_unit_price_snapshot_centavos: line.minimum_unit_price_snapshot.value(),
+            list_price_snapshot_centavos: line.list_price_snapshot.map(|price| price.value()),
+            line_total_centavos: line.line_total.value(),
+        }).collect(),
+        payments: summary.payments,
+        total_centavos: summary.total.value(),
+    }
+}
+
+fn invalid_request() -> CommandError { CommandError { code: "invalid_request", message: "The request shape is invalid." } }
+fn invalid_quantity() -> CommandError { CommandError { code: "invalid_quantity", message: "Quantity must be a positive whole number." } }
+fn invalid_payment() -> CommandError { CommandError { code: "invalid_payment", message: "Payment values are invalid." } }
+fn invalid_final_price() -> CommandError { CommandError { code: "invalid_final_price", message: "The final price must be positive." } }
+fn map_error(error: ConfirmSaleError) -> CommandError {
+    let (code, message) = match error {
+        ConfirmSaleError::ProductInactive => ("inactive_product", "The product is inactive."),
+        ConfirmSaleError::ProductMissing => ("missing_product", "The product was not found."),
+        ConfirmSaleError::InvalidQuantity => ("invalid_quantity", "Quantity must be a positive whole number."),
+        ConfirmSaleError::QrExceedsTotal | ConfirmSaleError::CashTenderRequired | ConfirmSaleError::InsufficientCashTender | ConfirmSaleError::UnexpectedCashTender => ("invalid_payment", "Payment values are invalid."),
+        ConfirmSaleError::InsufficientStock => ("insufficient_stock", "Insufficient stock is available."),
+        ConfirmSaleError::StaleCatalogPrice { .. } => ("persistence_failure", "The sale could not be persisted."),
+        ConfirmSaleError::FinalPriceBelowMinimum { .. } => ("minimum_price_violation", "The final price is below the current minimum price."),
+        ConfirmSaleError::DuplicateProduct => ("invalid_request", "The request shape is invalid."),
+        ConfirmSaleError::RequestConflict => ("request_conflict", "This request ID was already used with different sale data."),
+        ConfirmSaleError::MoneyOverflow | ConfirmSaleError::PersistedDataInvalid | ConfirmSaleError::Persistence => ("persistence_failure", "The sale could not be persisted."),
+    };
+    CommandError { code, message }
+}

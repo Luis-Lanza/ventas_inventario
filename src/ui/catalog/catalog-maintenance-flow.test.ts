@@ -1,0 +1,163 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { createCatalogEditRequest, createCategorySchemaEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState } from "./catalog-maintenance-flow.ts";
+import { CatalogMaintenanceRecovery, CatalogMetadataEditor, CatalogSuccessNotice, loadCatalogDetail, reloadCatalogRecords } from "./catalog-maintenance-screen.ts";
+import { createCatalogMaintenanceCommands } from "../../commands/catalog.ts";
+
+const archived = { entity_id: 1, target: "product" as const, label: "Filter", activity: "archived" as const, revision: 2 };
+
+test("SKU conflicts give a specific correction without replacing generic validation", () => {
+  const state = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "edit_failed", code: "duplicate_sku" });
+  assert.equal(state.feedback, "El SKU ya existe. Usá otro SKU.");
+  assert.equal(state.recovery_required, false);
+  assert.equal(createCatalogMaintenanceFlow(state, { type: "edit_failed", code: "validation_error" }).feedback, "Revisá los valores del catálogo e intentá nuevamente.");
+});
+
+test("filters category management rows by category name without changing authoritative metadata", () => {
+  const categories = [
+    { entity_id: 1, target: "category" as const, label: "Filtros", activity: "active" as const, revision: 2, active_product_count: 8 },
+    { entity_id: 2, target: "category" as const, label: "Pastillas", activity: "archived" as const, revision: 3, active_product_count: 0 },
+  ];
+  assert.deepEqual(filterCatalogCategories(categories, "  past "), [categories[1]]);
+  assert.deepEqual(filterCatalogCategories(categories, " "), categories);
+});
+
+test("keeps Category Management category records available while Products browses separately", () => {
+  const category = { entity_id: 4, target: "category" as const, label: "Filtros", activity: "active" as const, revision: 2, active_product_count: 3 };
+  const ready = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "loaded", records: [category] });
+  const selected = createCatalogMaintenanceFlow(ready, { type: "detail_started", record: category });
+  const returnedToManagement = createCatalogMaintenanceFlow(selected, { type: "selection_cleared" });
+  assert.deepEqual(returnedToManagement.records, [category]);
+  assert.equal(returnedToManagement.status, "ready");
+  assert.equal(returnedToManagement.selected, null);
+});
+
+test("surfaces loading, unavailable, validation, conflict, failure, recovery, and archived records", () => {
+  const loading = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "load_started" });
+  const ready = createCatalogMaintenanceFlow(loading, { type: "loaded", records: [archived] });
+  const validation = createCatalogMaintenanceFlow(ready, { type: "mutation_failed", code: "validation_error" });
+  const conflict = createCatalogMaintenanceFlow(validation, { type: "mutation_failed", code: "stale_catalog_record" });
+  const failure = createCatalogMaintenanceFlow(conflict, { type: "load_failed" });
+  const restored = createCatalogMaintenanceFlow(ready, { type: "mutation_succeeded", record: { ...archived, activity: "active", revision: 3, label: "" } });
+  assert.equal(loading.status, "loading");
+  assert.equal(ready.records[0].activity, "archived");
+  assert.equal(validation.feedback, "Revisá los valores del catálogo e intentá nuevamente.");
+  assert.equal(conflict.feedback, "Registro desactualizado. Recargá los registros del catálogo.");
+  assert.equal(conflict.recovery_required, true);
+  assert.equal(conflict.lifecycle_feedback, "Registro desactualizado. Recargá los registros del catálogo.");
+  assert.match(renderToStaticMarkup(createElement(CatalogMaintenanceRecovery, { required: conflict.recovery_required, onReload: () => undefined })), /Recargar registros del catálogo/);
+  assert.equal(failure.status, "unavailable");
+  assert.equal(restored.records[0].label, "Filter");
+});
+
+test("loads editable metadata, validates typed values, and reloads stable conflicts", () => {
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 7, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, primary_location_id: 9, activity: "archived" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option" as const, required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] };
+  const loading = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "detail_started" });
+  const ready = createCatalogMaintenanceFlow(loading, { type: "detail_loaded", detail });
+  const pending = createCatalogMaintenanceFlow(ready, { type: "edit_started" });
+  const conflict = createCatalogMaintenanceFlow(pending, { type: "edit_failed", code: "stale_catalog_record" });
+  const staleSchema = createCatalogMaintenanceFlow(pending, { type: "edit_failed", code: "stale_category_schema" });
+  const assignmentFailed = createCatalogMaintenanceFlow(pending, { type: "location_assignment_failed" });
+  const unavailable = createCatalogMaintenanceFlow(ready, { type: "detail_failed", code: "catalog_unavailable" });
+  const reactivated = createCatalogMaintenanceFlow({ ...ready, records: [archived], selected: archived }, { type: "mutation_succeeded", record: { ...archived, activity: "active", revision: 3 } });
+  assert.deepEqual(formForCatalogDetail(detail), { sku: "FLT", name: "Filter", purchase_price_centavos: "20,00", sale_price_centavos: "30,00", minimum_sale_price_centavos: "25,00", low_stock_threshold: "1", primary_location_id: 9, attribute_values: { 4: "Paper" } });
+  assert.equal(createCatalogEditRequest(detail, { sku: "FLT", name: "Filter", purchase_price_centavos: "20,00", sale_price_centavos: "inválido", minimum_sale_price_centavos: "25,00", attribute_values: { 4: "Paper" } }), null);
+  assert.deepEqual(Object.keys(fieldErrorsForCatalogEdit(detail, { sku: "FLT", name: "Filter", purchase_price_centavos: "", sale_price_centavos: "30,00", minimum_sale_price_centavos: "31,00", attribute_values: { 4: "Paper" } })).sort(), ["minimum_sale_price_centavos", "purchase_price_centavos"]);
+  const legacyDetail = { ...detail, sale_price_centavos: undefined, list_price_centavos: 3000, purchase_price_centavos: null } as unknown as typeof detail;
+  assert.deepEqual(formForCatalogDetail(legacyDetail).sale_price_centavos, "30,00");
+  assert.deepEqual(formForCatalogDetail(legacyDetail).purchase_price_centavos, "");
+  assert.deepEqual(createCatalogEditRequest(detail, formForCatalogDetail(detail)), { target: "product", entity_id: 1, expected_revision: 2, expected_category_revision: 7, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, low_stock_threshold: 1, attribute_values: [{ definition_id: 4, value: "Paper" }] });
+  assert.equal(pending.status, "pending");
+  assert.equal(conflict.recovery_required, true);
+  assert.equal(staleSchema.recovery_required, true);
+  assert.equal(assignmentFailed.recovery_required, true);
+  assert.match(assignmentFailed.feedback ?? "", /Recargá para revisar el producto/);
+  assert.equal(staleSchema.feedback, "Los campos de la categoría cambiaron. Recargá antes de guardar este producto.");
+  assert.equal(unavailable.status, "unavailable");
+  assert.deepEqual([reactivated.records[0].activity, reactivated.selected?.activity, reactivated.detail?.activity], ["active", "active", "active"]);
+  assert.deepEqual([reactivated.records[0].revision, reactivated.selected?.revision, reactivated.detail?.revision], [3, 3, 3]);
+  const refreshFailed = createCatalogMaintenanceFlow(reactivated, { type: "refresh_failed" });
+  const refreshStarted = createCatalogMaintenanceFlow(refreshFailed, { type: "refresh_started" });
+  const listRefreshed = createCatalogMaintenanceFlow(refreshStarted, { type: "refresh_list_succeeded", records: [archived] });
+  const refreshRetry = createCatalogMaintenanceFlow(listRefreshed, { type: "refresh_succeeded", records: [archived] });
+  const lockedRefresh = createCatalogMaintenanceFlow(listRefreshed, { type: "refresh_succeeded", records: [archived], keep_recovery_locked: true });
+  assert.equal(refreshFailed.recovery_required, true);
+  assert.equal(refreshFailed.status, "ready");
+  assert.deepEqual(refreshFailed.detail, reactivated.detail);
+  assert.equal(listRefreshed.recovery_required, true);
+  assert.equal(listRefreshed.status, "loading");
+  assert.equal(refreshRetry.recovery_required, false);
+  assert.equal(lockedRefresh.recovery_required, true);
+  assert.deepEqual(refreshRetry.records, [archived]);
+  const screen = renderToStaticMarkup(createElement(CatalogMetadataEditor, { detail, form: formForCatalogDetail(detail), pending: true, feedback: "Price must be whole centavos.", fieldErrors: { sale_price_centavos: "Price must be whole centavos." }, onChange: () => undefined, onSubmit: () => undefined }));
+  assert.match(screen, /Precio actual de compra \(Bs\).*Precio de venta \(Bs\).*Referencia para nuevas ventas/i);
+  assert.match(screen, /Material/);
+  assert.match(screen, /disabled/);
+  assert.match(screen, /aria-invalid="true"/);
+  assert.match(screen, /Registro archivado/);
+});
+
+test("excludes retired required attributes from product edit inputs, validation, and requests", () => {
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 8, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "active" as const, revision: 3, attribute_definitions: [
+    { definition_id: 4, label: "Material", field_type: "text" as const, required: true, options: [], active: true },
+    { definition_id: 9, label: "Legacy serial", field_type: "text" as const, required: true, options: [], active: false },
+  ], attribute_values: [{ definition_id: 4, value: "Steel" }, { definition_id: 9, value: "Historic-9" }] };
+  const form = formForCatalogDetail(detail);
+  assert.deepEqual(form.attribute_values, { 4: "Steel" });
+  assert.deepEqual(fieldErrorsForCatalogEdit(detail, form), {});
+  form.attribute_values[9] = "must not be sent";
+  const request = createCatalogEditRequest(detail, form);
+  assert.deepEqual(request?.attribute_values, [{ definition_id: 4, value: "Steel" }]);
+  assert.equal(request?.attribute_values.some((value) => value.definition_id === 9), false);
+});
+
+test("prepares active category schema drafts while excluding retired definitions", () => {
+  const detail = { target: "category" as const, entity_id: 2, name: "Filters", activity: "active" as const, revision: 4, attribute_definitions: [
+    { definition_id: 5, label: "Material", field_type: "option" as const, required: true, options: ["Steel", "Paper"], active: true },
+    { definition_id: 6, label: "Legacy", field_type: "text" as const, required: false, options: [], active: false },
+  ] };
+  const form = formForCatalogDetail(detail);
+  assert.deepEqual(form.category_fields?.map(({ definition_id, active }) => ({ definition_id, active })), [{ definition_id: 5, active: true }, { definition_id: 6, active: false }]);
+  form.category_fields?.push({ definition_id: null, label: "Length", field_type: "number", required: false, options: "", active: true });
+  assert.deepEqual(createCategorySchemaEditRequest(detail, form), { category_id: 2, expected_revision: 4, fields: [
+    { definition_id: 5, label: "Material", field_type: "option", required: true, options: ["Steel", "Paper"] },
+    { definition_id: null, label: "Length", field_type: "number", required: false, options: [] },
+  ] });
+  form.category_fields![2].label = " ";
+  assert.equal(createCategorySchemaEditRequest(detail, form), null);
+});
+
+test("keeps selected detail identity through failure and retries the same request", async () => {
+  const calls: string[] = [];
+  const detail = { target: "category" as const, entity_id: 2, name: "Filters", activity: "active" as const, revision: 1, attribute_definitions: [] };
+  const commands = createCatalogMaintenanceCommands(async (command) => { calls.push(command); return command === "list_catalog_maintenance_command" ? { kind: "success", records: [] } : calls.filter((item) => item === "catalog_metadata_detail_command").length === 1 ? { kind: "error", code: "catalog_unavailable" } : detail; });
+  let state = initialCatalogMaintenanceState;
+  const dispatch = (action: never) => { state = createCatalogMaintenanceFlow(state, action); };
+  let form = null;
+  const selected = { entity_id: 2, target: "category" as const, label: "Filters", activity: "active" as const, revision: 1 };
+  await loadCatalogDetail(commands, dispatch, (next) => { form = next; }, selected);
+  assert.deepEqual(state.selected, selected);
+  await reloadCatalogRecords(commands, dispatch, (next) => { form = next; }, state.selected);
+  assert.deepEqual(calls, ["catalog_metadata_detail_command", "list_catalog_categories_command", "catalog_metadata_detail_command"]);
+  assert.equal(state.detail?.target, "category");
+  assert.deepEqual(form, { name: "Filters", attribute_values: {}, category_fields: [] });
+});
+
+test("keeps success announced during refresh and scopes validation to invalid fields", () => {
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "active" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "text" as const, required: true, options: [] }, { definition_id: 5, label: "Length", field_type: "number" as const, required: false, options: [] }, { definition_id: 6, label: "Grade", field_type: "option" as const, required: false, options: ["A"] }], attribute_values: [] };
+  const invalid = fieldErrorsForCatalogEdit(detail, { sku: "", name: "", purchase_price_centavos: "", sale_price_centavos: "inválido", minimum_sale_price_centavos: "25,00", low_stock_threshold: "0", attribute_values: { 4: "", 5: "not-a-number", 6: "B" } });
+  const saved = createCatalogMaintenanceFlow({ ...initialCatalogMaintenanceState, detail }, { type: "edit_succeeded", record: { entity_id: 1, target: "product", label: "Filter", activity: "active", revision: 3 } });
+  const loading = createCatalogMaintenanceFlow(saved, { type: "load_started" });
+  const listed = createCatalogMaintenanceFlow(loading, { type: "loaded", records: [] });
+  const refreshed = createCatalogMaintenanceFlow(listed, { type: "detail_loaded", detail });
+  const conflict = renderToStaticMarkup(createElement(CatalogMetadataEditor, { detail, form: formForCatalogDetail(detail), pending: false, feedback: "This catalog record changed. Reload and try again.", fieldErrors: {}, onChange: () => undefined, onSubmit: () => undefined }));
+  assert.deepEqual(Object.keys(invalid).sort(), ["attribute-4", "attribute-5", "attribute-6", "low_stock_threshold", "name", "purchase_price_centavos", "sale_price_centavos", "sku"]);
+  assert.equal(loading.success_notice, "Catálogo actualizado.");
+  assert.match(renderToStaticMarkup(createElement(CatalogSuccessNotice, { notice: listed.success_notice })), /role="status".*Catálogo actualizado/);
+  assert.equal(refreshed.success_notice, "Catálogo actualizado.");
+  assert.doesNotMatch(conflict, /aria-invalid/);
+  assert.match(conflict, /role="alert"/);
+});

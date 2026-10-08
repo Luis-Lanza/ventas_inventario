@@ -1,0 +1,108 @@
+schema: spec-driven
+
+context: |
+  Project: repuestos_autos
+  Product: Offline-first Windows inventory and point-of-sale desktop
+  application for one auto-parts store and one shared computer.
+  Architecture: Local modular monolith with a React and TypeScript UI,
+  Tauri 2 command boundary, Rust application and domain layers, and
+  SQLite persistence.
+  Domain constraints: Money uses integer centavos of Bs. Inventory uses
+  positive whole units. Stock mutations require immutable movements.
+  SQLite transactions and constraints protect data integrity.
+  Current state: React/TypeScript and Rust/Tauri application source, SQLite
+  migrations, and executable frontend/Rust test runners are present.
+  Product docs: docs/PRD.md, docs/ARCHITECTURE.md,
+  docs/TECHNICAL_RECOMMENDATION.md, and
+  docs/DEPLOYMENT_AND_LICENSING.md.
+  Issue tracker: Local Markdown under .scratch/<feature>/ as configured
+  in docs/agents/issue-tracker.md.
+  Domain docs: Single-context conventions are configured in
+  docs/agents/domain.md. No CONTEXT.md or ADR is currently required.
+  Current change: operational-inventory-control begins with a forward-only
+  v5-to-v6 inventory movement migration. Checkout pricing remains excluded.
+
+sdd:
+  artifact_store: hybrid
+  execution_mode: auto
+  delivery_strategy: ask-on-risk
+  review_budget_changed_lines: 400
+  strict_tdd: false
+  init_metadata:
+    refreshed_on: "2026-08-26"
+    current_stack: React/TypeScript, Tauri 2, Rust, rusqlite bundled SQLite
+
+testing:
+  capability: configured
+  strict_tdd_reason: >-
+    Standard mode remains configured; executable frontend and Rust runners
+    exist, but strict TDD is not explicitly enabled project-wide.
+  runners:
+    frontend:
+      detected: true
+      command: npm test
+    rust:
+      detected: true
+      command: cargo test --manifest-path src-tauri/Cargo.toml
+    end_to_end:
+      detected: true
+      command: npm run tauri:dev
+  policy: >-
+    Standard mode applies unless strict_tdd is explicitly enabled. Apply and
+    verify must run only repository commands present at execution time.
+
+rules:
+  init:
+    - >-
+      Maintain project-wide SDD and testing context only; do not create
+      change artifacts.
+    - >-
+      Preserve user-maintained configuration on future initialization
+      runs.
+  proposal:
+    - >-
+      Keep confirm-sale limited to the agreed first end-to-end slice and
+      its explicit exclusions.
+    - >-
+      Derive product behavior from docs/PRD.md and architecture boundaries
+      from docs/ARCHITECTURE.md.
+  specs:
+    - >-
+      Express observable acceptance criteria for price-floor validation,
+      payment integrity, stock integrity, idempotency, atomic persistence,
+      and the returned persisted sale summary.
+    - >-
+      Do not add licensing enforcement or product-management requirements.
+  design:
+    - >-
+      Preserve the React -> Tauri -> Rust application/domain -> SQLite
+      dependency direction.
+    - >-
+      Keep business-rule authority in Rust and transaction ownership in
+      ConfirmSaleUseCase.
+    - >-
+      Store money as integer centavos and enforce request_id uniqueness in
+      SQLite.
+  tasks:
+    - >-
+      Organize work into reviewable vertical work units and include testing
+      work beside the behavior it proves.
+    - >-
+      Forecast changed lines against the 350-line review budget and surface
+      delivery risk before apply.
+  apply:
+    - Follow the approved tasks and do not expand scope implicitly.
+    - >-
+      Use strict TDD only after an executable runner is configured and
+      strict_tdd is explicitly enabled. Otherwise use detected test commands
+      in standard mode.
+  verify:
+    - >-
+      Verify every acceptance criterion against implementation evidence.
+    - >-
+      Report unavailable runtime checks honestly; never claim tests ran when
+      no runner exists.
+  archive:
+    - >-
+      Archive only after implementation and verification state are complete
+      and blockers are resolved.

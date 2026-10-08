@@ -1,0 +1,257 @@
+import { createElement, type FormEvent, useEffect, useRef, useState } from "react";
+
+import type { ProductActivityState, ProductBrowserPage, ProductBrowserProduct, ProductStockState, SalesProductOriginalLoader, SalesProductOriginalResponse } from "../../commands/catalog.ts";
+import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
+
+export type CatalogViewMode = "table" | "gallery";
+const CATALOG_VIEW_MODE_KEY = "catalog.product-browser.view-mode";
+const SALES_VIEW_MODE_KEY = "sales.product-browser.view-mode";
+export function readCatalogViewMode(storage?: Pick<Storage, "getItem">): CatalogViewMode {
+  try { return (storage ?? globalThis.localStorage).getItem(CATALOG_VIEW_MODE_KEY) === "gallery" ? "gallery" : "table"; }
+  catch { return "table"; }
+}
+export function writeCatalogViewMode(mode: CatalogViewMode, storage?: Pick<Storage, "setItem">): void {
+  try { (storage ?? globalThis.localStorage).setItem(CATALOG_VIEW_MODE_KEY, mode); } catch { /* Preferences must not block Catalog. */ }
+}
+export function readSalesViewMode(storage?: Pick<Storage, "getItem">): CatalogViewMode {
+  try { return (storage ?? globalThis.localStorage).getItem(SALES_VIEW_MODE_KEY) === "gallery" ? "gallery" : "table"; }
+  catch { return "table"; }
+}
+export function writeSalesViewMode(mode: CatalogViewMode, storage?: Pick<Storage, "setItem">): void {
+  try { (storage ?? globalThis.localStorage).setItem(SALES_VIEW_MODE_KEY, mode); } catch { /* Preferences must not block Sales. */ }
+}
+
+export type ProductBrowserStatus = "initial" | "loading" | "results" | "empty" | "error";
+export interface ProductBrowserState {
+  status: ProductBrowserStatus;
+  query: string;
+  category_id: number | null;
+  stock_state: ProductStockState;
+  activity: ProductActivityState;
+  page: number;
+  request_id: number;
+  result: ProductBrowserPage | null;
+  error: string | null;
+}
+export const initialProductBrowserState: ProductBrowserState = {
+  status: "initial", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: 0, result: null, error: null,
+};
+export type ProductBrowserAction =
+  | { type: "query_changed"; value: string }
+  | { type: "category_changed"; value: number | null }
+  | { type: "stock_state_changed"; value: ProductStockState }
+  | { type: "activity_changed"; value: ProductActivityState }
+  | { type: "browse_started"; query: string; category_id: number | null; stock_state: ProductStockState; activity: ProductActivityState; page: number; request_id: number }
+  | { type: "browse_succeeded"; request_id: number; result: ProductBrowsePage }
+  | { type: "browse_failed"; request_id: number; message: string };
+export function createProductBrowserFlow(state: ProductBrowserState, action: ProductBrowserAction): ProductBrowserState {
+  switch (action.type) {
+    case "query_changed": return { ...state, query: action.value, page: 1, request_id: state.request_id + 1 };
+    case "category_changed": return { ...state, category_id: action.value, page: 1, request_id: state.request_id + 1 };
+    case "stock_state_changed": return { ...state, stock_state: action.value, page: 1, request_id: state.request_id + 1 };
+    case "activity_changed": return { ...state, activity: action.value, page: 1, request_id: state.request_id + 1 };
+    case "browse_started":
+      if (action.request_id <= state.request_id) return state;
+      return { ...state, status: "loading", query: action.query, category_id: action.category_id, stock_state: action.stock_state, activity: action.activity, page: action.page, request_id: action.request_id, error: null };
+    case "browse_succeeded":
+      if (action.request_id !== state.request_id) return state;
+      return { ...state, status: action.result.products.length ? "results" : "empty", result: action.result, error: null };
+    case "browse_failed":
+      if (action.request_id !== state.request_id) return state;
+      return { ...state, status: "error", result: null, error: action.message };
+  }
+}
+
+function stockText(product: ProductBrowserProduct) {
+  return product.available_quantity === 0 ? "Sin stock: 0" : product.available_quantity === 1 ? "Stock bajo: 1" : `Disponible: ${product.available_quantity}`;
+}
+function priceText(centavos: number) { return `Bs ${Math.trunc(centavos / 100)},${String(centavos % 100).padStart(2, "0")}`; }
+function salePriceCentavos(product: ProductBrowserProduct): number { return product.sale_price_centavos ?? product.list_price_centavos ?? product.catalog_unit_price_centavos; }
+function stockKind(product: ProductBrowserProduct) {
+  return product.available_quantity === 0 ? "out-of-stock" : product.available_quantity === 1 ? "low-stock" : "available";
+}
+
+export function SalesProductDetail({ product, thumbnails, loadOriginal, triggerRef, onClose }: {
+  product: ProductBrowserProduct;
+  thumbnails?: Readonly<Record<number, string>>;
+  loadOriginal?: SalesProductOriginalLoader;
+  triggerRef: { current: HTMLElement | null };
+  onClose: () => void;
+}) {
+  const [imageViewerOpen, setImageViewerOpen] = useState(false);
+  const [original, setOriginal] = useState<{ productId: number; response: SalesProductOriginalResponse } | null>(null);
+  useEffect(() => {
+    if (!imageViewerOpen) { setOriginal(null); return; }
+    let live = true;
+    const productId = product.product_id;
+    setOriginal(null);
+    void (async () => {
+      try {
+        const response = await loadOriginal?.(productId) ?? { kind: "unavailable" };
+        if (live) setOriginal({ productId, response: response.kind === "success" && response.product_id !== productId ? { kind: "unavailable" } : response });
+      } catch {
+        if (live) setOriginal({ productId, response: { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." } });
+      }
+    })();
+    return () => { live = false; };
+  }, [imageViewerOpen, product.product_id, loadOriginal]);
+  const originalResponse = original?.productId === product.product_id ? original.response : null;
+  const close = useRef<HTMLButtonElement>(null), imageTrigger = useRef<HTMLButtonElement>(null), viewerClose = useRef<HTMLButtonElement>(null), onCloseRef = useRef(onClose), wasViewerOpen = useRef(false);
+  onCloseRef.current = onClose;
+  useEffect(() => () => triggerRef.current?.focus(), [triggerRef]);
+  useEffect(() => {
+    close.current?.focus();
+    const contain = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (imageViewerOpen) setImageViewerOpen(false); else onCloseRef.current(); return; }
+      if (event.key !== "Tab") return;
+      if (imageViewerOpen) { event.preventDefault(); viewerClose.current?.focus(); return; }
+      const buttons = [...document.querySelectorAll<HTMLButtonElement>('[data-ui-sales-product-detail] button:not(:disabled)')];
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      if (!buttons.length || (!event.shiftKey && index === buttons.length - 1) || (event.shiftKey && index === 0)) {
+        event.preventDefault(); buttons[event.shiftKey ? buttons.length - 1 : 0]?.focus();
+      }
+    };
+    document.addEventListener("keydown", contain, true);
+    return () => document.removeEventListener("keydown", contain, true);
+  }, [imageViewerOpen]);
+  useEffect(() => { if (imageViewerOpen) { wasViewerOpen.current = true; viewerClose.current?.focus(); } else if (wasViewerOpen.current) { wasViewerOpen.current = false; imageTrigger.current?.focus(); } }, [imageViewerOpen]);
+  const image = thumbnails?.[product.product_id];
+  const safeImage = image && image.length <= 2_796_227 && /^data:image\/jpeg;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(image);
+  return createElement("div", { "data-ui-dialog-backdrop": true, "data-ui-sales-nested-detail": true, onMouseDown: (event: { target: EventTarget | null; currentTarget: EventTarget | null }) => { if (event.target === event.currentTarget) onClose(); } },
+    createElement("section", { role: "dialog", "aria-modal": "true", "aria-hidden": imageViewerOpen || undefined, "aria-labelledby": "sales-product-detail-title", "data-ui-sales-product-detail": true, "data-ui-density": "compact", tabIndex: -1 },
+      createElement("header", { "data-ui-sales-product-detail-header": true }, createElement("h2", { id: "sales-product-detail-title" }, product.name), createElement("button", { ref: close, type: "button", "aria-label": "Cerrar detalle del producto", onClick: onClose }, "Cerrar")),
+      createElement("div", { "data-ui-sales-detail-content": true },
+        safeImage ? createElement("button", { ref: imageTrigger, type: "button", "aria-label": `Ampliar imagen del producto ${product.name}`, "data-ui-sales-detail-image-trigger": true, onClick: () => setImageViewerOpen(true) },
+          createElement("img", { src: image, alt: product.name, "data-ui-sales-detail-image": true }),
+          createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": true, focusable: false, "data-ui-sales-image-zoom-icon": true }, createElement("circle", { cx: 10.5, cy: 10.5, r: 6.5, fill: "none", stroke: "currentColor", strokeWidth: 2 }), createElement("path", { d: "m15.5 15.5 5 5M10.5 7.5v6m-3-3h6", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" })))
+          : createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-sales-detail-placeholder": true }, "Sin imagen"),
+        createElement("dl", { "data-ui-sales-product-detail-facts": true },
+          createElement("dt", null, "SKU"), createElement("dd", null, product.sku), createElement("dt", null, "Categoría"), createElement("dd", null, product.category_name),
+          createElement("dt", null, "Stock"), createElement("dd", null, stockText(product)),
+          createElement("dt", null, "Ubicación principal"), createElement("dd", null, product.primary_location_code || "Sin ubicación asignada"),
+          createElement("dt", null, "Precio de compra"), createElement("dd", null, product.purchase_price_centavos === null ? "No registrado" : priceText(product.purchase_price_centavos)),
+          createElement("dt", null, "Precio de venta"), createElement("dd", null, priceText(salePriceCentavos(product))), createElement("dt", null, "Precio mínimo de venta"), createElement("dd", null, priceText(product.minimum_sale_price_centavos))),
+        createElement("dl", { "aria-label": "Atributos del producto", "data-ui-sales-product-detail-attributes": true }, product.attribute_values.flatMap((attribute) => [
+          createElement("dt", { key: `attribute-label-${attribute.definition_id}` }, attribute.label),
+          createElement("dd", { key: `attribute-value-${attribute.definition_id}` }, attribute.value.trim() || "Sin dato"),
+        ])))),
+    imageViewerOpen ? createElement("div", { "data-ui-dialog-backdrop": true, "data-ui-sales-image-viewer-backdrop": true, onMouseDown: (event: { target: EventTarget | null; currentTarget: EventTarget | null }) => { if (event.target === event.currentTarget) setImageViewerOpen(false); } },
+      createElement("section", { role: "dialog", "aria-modal": "true", "aria-labelledby": "sales-product-image-viewer-title", "data-ui-sales-image-viewer": true }, createElement("header", null, createElement("h2", { id: "sales-product-image-viewer-title" }, `Imagen de ${product.name}`), createElement("button", { ref: viewerClose, type: "button", "aria-label": "Cerrar imagen ampliada", onClick: () => setImageViewerOpen(false) }, "Cerrar")), originalResponse?.kind === "success" ? createElement("img", { src: originalResponse.src, alt: product.name, "data-ui-sales-image-viewer-image": true, onError: () => setOriginal({ productId: product.product_id, response: { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." } }) }) : createElement("p", { role: originalResponse?.kind === "error" ? "alert" : "status" }, !originalResponse ? "Cargando imagen…" : originalResponse.kind === "unavailable" ? "La imagen del producto no está disponible." : "No se pudo cargar la imagen del producto."))) : null);
+}
+
+export interface ProductBrowserProps {
+  state: ProductBrowserState;
+  onQueryChange: (value: string) => void;
+  onCategoryChange: (value: number | null) => void;
+  onStockStateChange?: (value: ProductStockState) => void;
+  onActivityChange?: (value: ProductActivityState) => void;
+  showActivity?: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onPageChange: (page: number) => void;
+  onSelect?: (product: ProductBrowserProduct) => void;
+  actionLabel?: string;
+  searchLabel?: string;
+  initialMessage?: string;
+  loadingMessage?: string;
+  allowUnavailableSelection?: boolean;
+  disabledProductIds?: ReadonlySet<number>;
+  thumbnails?: Readonly<Record<number, string>>;
+  disabled?: boolean;
+  presentation?: "sales" | "catalog";
+  loadSalesOriginal?: SalesProductOriginalLoader;
+  catalogViewMode?: CatalogViewMode;
+  onCatalogViewModeChange?: (mode: CatalogViewMode) => void;
+  salesViewMode?: CatalogViewMode;
+  onSalesViewModeChange?: (mode: CatalogViewMode) => void;
+}
+export function ProductBrowser(props: ProductBrowserProps) {
+  const { state } = props;
+  const [detailProduct, setDetailProduct] = useState<ProductBrowseResult | null>(null);
+  const detailTrigger = useRef<HTMLElement | null>(null);
+  const page = state.result;
+  const feedback = state.status === "initial" ? createElement(Feedback, { kind: "initial" } as never, props.initialMessage ?? "Buscá un producto para comenzar.")
+    : state.status === "loading" ? createElement(Feedback, { kind: "loading", "aria-label": props.loadingMessage ?? "Cargando productos…" } as never, props.loadingMessage ?? "Cargando productos…")
+    : state.status === "error" ? createElement(Feedback, { kind: "error" } as never, state.error ?? "No se pudo cargar el catálogo.")
+      : state.status === "empty" ? createElement(Feedback, { kind: "empty" } as never, `No encontramos productos para “${state.query}”.`) : null;
+  const salesPresentation = props.presentation === "sales";
+  const catalogPresentation = props.presentation === "catalog";
+  const galleryPresentation = catalogPresentation && props.catalogViewMode === "gallery";
+  const salesGalleryPresentation = salesPresentation && props.salesViewMode === "gallery";
+  return createElement("div", { "data-ui-product-browser": salesPresentation ? "sales" : catalogPresentation ? "catalog" : true },
+    createElement("form", { onSubmit: props.onSubmit, "aria-busy": state.status === "loading", "data-ui-sale-search": true },
+      catalogPresentation ? createElement("div", { "data-ui-catalog-toolbar-item": "search" }, createElement(Field, { kind: "search", label: props.searchLabel ?? "Buscar en el catálogo", control: createElement("input", { value: state.query, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onQueryChange(event.target.value); } }) } as never)) : createElement(Field, { kind: "search", label: props.searchLabel ?? "Buscar en el catálogo", control: createElement("input", { value: state.query, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onQueryChange(event.target.value); } }) } as never),
+      catalogPresentation ? createElement("div", { "data-ui-catalog-toolbar-item": "category" }, createElement(Field, { kind: "select", label: "Categoría", control: createElement("select", { value: state.category_id ?? "", disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onCategoryChange(event.target.value ? Number(event.target.value) : null); } }, createElement("option", { value: "" }, "Todas las categorías"), (page?.categories ?? []).map((category) => createElement("option", { key: category.category_id, value: category.category_id }, category.name))) } as never)) : createElement(Field, { kind: "select", label: "Categoría", control: createElement("select", { value: state.category_id ?? "", disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onCategoryChange(event.target.value ? Number(event.target.value) : null); } }, createElement("option", { value: "" }, "Todas las categorías"), (page?.categories ?? []).map((category) => createElement("option", { key: category.category_id, value: category.category_id }, category.name))) } as never),
+      props.showActivity && props.onActivityChange ? catalogPresentation ? createElement("div", { "data-ui-catalog-toolbar-item": "activity" }, createElement(Field, { kind: "select", label: "Actividad", control: createElement("select", { value: state.activity, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onActivityChange?.(event.target.value as ProductActivityState); } }, createElement("option", { value: "all" }, "Todas"), createElement("option", { value: "active" }, "Activos"), createElement("option", { value: "archived" }, "Archivados")) } as never)) : createElement(Field, { kind: "select", label: "Actividad", control: createElement("select", { value: state.activity, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onActivityChange?.(event.target.value as ProductActivityState); } }, createElement("option", { value: "all" }, "Todas"), createElement("option", { value: "active" }, "Activos"), createElement("option", { value: "archived" }, "Archivados")) } as never) : null,
+      props.onStockStateChange ? createElement(Field, { kind: "select", label: "Estado del stock", control: createElement("select", { value: state.stock_state, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onStockStateChange?.(event.target.value as ProductStockState); } }, createElement("option", { value: "all" }, "Todo el stock"), createElement("option", { value: "available" }, "Disponible"), createElement("option", { value: "low_stock" }, "Stock bajo"), createElement("option", { value: "out_of_stock" }, "Sin stock"), createElement("option", { value: "alerts" }, "Alertas")) } as never) : null,
+      catalogPresentation ? createElement("div", { role: "group", "aria-label": "Presentación del catálogo", "data-ui-catalog-toolbar-item": "views", "data-ui-catalog-view-toggle": true },
+        createElement(Action, { variant: props.catalogViewMode === "gallery" ? "tertiary" : "secondary", type: "button", title: "Vista de tabla", "aria-label": "Vista de tabla", "aria-pressed": props.catalogViewMode === "table", "data-ui-catalog-view-toggle": true, onClick: () => props.onCatalogViewModeChange?.("table") }, createElement("svg", { viewBox: "0 0 24 24", role: "img", "aria-hidden": true, "data-ui-icon": "table", focusable: false }, createElement("path", { d: "M4 5h16v14H4zM4 10h16M4 15h16M10 5v14M16 5v14", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinejoin: "round" }))),
+        createElement(Action, { variant: props.catalogViewMode === "gallery" ? "secondary" : "tertiary", type: "button", title: "Vista de galería", "aria-label": "Vista de galería", "aria-pressed": props.catalogViewMode === "gallery", "data-ui-catalog-view-toggle": true, onClick: () => props.onCatalogViewModeChange?.("gallery") }, createElement("svg", { viewBox: "0 0 24 24", role: "img", "aria-hidden": true, "data-ui-icon": "gallery", focusable: false }, createElement("path", { d: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinejoin: "round" }))))
+        : salesPresentation ? createElement("div", { role: "group", "aria-label": "Presentación de ventas", "data-ui-sales-view-toggle": true },
+          createElement(Action, { variant: props.salesViewMode === "gallery" ? "tertiary" : "secondary", type: "button", title: "Vista de tabla", "aria-label": "Vista de tabla", "aria-pressed": props.salesViewMode === "table", onClick: () => props.onSalesViewModeChange?.("table") }, createElement("svg", { viewBox: "0 0 24 24", role: "img", "aria-hidden": true, "data-ui-icon": "table", focusable: false }, createElement("path", { d: "M4 5h16v14H4zM4 10h16M4 15h16M10 5v14M16 5v14", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinejoin: "round" }))),
+          createElement(Action, { variant: props.salesViewMode === "gallery" ? "secondary" : "tertiary", type: "button", title: "Vista de galería", "aria-label": "Vista de galería", "aria-pressed": props.salesViewMode === "gallery", onClick: () => props.onSalesViewModeChange?.("gallery") }, createElement("svg", { viewBox: "0 0 24 24", role: "img", "aria-hidden": true, "data-ui-icon": "gallery", focusable: false }, createElement("path", { d: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinejoin: "round" })))) : null,
+      catalogPresentation ? createElement("div", { "data-ui-catalog-toolbar-item": "submit" }, createElement(Action, { variant: "secondary", type: "submit", disabled: props.disabled }, "Buscar")) : createElement(Action, { variant: "secondary", type: "submit", disabled: props.disabled }, "Buscar")),
+    feedback,
+    salesPresentation && page && state.status === "results" ? createElement("div", { role: "status", "data-ui-sales-catalog-status": true },
+      createElement("span", null, `Resultados del catálogo: ${page.total} ${page.total === 1 ? "repuesto" : "repuestos"}`),
+      createElement("span", null, "Filtro: Stock activo")) : null,
+    page && state.status !== "error" && page.products.length ? createElement("div", catalogPresentation && !galleryPresentation ? { "data-ui-catalog-table-scroll": true, role: "region", tabIndex: 0, "aria-label": "Resultados de productos; desplazamiento horizontal disponible" } : { "data-ui-catalog-results": true }, createElement("ul", { "aria-label": "Resultados del catálogo", "data-ui-product-browser-list": true, "data-ui-sale-list": true, "data-ui-catalog-gallery": galleryPresentation || undefined, "data-ui-catalog-table": catalogPresentation && !galleryPresentation || undefined, "data-ui-sales-gallery": salesGalleryPresentation || undefined, "data-ui-sales-table": salesPresentation && !salesGalleryPresentation || undefined }, page.products.map((product) => {
+      const selected = props.disabledProductIds?.has(product.product_id) ?? false;
+      const actionText = salesPresentation && selected ? "Agregado" : props.actionLabel ?? "Seleccionar";
+      const action = props.onSelect ? createElement(Action, {
+        variant: "secondary",
+        "aria-label": actionText === "Seleccionar" ? `Seleccionar ${product.name} (SKU: ${product.sku})` : undefined,
+        disabled: props.disabled || selected || !props.allowUnavailableSelection && product.available_quantity < 1,
+        onClick: () => props.onSelect?.(product),
+      }, actionText) : null;
+      const thumbnail = props.thumbnails?.[product.product_id];
+      const safeThumbnail = thumbnail && thumbnail.length <= 2_796_227 && /^data:image\/jpeg;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(thumbnail) ? createElement("img", { src: thumbnail, alt: product.name, loading: "lazy", "data-ui-product-thumbnail": true }) : null;
+      const galleryImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-catalog-image-placeholder": true }, "Sin imagen");
+      const tableImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-catalog-table-image-placeholder": true }, "Sin imagen");
+      const showSalesDetail = () => { detailTrigger.current = document.activeElement as HTMLElement; setDetailProduct(product); };
+      const salesIdentity = createElement("span", { "data-ui-sales-product-identity-text": true }, product.name);
+      const salesDetailAction = createElement(Action, { variant: "tertiary", type: "button", "data-ui-sales-product-detail-trigger": true, onClick: showSalesDetail }, "Ver detalles");
+      const salesAttributes = (product.attribute_values ?? []).filter((attribute) => attribute.value.trim().length > 0).slice(0, 2);
+      const locationLabel = "primary_location_code" in product && product.primary_location_code ? `Ubicación principal: ${product.primary_location_code}` : null;
+      const salesAttributeSummary = createElement("div", { "data-ui-sales-product-attributes": true }, salesAttributes.map((attribute) => createElement("span", { key: attribute.definition_id }, `${attribute.label}: ${attribute.value}`)));
+      const salesTableImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-sales-table-image-placeholder": true }, "Sin imagen");
+      return salesGalleryPresentation ? createElement("li", { key: product.product_id, "data-ui-sales-product-card": true },
+        createElement("div", { "data-ui-sales-image-area": true }, galleryImage),
+        createElement("div", { "data-ui-sales-product-identity": true }, createElement("strong", null, salesIdentity), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name), salesAttributeSummary),
+        createElement("div", { "data-ui-sales-commercial-footer": true },
+          createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product))),
+          createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
+          salesDetailAction,
+          action)) : galleryPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-product-card": true },
+        createElement("div", { "data-ui-catalog-image-area": true }, galleryImage),
+        createElement("div", { "data-ui-catalog-product-card-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name), locationLabel ? createElement("span", { "data-ui-catalog-primary-location": true }, locationLabel) : null),
+        createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product))),
+        createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
+        action) : salesPresentation ? createElement("li", { key: product.product_id, "data-ui-sales-product": true },
+        createElement("div", { "data-ui-sales-table-thumbnail": true }, salesTableImage),
+        createElement("div", { "data-ui-product-identity": true },
+          createElement("strong", null, salesIdentity),
+          createElement("div", { "data-ui-product-facts": true },
+            createElement("span", { "data-ui-sku": true }, product.sku),
+            createElement("span", { "data-ui-product-category": true }, product.category_name),
+            createElement(Badge, { kind: stockKind(product), text: stockText(product) })), salesAttributeSummary),
+        createElement("div", { "data-ui-product-action": true },
+          createElement("span", { "data-ui-unit-price": true },
+            createElement("span", { "data-ui-unit-price-caption": true }, "Precio de venta"),
+            createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product)))),
+          salesDetailAction,
+          action)) : catalogPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-table-row": true },
+            createElement("div", { "data-testid": "catalog-table-thumbnail", "data-ui-catalog-table-thumbnail": true }, tableImage),
+            createElement("div", { "data-testid": "catalog-table-identity", "data-ui-catalog-table-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), locationLabel ? createElement("span", { "data-ui-catalog-primary-location": true }, locationLabel) : null),
+            createElement("span", { "data-testid": "catalog-table-price", "data-ui-money": true }, priceText(salePriceCentavos(product))),
+            createElement("span", { "data-testid": "catalog-table-category", "data-ui-catalog-table-category": true }, product.category_name),
+            createElement("span", { "data-testid": "catalog-table-stock" }, createElement(Badge, { kind: stockKind(product), text: stockText(product) })),
+            createElement("div", { "data-testid": "catalog-table-edit", "data-ui-catalog-table-edit": true }, action)) : createElement("li", { key: product.product_id },
+            safeThumbnail,
+            createElement("div", null, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name)),
+            createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product))),
+            createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
+            action);
+    }))) : null,
+    page && page.total_pages > 1 ? createElement("nav", { "aria-label": "Páginas de productos", "data-ui-product-browser-pages": true }, createElement("span", null, `Página ${page.page} de ${page.total_pages}`), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page <= 1, onClick: () => props.onPageChange(page.page - 1) }, "Anterior"), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page >= page.total_pages, onClick: () => props.onPageChange(page.page + 1) }, "Siguiente")) : null,
+      salesPresentation && detailProduct ? createElement(SalesProductDetail, { key: detailProduct.product_id, product: detailProduct, thumbnails: props.thumbnails, loadOriginal: props.loadSalesOriginal, triggerRef: detailTrigger, onClose: () => setDetailProduct(null) }) : null);
+}

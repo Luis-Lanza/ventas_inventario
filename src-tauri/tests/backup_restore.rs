@@ -1,0 +1,2075 @@
+use std::cell::Cell;
+use std::fs;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use repuestos_autos::application::backup::{
+    BackupCoordinator, ConfirmRestoreResult, OperationalFacts, PrepareRestoreResult,
+    ProtectiveBackup, RestoreCandidate, RestoreCandidateStore, RestoreError, RestoreTokenSource,
+};
+use repuestos_autos::commands::backup::{
+    confirm_restore, prepare_restore, BackupCommandState, BackupResponse, ConfirmRestoreRequest,
+    PrepareRestoreRequest, ALLOWED_COMMANDS,
+};
+#[cfg(windows)]
+use repuestos_autos::commands::backup::{create_backup, CreateBackupRequest};
+#[cfg(feature = "desktop")]
+use repuestos_autos::commands::backup::{select_callback_path, PathSelection};
+use repuestos_autos::commands::catalog::{
+    list_catalog_maintenance, CatalogMaintenanceListResponse,
+};
+use repuestos_autos::infrastructure::filesystem::{BackupStore, StorageError};
+use repuestos_autos::infrastructure::sqlite::{
+    create_snapshot, production_database_config, stage_and_validate, BackupValidationError,
+    CURRENT_SCHEMA_VERSION,
+};
+use repuestos_autos::{DatabaseState, RestoreState};
+use rusqlite::{params, Connection};
+
+#[cfg(windows)]
+const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
+const MIGRATIONS: [&str; 23] = [
+    include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0005_catalog_onboarding_hardening.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0006_operational_inventory_control.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0007_catalog_maintenance.sql"),
+    include_str!(
+        "../src/infrastructure/sqlite/migrations/0008_catalog_metadata_name_uniqueness.sql"
+    ),
+    include_str!("../src/infrastructure/sqlite/migrations/0009_sales_history_index.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0010_post_sale_lifecycle.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0011_sale_idempotency_conflicts.sql"),
+    include_str!(
+        "../src/infrastructure/sqlite/migrations/0012_inventory_idempotency_conflicts.sql"
+    ),
+    include_str!(
+        "../src/infrastructure/sqlite/migrations/0013_catalog_dual_pricing.sql"
+    ),
+    include_str!(
+        "../src/infrastructure/sqlite/migrations/0014_sale_list_price_snapshot.sql"
+    ),
+    include_str!(
+        "../src/infrastructure/sqlite/migrations/0015_catalog_price_cap.sql"
+    ),
+    include_str!("../src/infrastructure/sqlite/migrations/0016_product_images.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0018_global_product_purchase_price.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0019_category_field_lifecycle.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0020_product_locations.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0021_sale_line_cost_snapshot.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0022_product_low_stock_threshold.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0023_remove_untouched_demo_catalog.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0024_allow_repeated_product_names.sql"),
+];
+
+fn temporary_directory(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("r-a-{name}-{}", uuid::Uuid::new_v4()))
+}
+
+fn versioned_database(path: &Path, version: i64) {
+    let connection = Connection::open(path).unwrap();
+    connection.execute_batch(LEGACY).unwrap();
+    for (index, migration) in MIGRATIONS.iter().enumerate().take((version - 1) as usize) {
+        connection.execute_batch(migration).unwrap();
+        connection
+            .pragma_update(None, "user_version", (index + 2) as i64)
+            .unwrap();
+    }
+}
+
+fn lifecycle_database(path: &Path) {
+    versioned_database(path, CURRENT_SCHEMA_VERSION);
+    let connection = Connection::open(path).unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO sale_lines (id, sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![21, 10, 1, 1, 5_000, 2_500, 5_000],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![41, 1, 10, 21, "sale", -1, "2025-01-01T12:00:00Z"],
+        )
+        .unwrap();
+    for (id, request_id, operation_kind, payload, payload_sha256) in [
+        (100, "return-request", "return", vec![1_u8], "a".repeat(64)),
+        (
+            101,
+            "cancellation-request",
+            "cancellation",
+            vec![2_u8],
+            "b".repeat(64),
+        ),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO post_sale_requests (id, request_id, operation_kind, sale_id, payload_version, canonical_payload, payload_sha256) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![id, request_id, operation_kind, 10, 1, payload, payload_sha256],
+            )
+            .unwrap();
+    }
+    connection
+        .execute(
+            "INSERT INTO sale_returns (id, sale_id, occurred_at) VALUES (?1, ?2, ?3)",
+            params![100, 10, "2025-01-02T12:00:00Z"],
+        )
+        .unwrap();
+    for (id, sale_line_id, quantity) in [(50, 20, 1), (51, 21, 1)] {
+        connection
+            .execute(
+                "INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![id, 1, 10, sale_line_id, "return", quantity, "2025-01-02T12:00:00Z"],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO sale_return_lines (return_id, sale_id, sale_line_id, product_id, quantity, movement_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![100, 10, sale_line_id, 1, quantity, id],
+            )
+            .unwrap();
+    }
+    connection
+        .execute(
+            "INSERT INTO sale_cancellations (id, sale_id, reason, occurred_at) VALUES (?1, ?2, ?3, ?4)",
+            params![101, 10, "inventory correction", "2025-01-03T12:00:00Z"],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, occurred_at, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![52, 1, 10, 20, "cancellation", 1, "2025-01-03T12:00:00Z", "inventory correction"],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO sale_cancellation_lines (cancellation_id, sale_id, sale_line_id, product_id, restored_quantity, movement_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![101, 10, 20, 1, 1, 52],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO sale_cancellation_lines (cancellation_id, sale_id, sale_line_id, product_id, restored_quantity, movement_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![101, 10, 21, 1, 0, Option::<i64>::None],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE stock_balances SET quantity = ?1 WHERE product_id = ?2",
+            params![8, 1],
+        )
+        .unwrap();
+}
+
+#[cfg(windows)]
+fn rows(connection: &Connection, query: &str) -> Vec<Vec<String>> {
+    let mut statement = connection.prepare(query).unwrap();
+    statement
+        .query_map([], |row| {
+            (0..row.as_ref().column_count())
+                .map(|index| {
+                    row.get::<_, rusqlite::types::Value>(index)
+                        .map(|value| format!("{value:?}"))
+                })
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+}
+
+#[cfg(windows)]
+fn lifecycle_facts(path: &Path) -> Vec<Vec<Vec<String>>> {
+    let connection = Connection::open(path).unwrap();
+    [
+        "SELECT id, request_id, status, total_centavos, confirmed_at FROM sales ORDER BY id",
+        "SELECT id, sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos FROM sale_lines ORDER BY id",
+        "SELECT id, sale_id, method, amount_applied_centavos, amount_tendered_centavos, change_given_centavos FROM sale_payments ORDER BY id",
+        "SELECT id, request_id, operation_kind, sale_id, payload_version, canonical_payload, payload_sha256, created_at FROM post_sale_requests ORDER BY id",
+        "SELECT id, sale_id, operation_kind, occurred_at FROM sale_returns ORDER BY id",
+        "SELECT return_id, sale_id, sale_line_id, product_id, quantity, movement_id FROM sale_return_lines ORDER BY return_id, sale_line_id",
+        "SELECT id, sale_id, operation_kind, reason, occurred_at FROM sale_cancellations ORDER BY id",
+        "SELECT cancellation_id, sale_id, sale_line_id, product_id, restored_quantity, movement_id FROM sale_cancellation_lines ORDER BY cancellation_id, sale_line_id",
+        "SELECT id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, reason FROM inventory_movements ORDER BY id",
+        "SELECT product_id, quantity FROM stock_balances ORDER BY product_id",
+    ]
+    .iter()
+    .map(|query| rows(&connection, query))
+    .collect()
+}
+
+#[cfg(windows)]
+#[test]
+fn publishes_a_synced_non_overwriting_backup_beneath_an_existing_selected_root() {
+    let directory = temporary_directory("publish");
+    let snapshot = directory.join("snapshot.sqlite3");
+    let selected_root = directory.join("USB á");
+    let destination = selected_root.join("backup-restore");
+    fs::create_dir_all(&selected_root).unwrap();
+    versioned_database(&snapshot, CURRENT_SCHEMA_VERSION);
+
+    let store = BackupStore::new(directory.join("app-data"));
+    let published = store
+        .publish_snapshot(&snapshot, &destination, "backup-20260827T204000Z.sqlite3")
+        .unwrap();
+
+    assert!(destination.is_dir());
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(&Connection::open(&published.path).unwrap()),
+        Ok(()),
+    );
+    let entries = fs::read_dir(&destination)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert!(entries.iter().any(|name| name == "backup-20260827T204000Z.sqlite3"));
+    assert!(!entries.iter().any(|name| name.starts_with(".backup-20260827T204000Z.sqlite3.") && name.ends_with(".part")), "randomized publication temporary must be gone: {entries:?}");
+    assert_eq!(
+        store
+            .publish_snapshot(&snapshot, &destination, "backup-20260827T204000Z.sqlite3")
+            .unwrap_err(),
+        StorageError::DestinationExists
+    );
+    assert_eq!(
+        store
+            .publish_selected_snapshot(None, &destination, "backup-20260827T204000Z.sqlite3")
+            .unwrap_err(),
+        StorageError::SelectionCancelled
+    );
+    assert_eq!(
+        store
+            .publish_snapshot(&snapshot, &destination, "not-a-backup")
+            .unwrap_err(),
+        StorageError::StorageUnavailable
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn rejects_a_selected_root_that_disappears_before_publication_without_recreating_it() {
+    let directory = temporary_directory("removed-selected-root");
+    let snapshot = directory.join("snapshot.sqlite3");
+    let selected_root = directory.join("removable-like-mount");
+    let destination = selected_root.join("backup-restore");
+    fs::create_dir_all(&selected_root).unwrap();
+    fs::write(&snapshot, b"consistent snapshot").unwrap();
+    fs::remove_dir_all(&selected_root).unwrap();
+
+    let store = BackupStore::new(directory.join("app-data"));
+
+    assert_eq!(
+        store.publish_snapshot(&snapshot, &destination, "backup-20260827T204000Z.sqlite3"),
+        Err(StorageError::UnsupportedDestination)
+    );
+    assert!(!selected_root.exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn accepts_a_fixed_ntfs_destination_for_publication() {
+    let directory = temporary_directory("fixed-ntfs-validation");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_eq!(BackupStore::validate_destination(&directory), Ok(()));
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn fixed_ntfs_backup_syncs_publication_and_snapshot_cleanup_directories() {
+    let directory = temporary_directory("fixed-ntfs-backup-cleanup");
+    let selected_root = directory.join("selected-ntfs-root");
+    fs::create_dir_all(&selected_root).unwrap();
+    assert_eq!(BackupStore::validate_destination(&selected_root), Ok(()));
+
+    let app_data = directory.join("app-data");
+    let state = DatabaseState::open(production_database_config(&app_data)).unwrap();
+    let mut commands = BackupCommandState::new(&app_data);
+    let token = match commands.select_backup_destination(selected_root.clone()) {
+        repuestos_autos::commands::backup::BackupDestinationSelection::Selected { token } => token,
+        selection => panic!("fixed NTFS destination should be accepted: {selection:?}"),
+    };
+
+    let response = create_backup(&state, &mut commands, CreateBackupRequest { destination_token: token });
+
+    let BackupResponse::Created { file_name, cleanup_warning: false, durability_warning: false, .. } = response else {
+        panic!("fixed NTFS publication and cleanup directory flushes should succeed: {response:?}");
+    };
+    assert!(selected_root.join("backup-restore").join(file_name).is_file());
+    let snapshots = app_data.join("backup-restore/snapshots");
+    assert_eq!(fs::read_dir(snapshots).unwrap().count(), 0, "snapshot cleanup must remove the stage and marker");
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn rejects_backup_destinations_when_ntfs_cannot_be_established() {
+    let directory = temporary_directory("unsupported-backup-destination");
+    fs::create_dir_all(&directory).unwrap();
+    assert_eq!(
+        BackupStore::validate_destination(&directory),
+        Err(StorageError::UnsupportedDestination),
+    );
+
+    let snapshot = directory.join("snapshot.sqlite3");
+    fs::write(&snapshot, b"snapshot").unwrap();
+    let destination = directory.join("selected-root").join("backup-restore");
+    assert_eq!(
+        BackupStore::new(directory.join("app-data")).publish_snapshot(
+            &snapshot,
+            &destination,
+            "backup.sqlite3",
+        ),
+        Err(StorageError::UnsupportedDestination),
+        "the production publication entry point must perform real platform validation",
+    );
+    assert!(!destination.exists(), "rejected destinations are not created");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn repeated_name_snapshot_stages_and_survives_canonical_recovery() {
+    let directory = temporary_directory("repeated-name-backup");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    lifecycle_database(config.path());
+    let source = Connection::open(config.path()).unwrap();
+    source.execute("INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) SELECT 3, category_id, 'DISTINCT-SKU', name, 1, list_price_centavos, minimum_unit_price_centavos FROM products WHERE id = 1", []).unwrap();
+    let snapshot = directory.join("snapshot.sqlite3");
+    assert_eq!(create_snapshot(&source, &snapshot).unwrap().schema_version, 24);
+    drop(source);
+    let before = fs::read(&snapshot).unwrap();
+    let stage = directory.join("stage.sqlite3");
+    assert_eq!(stage_and_validate(&snapshot, &stage).unwrap().schema_version, 24);
+    assert_eq!(fs::read(&snapshot).unwrap(), before);
+    let staged = Connection::open(&stage).unwrap();
+    assert_eq!(staged.query_row("SELECT COUNT(*) FROM products WHERE name = (SELECT name FROM products WHERE id = 1)", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+    assert_eq!(staged.query_row("SELECT COUNT(*) FROM sale_return_lines", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+    assert_eq!(staged.query_row("SELECT COUNT(*) FROM sale_cancellation_lines", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+    drop(staged);
+    let store = BackupStore::new(&directory);
+    #[cfg(windows)]
+    {
+        let state = DatabaseState::open(config.clone()).unwrap();
+        state.install_validated_stage(&stage, &store).unwrap();
+        drop(state);
+    }
+    write_restore_state(&directory, RestoreState::CandidateInstalled);
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
+    assert!(recovered.with_read(|_| Ok(())).is_ok());
+    let canonical = Connection::open(config.path()).unwrap();
+    assert_eq!(canonical.query_row("SELECT COUNT(*) FROM products WHERE name = (SELECT name FROM products WHERE id = 1)", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+    assert_eq!(canonical.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 24);
+    drop(canonical);
+    drop(recovered);
+}
+
+#[test]
+fn rejects_v24_name_index_without_downgrading_or_mutating_source() {
+    let directory = temporary_directory("v24-unexpected-name-index");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.sqlite3");
+    versioned_database(&source, 24);
+    let connection = Connection::open(&source).unwrap();
+    connection.execute_batch(MIGRATIONS[6]).unwrap();
+    assert_eq!(repuestos_autos::infrastructure::sqlite::validate_restored_database(&connection), Err(BackupValidationError::InvalidBackup));
+    drop(connection);
+    let before = fs::read(&source).unwrap();
+    assert_eq!(stage_and_validate(&source, &directory.join("stage.sqlite3")), Err(BackupValidationError::InvalidBackup));
+    assert_eq!(fs::read(&source).unwrap(), before);
+}
+
+#[test]
+fn stages_each_supported_schema_without_mutating_the_selected_source() {
+    let directory = temporary_directory("stage");
+    fs::create_dir_all(&directory).unwrap();
+    for version in 1..=CURRENT_SCHEMA_VERSION {
+        let source = directory.join(format!("v{version}.sqlite3"));
+        let stage = directory.join(format!("stage-v{version}.sqlite3"));
+        versioned_database(&source, version);
+        let before = fs::read(&source).unwrap();
+
+        let metadata = stage_and_validate(&source, &stage).unwrap();
+
+        assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(fs::read(&source).unwrap(), before);
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn stages_and_restores_lifecycle_facts_with_linked_movements_and_zero_residual_cancellation_lines()
+{
+    let directory = temporary_directory("lifecycle-facts");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let source = config.path().to_path_buf();
+    let stage = directory.join("backup-restore/staging/staged-v11-lifecycle.sqlite3");
+    fs::create_dir_all(stage.parent().unwrap()).unwrap();
+    lifecycle_database(&source);
+    let source_bytes = fs::read(&source).unwrap();
+    let expected = lifecycle_facts(&source);
+
+    let metadata = stage_and_validate(&source, &stage).unwrap();
+
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(fs::read(&source).unwrap(), source_bytes);
+    assert_eq!(lifecycle_facts(&stage), expected);
+    let staged = Connection::open(&stage).unwrap();
+    assert!(staged
+        .prepare("PRAGMA foreign_key_check")
+        .unwrap()
+        .query([])
+        .unwrap()
+        .next()
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        rows(
+            &staged,
+            "SELECT COUNT(*) FROM sale_return_lines r JOIN inventory_movements m ON m.id = r.movement_id WHERE m.movement_type = 'return' AND m.sale_id = r.sale_id AND m.sale_line_id = r.sale_line_id AND m.product_id = r.product_id AND m.quantity_delta = r.quantity",
+        ),
+        vec![vec![String::from("Integer(2)")]]
+    );
+    assert_eq!(
+        rows(
+            &staged,
+            "SELECT COUNT(*) FROM sale_cancellation_lines c JOIN inventory_movements m ON m.id = c.movement_id WHERE c.restored_quantity > 0 AND m.movement_type = 'cancellation' AND m.sale_id = c.sale_id AND m.sale_line_id = c.sale_line_id AND m.product_id = c.product_id AND m.quantity_delta = c.restored_quantity",
+        ),
+        vec![vec![String::from("Integer(1)")]]
+    );
+    assert_eq!(
+        rows(
+            &staged,
+            "SELECT COUNT(*) FROM sale_cancellation_lines WHERE restored_quantity = 0 AND movement_id IS NULL",
+        ),
+        vec![vec![String::from("Integer(1)")]]
+    );
+    assert_eq!(
+        staged
+            .query_row(
+                "SELECT COUNT(*) FROM sale_lines l WHERE l.sale_id = ?1 AND l.quantity < COALESCE((SELECT SUM(r.quantity) FROM sale_return_lines r WHERE r.sale_line_id = l.id), 0) + COALESCE((SELECT c.restored_quantity FROM sale_cancellation_lines c WHERE c.sale_line_id = l.id), 0)",
+                [10],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
+    );
+    drop(staged);
+    let state = DatabaseState::open(config).unwrap();
+    state
+        .install_validated_stage(&stage, &BackupStore::new(&directory))
+        .unwrap();
+    assert_eq!(lifecycle_facts(&source), expected);
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+fn assert_rejected_lifecycle_backup_preserves_selected_source(
+    directory: &Path,
+    name: &str,
+    mutation: &str,
+) {
+    let source = directory.join(format!("{name}.sqlite3"));
+    lifecycle_database(&source);
+    Connection::open(&source)
+        .unwrap()
+        .execute_batch(mutation)
+        .unwrap();
+    let source_bytes = fs::read(&source).unwrap();
+
+    assert_eq!(
+        stage_and_validate(&source, &directory.join(format!("{name}-stage.sqlite3"))),
+        Err(BackupValidationError::InvalidBackup),
+        "{name} must be rejected as a lifecycle integrity failure"
+    );
+    assert_eq!(fs::read(&source).unwrap(), source_bytes, "{name}");
+}
+
+#[test]
+fn rejects_lifecycle_backup_missing_required_index_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-missing-index");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "missing-index",
+        "DROP INDEX sale_return_lines_sale_line_idx;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_lifecycle_backup_missing_required_trigger_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-missing-trigger");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "missing-trigger",
+        "DROP TRIGGER sale_return_lines_validate_insert;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_lifecycle_backup_mismatched_movement_link_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-mismatched-movement");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "mismatched-movement",
+        "DROP TRIGGER inventory_movements_immutable_update;
+         UPDATE inventory_movements SET quantity_delta = 2 WHERE id = 50;
+         CREATE TRIGGER inventory_movements_immutable_update BEFORE UPDATE ON inventory_movements BEGIN SELECT RAISE(ABORT, 'inventory movements are immutable'); END;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_lifecycle_backup_excess_cumulative_restoration_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-excess-restoration");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "excess-restoration",
+        "DROP TRIGGER sale_return_lines_immutable_update;
+         DROP TRIGGER inventory_movements_immutable_update;
+         UPDATE sale_return_lines SET quantity = 2 WHERE return_id = 100 AND sale_line_id = 20;
+         UPDATE inventory_movements SET quantity_delta = 2 WHERE id = 50;
+         CREATE TRIGGER inventory_movements_immutable_update BEFORE UPDATE ON inventory_movements BEGIN SELECT RAISE(ABORT, 'inventory movements are immutable'); END;
+         CREATE TRIGGER sale_return_lines_immutable_update BEFORE UPDATE ON sale_return_lines BEGIN SELECT RAISE(ABORT, 'post-sale facts are immutable'); END;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_lifecycle_backup_missing_cancellation_line_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-missing-cancellation-line");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "missing-cancellation-line",
+        "DROP TRIGGER sale_cancellation_lines_immutable_delete;
+         DELETE FROM sale_cancellation_lines WHERE cancellation_id = 101 AND sale_line_id = 21;
+         CREATE TRIGGER sale_cancellation_lines_immutable_delete BEFORE DELETE ON sale_cancellation_lines BEGIN SELECT RAISE(ABORT, 'post-sale facts are immutable'); END;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_lifecycle_backup_changed_original_fact_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-changed-original-fact");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "changed-original-fact",
+        "DROP TRIGGER confirmed_sale_lines_immutable_price;
+         UPDATE sale_lines SET negotiated_unit_price_centavos = 6_000 WHERE id = 20;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn accepts_unlinked_legacy_v9_correction_movements() {
+    let directory = temporary_directory("legacy-v9-correction-movement");
+    fs::create_dir_all(&directory).unwrap();
+    let legacy = directory.join("legacy-v9.sqlite3");
+    versioned_database(&legacy, 9);
+    Connection::open(&legacy)
+        .unwrap()
+        .execute(
+            "INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![99, 1, 10, 20, "return", 1],
+        )
+        .unwrap();
+
+    assert_eq!(
+        stage_and_validate(&legacy, &directory.join("legacy-v10.sqlite3"))
+            .unwrap()
+            .schema_version,
+        CURRENT_SCHEMA_VERSION
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_current_schema_backup_with_missing_v14_trigger() {
+    let directory = temporary_directory("missing-v14-trigger");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("current.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    Connection::open(&source)
+        .unwrap()
+        .execute_batch("DROP TRIGGER confirmed_sale_lines_immutable_price;")
+        .unwrap();
+
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(&Connection::open(&source).unwrap()),
+        Err(BackupValidationError::InvalidBackup)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_invalid_and_unsupported_candidates_without_source_mutation() {
+    let directory = temporary_directory("invalid");
+    fs::create_dir_all(&directory).unwrap();
+    let non_sqlite = directory.join("not-a-database.sqlite3");
+    fs::write(&non_sqlite, b"not sqlite").unwrap();
+    let before = fs::read(&non_sqlite).unwrap();
+    assert_eq!(
+        stage_and_validate(&non_sqlite, &directory.join("stage.sqlite3")).unwrap_err(),
+        BackupValidationError::InvalidBackup
+    );
+    assert_eq!(fs::read(&non_sqlite).unwrap(), before);
+
+    let zero = directory.join("zero.sqlite3");
+    Connection::open(&zero).unwrap();
+    assert_eq!(
+        stage_and_validate(&zero, &directory.join("zero-stage.sqlite3")).unwrap_err(),
+        BackupValidationError::UnsupportedSchema
+    );
+
+    let future = directory.join("future.sqlite3");
+    versioned_database(&future, 1);
+    Connection::open(&future)
+        .unwrap()
+        .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION + 1)
+        .unwrap();
+    assert_eq!(
+        stage_and_validate(&future, &directory.join("future-stage.sqlite3")).unwrap_err(),
+        BackupValidationError::UnsupportedSchema
+    );
+
+    for (name, mutation) in [
+        ("foreign-key", "DELETE FROM products WHERE id = 1;"),
+        ("structural", "DROP TABLE categories;"),
+    ] {
+        let source = directory.join(format!("{name}.sqlite3"));
+        versioned_database(&source, CURRENT_SCHEMA_VERSION);
+        let connection = Connection::open(&source).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
+        connection.execute_batch(mutation).unwrap();
+        let before = fs::read(&source).unwrap();
+        assert_eq!(
+            stage_and_validate(&source, &directory.join(format!("{name}-stage.sqlite3")))
+                .unwrap_err(),
+            BackupValidationError::InvalidBackup
+        );
+        assert_eq!(fs::read(&source).unwrap(), before);
+    }
+    let corrupt = directory.join("corrupt.sqlite3");
+    fs::write(&corrupt, b"SQLite format 3\0corrupt").unwrap();
+    assert_eq!(
+        stage_and_validate(&corrupt, &directory.join("corrupt-stage.sqlite3")).unwrap_err(),
+        BackupValidationError::InvalidBackup
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn v16_product_images_remain_thumbnail_free_when_staged_under_current_schema() {
+    let directory = temporary_directory("v16-product-image-upgrade");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("v16.sqlite3");
+    let stage = directory.join("staging/current.sqlite3");
+    versioned_database(&source, 16);
+    Connection::open(&source)
+        .unwrap()
+        .execute(
+            "INSERT INTO product_images (product_id, mime_type, image_bytes)
+             VALUES (?1, ?2, ?3)",
+            params![1, "image/png", vec![0x89_u8, 0x50, 0x4e, 0x47]],
+        )
+        .unwrap();
+
+    let metadata = stage_and_validate(&source, &stage).unwrap();
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        Connection::open(&stage)
+            .unwrap()
+            .query_row(
+                "SELECT thumbnail_mime_type, thumbnail_bytes FROM product_images WHERE product_id = 1",
+                [],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<Vec<u8>>>(1)?)),
+            )
+            .unwrap(),
+        (None, None),
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn stages_v17_backup_to_current_schema_without_fabricating_historical_purchase_prices() {
+    let directory = temporary_directory("v17-purchase-price-upgrade");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("v17.sqlite3");
+    let stage = directory.join("staging/current.sqlite3");
+    versioned_database(&source, 17);
+    let source_before = fs::read(&source).unwrap();
+
+    let metadata = stage_and_validate(&source, &stage).unwrap();
+
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(fs::read(&source).unwrap(), source_before);
+    let restored = Connection::open(&stage).unwrap();
+    assert_eq!(
+        restored.query_row(
+            "SELECT purchase_price_centavos FROM products WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        ).unwrap(),
+        None,
+    );
+    assert_eq!(
+        restored.query_row(
+            "SELECT unit_purchase_price_centavos FROM inventory_movements WHERE id = 40",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        ).unwrap(),
+        None,
+    );
+    drop(restored);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn restored_database_validation_rejects_v17_without_purchase_price_columns() {
+    let directory = temporary_directory("missing-v18-purchase-price-columns");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("v17.sqlite3");
+    versioned_database(&source, 17);
+
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(
+            &Connection::open(&source).unwrap(),
+        ),
+        Err(BackupValidationError::InvalidBackup),
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn restored_validation_rejects_v18_purchase_price_columns_without_required_checks() {
+    let directory = temporary_directory("missing-v18-purchase-price-check");
+    fs::create_dir_all(&directory).unwrap();
+
+    for (table, column) in [
+        ("products", "purchase_price_centavos"),
+        ("inventory_movements", "unit_purchase_price_centavos"),
+    ] {
+        let source = directory.join(format!("{table}.sqlite3"));
+        versioned_database(&source, CURRENT_SCHEMA_VERSION);
+        let connection = Connection::open(&source).unwrap();
+        let mut ddl = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        let column_start = ddl.find(column).unwrap();
+        let check_start = ddl[column_start..].find("CHECK (").unwrap() + column_start;
+        let opening_paren = ddl[check_start..].find('(').unwrap() + check_start;
+        let mut depth = 0;
+        let check_end = ddl[opening_paren..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                match character {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                (depth == 0).then_some(opening_paren + offset + 1)
+            })
+            .unwrap();
+        ddl.replace_range(check_start..check_end, "");
+        connection.execute_batch("PRAGMA writable_schema = ON;").unwrap();
+        connection
+            .execute(
+                "UPDATE sqlite_master SET sql = ?1 WHERE type = 'table' AND name = ?2",
+                params![ddl, table],
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA schema_version = 1000; PRAGMA writable_schema = OFF;")
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(
+            repuestos_autos::infrastructure::sqlite::validate_restored_database(
+                &Connection::open(&source).unwrap()
+            ),
+            Err(BackupValidationError::InvalidBackup),
+            "missing required CHECK must be rejected for {table}.{column}"
+        );
+        assert_eq!(
+            stage_and_validate(&source, &directory.join(format!("{table}-stage.sqlite3"))),
+            Err(BackupValidationError::InvalidBackup),
+            "backup staging must reject missing required CHECK for {table}.{column}"
+        );
+    }
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn backup_restore_preserves_v18_purchase_prices_and_rejects_malformed_backup_data() {
+    let directory = temporary_directory("purchase-price-backup-restore");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.sqlite3");
+    let snapshot = directory.join("snapshot.sqlite3");
+    let stage = directory.join("staging/restored.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    let live = Connection::open(&source).unwrap();
+    live.execute(
+        "UPDATE products SET purchase_price_centavos = 3750 WHERE id = 1",
+        [],
+    ).unwrap();
+    live.execute(
+        "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, request_id, resulting_quantity, unit_purchase_price_centavos) VALUES (1, 'stock_entry', 1, 'backup-cost-entry', 9, 3750)",
+        [],
+    ).unwrap();
+
+    let metadata = create_snapshot(&live, &snapshot).unwrap();
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        stage_and_validate(&snapshot, &stage).unwrap().schema_version,
+        CURRENT_SCHEMA_VERSION,
+    );
+    let restored = Connection::open(&stage).unwrap();
+    assert_eq!(
+        restored.query_row(
+            "SELECT purchase_price_centavos FROM products WHERE id = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        ).unwrap(),
+        3750,
+    );
+    assert_eq!(
+        restored.query_row(
+            "SELECT unit_purchase_price_centavos FROM inventory_movements WHERE request_id = 'backup-cost-entry'",
+            [],
+            |row| row.get::<_, i64>(0),
+        ).unwrap(),
+        3750,
+    );
+    drop(restored);
+    drop(live);
+
+    let malformed = directory.join("malformed.sqlite3");
+    versioned_database(&malformed, CURRENT_SCHEMA_VERSION);
+    Connection::open(&malformed).unwrap().execute_batch(
+        "PRAGMA ignore_check_constraints = ON;
+         UPDATE products SET purchase_price_centavos = 0 WHERE id = 1;",
+    ).unwrap();
+    let malformed_before = fs::read(&malformed).unwrap();
+    assert_eq!(
+        stage_and_validate(&malformed, &directory.join("malformed-stage.sqlite3")),
+        Err(BackupValidationError::InvalidBackup),
+    );
+    assert_eq!(fs::read(&malformed).unwrap(), malformed_before);
+    Connection::open(&malformed).unwrap().execute_batch(
+        "PRAGMA ignore_check_constraints = ON;
+         UPDATE products SET purchase_price_centavos = NULL WHERE id = 1;
+         INSERT INTO inventory_movements (
+             product_id, movement_type, quantity_delta, unit_purchase_price_centavos
+         ) VALUES (1, 'opening_stock', 1, 0);",
+    ).unwrap();
+    let malformed_before = fs::read(&malformed).unwrap();
+    assert_eq!(
+        stage_and_validate(&malformed, &directory.join("malformed-movement-stage.sqlite3")),
+        Err(BackupValidationError::InvalidBackup),
+    );
+    assert_eq!(fs::read(&malformed).unwrap(), malformed_before);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn backup_stage_and_restore_retain_product_image_records() {
+    let directory = temporary_directory("product-image-backup-restore");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.sqlite3");
+    let snapshot = directory.join("snapshot.sqlite3");
+    let stage = directory.join("staging/restored.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    let image = vec![0x89, 0x50, 0x4e, 0x47, 0x00, 0xff];
+    let thumbnail = vec![0xff, 0xd8, 0xff, 0xd9];
+    Connection::open(&source).unwrap().execute(
+        "INSERT INTO product_images (
+             product_id, mime_type, image_bytes, thumbnail_mime_type, thumbnail_bytes
+         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![1, "image/png", &image, "image/jpeg", &thumbnail],
+    ).unwrap();
+    let live = Connection::open(&source).unwrap();
+
+    let metadata = create_snapshot(&live, &snapshot).unwrap();
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    let metadata = stage_and_validate(&snapshot, &stage).unwrap();
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        Connection::open(&stage).unwrap().query_row(
+            "SELECT mime_type, image_bytes, thumbnail_mime_type, thumbnail_bytes
+             FROM product_images WHERE product_id = 1",
+            [],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<Vec<u8>>>(3)?,
+            )),
+        ).unwrap(),
+        ("image/png".to_string(), image, Some("image/jpeg".into()), Some(thumbnail)),
+    );
+    drop(live);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_current_schema_backup_missing_product_image_integrity_configuration() {
+    let directory = temporary_directory("missing-product-images");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("current.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    Connection::open(&source).unwrap().execute_batch("DROP TABLE product_images;").unwrap();
+
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(&Connection::open(&source).unwrap()),
+        Err(BackupValidationError::InvalidBackup)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_current_schema_backup_with_unconstrained_product_image_table() {
+    let directory = temporary_directory("unconstrained-product-images");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("current.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    Connection::open(&source)
+        .unwrap()
+        .execute_batch(
+            "DROP TABLE product_images;
+             CREATE TABLE product_images (
+                 product_id INTEGER,
+                 mime_type TEXT,
+                 image_bytes BLOB
+             );",
+        )
+        .unwrap();
+
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(&Connection::open(&source).unwrap()),
+        Err(BackupValidationError::InvalidBackup)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_current_schema_backup_missing_thumbnail_integrity_configuration() {
+    let directory = temporary_directory("missing-product-image-thumbnails");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("current.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    Connection::open(&source)
+        .unwrap()
+        .execute_batch(
+            "DROP TABLE product_images;
+             CREATE TABLE product_images (
+                 product_id INTEGER PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+                 mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
+                 image_bytes BLOB NOT NULL CHECK (
+                     typeof(image_bytes) = 'blob'
+                     AND length(image_bytes) BETWEEN 1 AND 2097152
+                 )
+             );",
+        )
+        .unwrap();
+
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(
+            &Connection::open(&source).unwrap()
+        ),
+        Err(BackupValidationError::InvalidBackup)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_v18_backup_with_product_image_constraints_only_in_comments() {
+    let directory = temporary_directory("comment-only-product-image-constraints");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("comment-only.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    let connection = Connection::open(&source).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE product_images;
+             CREATE TABLE product_images (
+                 product_id INTEGER PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+                 mime_type TEXT NOT NULL /* CHECK (mime_type in ('image/png', 'image/jpeg', 'image/webp')) */,
+                 image_bytes BLOB NOT NULL /* typeof(image_bytes) = 'blob' */
+                                  /* length(image_bytes) between 1 and 2097152 */
+             );",
+        )
+        .unwrap();
+    let stored_ddl = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'product_images'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap()
+        .to_ascii_lowercase();
+    assert!(stored_ddl.contains("check (mime_type in ('image/png', 'image/jpeg', 'image/webp'))"));
+    assert!(stored_ddl.contains("typeof(image_bytes) = 'blob'"));
+    assert!(stored_ddl.contains("length(image_bytes) between 1 and 2097152"));
+    drop(connection);
+
+    assert_eq!(
+        stage_and_validate(&source, &directory.join("rejected-stage.sqlite3")),
+        Err(BackupValidationError::InvalidBackup),
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn creates_a_consistent_snapshot_before_releasing_the_live_database_mutex() {
+    let directory = temporary_directory("snapshot");
+    fs::create_dir_all(&directory).unwrap();
+    let live_path = directory.join("live.sqlite3");
+    versioned_database(&live_path, CURRENT_SCHEMA_VERSION);
+    let live = Mutex::new(Connection::open(&live_path).unwrap());
+    let snapshot = directory.join("snapshot.sqlite3");
+
+    let metadata = {
+        let connection = live.lock().unwrap();
+        create_snapshot(&connection, &snapshot).unwrap()
+    };
+    assert!(live.try_lock().is_ok());
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        Connection::open(&snapshot)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM sales", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    drop(live);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+fn restore_state_bytes(state: RestoreState) -> &'static [u8] {
+    match state {
+        RestoreState::Prepared => br#"{"state":"prepared"}"#,
+        RestoreState::LiveMoved => br#"{"state":"live_moved"}"#,
+        RestoreState::CandidateInstalled => br#"{"state":"candidate_installed"}"#,
+    }
+}
+
+fn write_restore_state(directory: &Path, state: RestoreState) {
+    fs::create_dir_all(directory).unwrap();
+    fs::write(
+        directory.join("restore-state.json"),
+        restore_state_bytes(state),
+    )
+    .unwrap();
+}
+
+#[test]
+fn records_each_durable_replacement_transition() {
+    let directory = temporary_directory("restore-state");
+    let store = BackupStore::new(&directory);
+
+    for state in [
+        RestoreState::Prepared,
+        RestoreState::LiveMoved,
+        RestoreState::CandidateInstalled,
+    ] {
+        write_restore_state(&directory, state);
+        assert_eq!(store.read_restore_state().unwrap(), Some(state));
+        assert_eq!(
+            fs::read(directory.join("restore-state.json")).unwrap(),
+            restore_state_bytes(state)
+        );
+    }
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn unsupported_recovery_retains_the_validated_source_and_stale_temporary() {
+    let directory = temporary_directory("unsupported-durable-recovery");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("restore-rollback.sqlite3");
+    let canonical = directory.join("repuestos-autos.sqlite3");
+    let temporary = directory.join("restore-recovery.sqlite3.part");
+    database_with_category(&source, "rollback-data");
+    fs::write(&temporary, b"stale recovery temporary").unwrap();
+    let store = BackupStore::new(&directory);
+    write_restore_state(&directory, RestoreState::LiveMoved);
+    let source_before = fs::read(&source).unwrap();
+
+    assert_eq!(
+        store.recover_canonical_durably(&source, &canonical),
+        Err(StorageError::StorageUnavailable)
+    );
+    assert_eq!(fs::read(&source).unwrap(), source_before);
+    assert_eq!(fs::read(&temporary).unwrap(), b"stale recovery temporary");
+    assert!(!canonical.exists());
+    assert_eq!(
+        store.read_restore_state().unwrap(),
+        Some(RestoreState::LiveMoved)
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn durable_prepare_fails_before_disruption_on_an_unsupported_host() {
+    let directory = temporary_directory("unsupported-durable-prepare");
+    fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "live-data");
+    let stage = directory.join("backup-restore/staging/candidate.sqlite3");
+    database_with_category(&stage, "candidate-data");
+    let state = DatabaseState::open(config).unwrap();
+    let store = BackupStore::new(&directory);
+
+    assert_eq!(
+        state.install_validated_stage(&stage, &store),
+        Err("restore_failed".into())
+    );
+    assert_eq!(category_count(&state, "live-data"), 1);
+    assert!(stage.exists());
+    assert!(!directory.join("restore-state.json").exists());
+    assert!(!directory.join("restore-rollback.sqlite3").exists());
+
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn live_restore_failure_recovers_valid_rollback_and_returns_restore_failed() {
+    let directory = temporary_directory("live-restore-recover-rollback");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "prior-data");
+    let state = DatabaseState::open(config).unwrap();
+    let stage = directory.join("backup-restore/staging/malformed.sqlite3");
+    fs::create_dir_all(stage.parent().unwrap()).unwrap();
+    fs::write(&stage, b"rejected restore candidate").unwrap();
+    let store = BackupStore::new(&directory);
+
+    assert_eq!(
+        state.install_validated_stage(&stage, &store),
+        Err("restore_failed".into())
+    );
+    assert_eq!(category_count(&state, "prior-data"), 1);
+    state
+        .with_write(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO categories (name) VALUES (?1)",
+                    ["post-recovery"],
+                )
+                .map_err(|_| "database_unavailable".to_string())?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(category_count(&state, "post-recovery"), 1);
+    assert_eq!(
+        store.read_restore_state().unwrap(),
+        Some(RestoreState::CandidateInstalled)
+    );
+
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn live_restore_failure_enters_unavailable_when_recovery_cannot_establish_canonical() {
+    let directory = temporary_directory("live-restore-unavailable");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "prior-data");
+    let state = DatabaseState::open(config).unwrap();
+    let stage = directory.join("backup-restore/staging/malformed.sqlite3");
+    fs::create_dir_all(stage.parent().unwrap()).unwrap();
+    fs::write(&stage, b"rejected restore candidate").unwrap();
+    let recovery_temporary = directory.join("restore-recovery.sqlite3.part");
+    fs::write(&recovery_temporary, b"held recovery temporary").unwrap();
+    let recovery_temporary_handle = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&recovery_temporary)
+        .unwrap();
+    let store = BackupStore::new(&directory);
+    let read_called = Cell::new(false);
+    let write_called = Cell::new(false);
+
+    assert_eq!(
+        state.install_validated_stage(&stage, &store),
+        Err("database_unavailable".into())
+    );
+    assert_eq!(
+        state
+            .with_read(|_| {
+                read_called.set(true);
+                Ok(())
+            })
+            .unwrap_err(),
+        "database_unavailable"
+    );
+    assert_eq!(
+        state
+            .with_write(|_| {
+                write_called.set(true);
+                Ok(())
+            })
+            .unwrap_err(),
+        "database_unavailable"
+    );
+    assert!(!read_called.get());
+    assert!(!write_called.get());
+    assert_eq!(
+        store.read_restore_state().unwrap(),
+        Some(RestoreState::CandidateInstalled)
+    );
+
+    drop(recovery_temporary_handle);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn installs_a_validated_stage_after_closing_the_live_connection() {
+    let directory = temporary_directory("replacement");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    versioned_database(config.path(), CURRENT_SCHEMA_VERSION);
+    let state = DatabaseState::open(config.clone()).unwrap();
+    let stage = directory.join("backup-restore/staging/candidate.sqlite3");
+    fs::create_dir_all(stage.parent().unwrap()).unwrap();
+    versioned_database(&stage, CURRENT_SCHEMA_VERSION);
+    Connection::open(&stage)
+        .unwrap()
+        .execute(
+            "INSERT INTO categories (name) VALUES (?1)",
+            ["restored-state"],
+        )
+        .unwrap();
+    let store = BackupStore::new(&directory);
+
+    state.install_validated_stage(&stage, &store).unwrap();
+
+    assert!(!stage.exists());
+    assert!(directory.join("pre-restore.sqlite3").exists());
+    assert!(directory.join("restore-rollback.sqlite3").exists());
+    assert!(!directory.join("restore-state.json").exists());
+    assert_eq!(
+        state
+            .with_read(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM categories WHERE name = ?1",
+                        ["restored-state"],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(|_| "database_unavailable".into())
+            })
+            .unwrap(),
+        1
+    );
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+fn database_with_category(path: &Path, category_name: &str) {
+    versioned_database(path, CURRENT_SCHEMA_VERSION);
+    Connection::open(path)
+        .unwrap()
+        .execute("INSERT INTO categories (name) VALUES (?1)", [category_name])
+        .unwrap();
+}
+
+fn category_count(state: &DatabaseState, category_name: &str) -> i64 {
+    state
+        .with_read(|connection| {
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM categories WHERE name = ?1",
+                    [category_name],
+                    |row| row.get(0),
+                )
+                .map_err(|_| "database_unavailable".into())
+        })
+        .unwrap()
+}
+
+#[cfg(windows)]
+#[test]
+fn startup_recovery_durably_installs_the_migrated_fallback_stage() {
+    let directory = temporary_directory("recover-migrated-fallback");
+    fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+    let config = production_database_config(&directory);
+    let fallback = directory.join("restore-rollback.sqlite3");
+    versioned_database(&fallback, CURRENT_SCHEMA_VERSION - 1);
+    write_restore_state(&directory, RestoreState::LiveMoved);
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert!(recovered.with_read(|_| Ok(())).is_ok(), "recovery must reach Ready");
+    let canonical = Connection::open_with_flags(config.path(), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(canonical.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), CURRENT_SCHEMA_VERSION);
+    assert!(config.path().is_file());
+    assert_eq!(BackupStore::new(&directory).read_restore_state().unwrap(), None);
+    drop(canonical);
+    drop(recovered);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn startup_recovery_keeps_valid_canonical_data_for_prepared_and_candidate_installed_markers() {
+    for (name, state) in [
+        ("recover-prepared", RestoreState::Prepared),
+        (
+            "recover-candidate-installed",
+            RestoreState::CandidateInstalled,
+        ),
+    ] {
+        let directory = temporary_directory(name);
+        fs::create_dir_all(&directory).unwrap();
+        let config = production_database_config(&directory);
+        database_with_category(config.path(), "canonical");
+        database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback");
+        database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
+        let stage = directory.join(format!("backup-restore/staging/{}.sqlite3", uuid::Uuid::new_v4()));
+        fs::create_dir_all(stage.parent().unwrap()).unwrap();
+        fs::write(&stage, b"unowned-candidate-stage").unwrap();
+        let store = BackupStore::new(&directory);
+        write_restore_state(&directory, state);
+
+        let recovered = DatabaseState::recover_on_startup(config, &store);
+
+        assert_eq!(category_count(&recovered, "canonical"), 1, "{state:?}");
+        assert_eq!(category_count(&recovered, "rollback"), 0, "{state:?}");
+        #[cfg(windows)]
+        assert_eq!(store.read_restore_state().unwrap(), None, "{state:?}");
+        #[cfg(not(windows))]
+        assert_eq!(
+            store.read_restore_state().unwrap(),
+            Some(state),
+            "{state:?}"
+        );
+        assert!(directory.join("pre-restore.sqlite3").exists(), "{state:?}");
+        #[cfg(windows)]
+        assert!(!stage.exists(), "completed durable marker must release an unowned stage: {state:?}");
+        #[cfg(not(windows))]
+        assert!(stage.exists(), "unsupported durable marker remains recovery-owned: {state:?}");
+        drop(recovered);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn malformed_restore_marker_fails_closed_and_retains_valid_recovery_evidence() {
+    let directory = temporary_directory("malformed-recovery-marker");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let rollback = directory.join("restore-rollback.sqlite3");
+    database_with_category(&rollback, "rollback");
+    fs::write(directory.join("restore-state.json"), br#"{"state":"unknown"}"#).unwrap();
+    let before = fs::read(&rollback).unwrap();
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert_eq!(recovered.with_read(|_| Ok(())).unwrap_err(), "database_unavailable");
+    assert!(!config.path().exists());
+    assert_eq!(fs::read(&rollback).unwrap(), before);
+    assert!(directory.join("restore-state.json").exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn startup_rejects_partial_current_version_canonical_without_replacing_it_with_empty_database() {
+    let directory = temporary_directory("partial-current-canonical");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "partial-canonical");
+    Connection::open(config.path()).unwrap().execute_batch("DROP TABLE location_schema;").unwrap();
+    let canonical_before = fs::read(config.path()).unwrap();
+    database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback-fallback");
+    let store = BackupStore::new(&directory);
+    write_restore_state(&directory, RestoreState::LiveMoved);
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    #[cfg(not(windows))]
+    {
+        assert_eq!(recovered.with_read(|_| Ok(())).unwrap_err(), "database_unavailable");
+        assert_eq!(fs::read(config.path()).unwrap(), canonical_before);
+    }
+    #[cfg(windows)]
+    assert_eq!(category_count(&recovered, "rollback-fallback"), 1);
+    drop(recovered);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn failed_candidate_migration_retains_source_and_does_not_create_canonical() {
+    let directory = temporary_directory("failed-recovery-migration");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let rollback = directory.join("restore-rollback.sqlite3");
+    versioned_database(&rollback, 17);
+    Connection::open(&rollback).unwrap().execute_batch("DROP TABLE inventory_movements;").unwrap();
+    let source_before = fs::read(&rollback).unwrap();
+    let store = BackupStore::new(&directory);
+    write_restore_state(&directory, RestoreState::LiveMoved);
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    assert_eq!(recovered.with_read(|_| Ok(())).unwrap_err(), "database_unavailable");
+    assert!(!config.path().exists());
+    assert_eq!(fs::read(&rollback).unwrap(), source_before);
+    assert_eq!(store.read_restore_state().unwrap(), Some(RestoreState::LiveMoved));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn markerless_valid_canonical_opens_and_preserves_valid_retained_restore_evidence() {
+    let directory = temporary_directory("markerless-valid-retained-evidence");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "canonical");
+    let rollback = directory.join("restore-rollback.sqlite3");
+    let protective = directory.join("pre-restore.sqlite3");
+    database_with_category(&rollback, "rollback");
+    database_with_category(&protective, "protective");
+    let sidecar0 = directory.join("restore-state.json.previous-0");
+    let sidecar1 = directory.join("restore-state.json.previous-1");
+    fs::write(&sidecar0, br#"{"state":"prepared"}"#).unwrap();
+    fs::write(&sidecar1, br#"{"state":"candidate_installed"}"#).unwrap();
+    let evidence = [&rollback, &protective, &sidecar0, &sidecar1]
+        .map(|path| (path.to_path_buf(), fs::read(path).unwrap()));
+
+    let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert_eq!(category_count(&state, "canonical"), 1);
+    assert_eq!(category_count(&state, "rollback"), 0);
+    assert_eq!(category_count(&state, "protective"), 0);
+    for (path, bytes) in evidence {
+        assert_eq!(fs::read(path).unwrap(), bytes, "retained evidence is untouched");
+    }
+    assert!(!directory.join("restore-state.json").exists());
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn markerless_evidence_without_valid_canonical_never_creates_or_promotes_a_database() {
+    for (name, canonical_state) in [("missing", None), ("invalid", Some(b"invalid".as_slice()))] {
+        let directory = temporary_directory(&format!("markerless-evidence-{name}"));
+        fs::create_dir_all(&directory).unwrap();
+        let config = production_database_config(&directory);
+        if let Some(bytes) = canonical_state {
+            fs::write(config.path(), bytes).unwrap();
+        }
+        let rollback = directory.join("restore-rollback.sqlite3");
+        database_with_category(&rollback, "fallback");
+        let rollback_before = fs::read(&rollback).unwrap();
+        fs::write(directory.join("restore-state.json.previous-0"), br#"{"state":"prepared"}"#).unwrap();
+
+        let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+        assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable", "{name}");
+        assert_eq!(fs::read(&rollback).unwrap(), rollback_before, "{name}");
+        assert_eq!(fs::read(config.path()).ok().as_deref(), canonical_state, "{name}");
+        drop(state);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn malformed_or_unexpected_markerless_evidence_fails_closed_with_valid_canonical() {
+    for (artifact, contents) in [
+        ("restore-state.json.previous-0", b"malformed".as_slice()),
+        ("restore-state.json.previous-8", br#"{"state":"prepared"}"#.as_slice()),
+        ("restore-rollback.sqlite3", b"malformed database".as_slice()),
+        ("pre-restore.sqlite3", b"malformed database".as_slice()),
+    ] {
+        let directory = temporary_directory("invalid-markerless-sidecar");
+        fs::create_dir_all(&directory).unwrap();
+        let config = production_database_config(&directory);
+        database_with_category(config.path(), "canonical");
+        let before = fs::read(config.path()).unwrap();
+        fs::write(directory.join(artifact), contents).unwrap();
+
+        let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+        assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable", "{artifact}");
+        assert_eq!(fs::read(config.path()).unwrap(), before, "{artifact}");
+        drop(state);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn non_regular_markerless_sidecar_fails_closed_with_valid_canonical() {
+    use std::os::unix::fs::symlink;
+
+    let directory = temporary_directory("non-regular-markerless-sidecar");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "canonical");
+    symlink(directory.join("missing-target"), directory.join("restore-state.json.previous-0")).unwrap();
+
+    let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable");
+    assert!(fs::symlink_metadata(directory.join("restore-state.json.previous-0")).unwrap().file_type().is_symlink());
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn fresh_start_without_recovery_evidence_creates_a_valid_database() {
+    let directory = temporary_directory("fresh-start-no-recovery-evidence");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let store = BackupStore::new(&directory);
+
+    let state = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    assert_eq!(state.with_read(|_| Ok(())).unwrap(), ());
+    assert!(config.path().is_file());
+    assert_eq!(store.read_restore_state().unwrap(), None);
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn dangling_restore_marker_with_valid_canonical_fails_closed_without_modifying_database() {
+    use std::os::unix::fs::symlink;
+
+    let directory = temporary_directory("dangling-restore-marker");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "canonical");
+    let canonical_before = fs::read(config.path()).unwrap();
+    symlink(directory.join("missing-marker-target"), directory.join("restore-state.json")).unwrap();
+
+    let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable");
+    assert_eq!(fs::read(config.path()).unwrap(), canonical_before);
+    assert!(fs::symlink_metadata(directory.join("restore-state.json")).is_ok());
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn ambiguous_restore_temporaries_and_sidecars_fail_closed_without_modifying_canonical() {
+    for artifact in ["restore-state.json.part", "restore-recovery.sqlite3.part", "restore-state.json.previous-0"] {
+        let directory = temporary_directory("ambiguous-recovery-artifact");
+        fs::create_dir_all(&directory).unwrap();
+        let config = production_database_config(&directory);
+        database_with_category(config.path(), "canonical");
+        let canonical_before = fs::read(config.path()).unwrap();
+        fs::write(directory.join(artifact), b"malformed recovery artifact").unwrap();
+
+        let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+        assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable", "{artifact}");
+        assert_eq!(fs::read(config.path()).unwrap(), canonical_before, "{artifact}");
+        drop(state);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn prepared_recovery_prefers_protective_source_when_both_fallbacks_validate() {
+    let directory = temporary_directory("prepared-recovery-source-precedence");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let rollback = directory.join("restore-rollback.sqlite3");
+    let protective = directory.join("pre-restore.sqlite3");
+    database_with_category(&rollback, "rollback");
+    database_with_category(&protective, "protective");
+    let rollback_before = fs::read(&rollback).unwrap();
+    let protective_before = fs::read(&protective).unwrap();
+    let store = BackupStore::new(&directory);
+    write_restore_state(&directory, RestoreState::Prepared);
+
+    let state = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    assert_eq!(category_count(&state, "protective"), 1);
+    assert_eq!(category_count(&state, "rollback"), 0);
+    assert_eq!(fs::read(&protective).unwrap(), protective_before);
+    assert_eq!(fs::read(&rollback).unwrap(), rollback_before);
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn markerless_recovery_with_missing_or_invalid_canonical_fails_closed() {
+    for (name, canonical_setup) in [("missing", false), ("invalid", true)] {
+        let directory = temporary_directory(&format!("markerless-{name}"));
+        fs::create_dir_all(&directory).unwrap();
+        let config = production_database_config(&directory);
+        if canonical_setup {
+            fs::write(config.path(), b"invalid canonical").unwrap();
+        }
+        database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback");
+        database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
+        fs::write(directory.join("restore-state.json.previous-0"), br#"{"state":"prepared"}"#).unwrap();
+        let rollback_before = fs::read(directory.join("restore-rollback.sqlite3")).unwrap();
+        let protective_before = fs::read(directory.join("pre-restore.sqlite3")).unwrap();
+        let canonical_before = canonical_setup.then(|| fs::read(config.path()).unwrap());
+
+        let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+        assert_eq!(recovered.with_read(|_| Ok(())).unwrap_err(), "database_unavailable", "{name}");
+        assert_eq!(fs::read(directory.join("restore-rollback.sqlite3")).unwrap(), rollback_before, "{name}");
+        assert_eq!(fs::read(directory.join("pre-restore.sqlite3")).unwrap(), protective_before, "{name}");
+        assert_eq!(fs::read(config.path()).ok(), canonical_before, "{name}");
+        drop(recovered);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn fallback_recovery_after_live_moved_crash_removes_abandoned_candidate_stage() {
+    let directory = temporary_directory("recover-live-moved-with-stage");
+    fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+    let config = production_database_config(&directory);
+    let rollback = directory.join("restore-rollback.sqlite3");
+    let protective = directory.join("pre-restore.sqlite3");
+    database_with_category(&rollback, "rollback-recovered");
+    database_with_category(&protective, "protective-retained");
+    let stage = directory.join(format!("backup-restore/staging/{}.sqlite3", uuid::Uuid::new_v4()));
+    fs::write(&stage, b"candidate before stage-to-canonical rename").unwrap();
+    write_restore_state(&directory, RestoreState::LiveMoved);
+    let rollback_before = fs::read(&rollback).unwrap();
+    let protective_before = fs::read(&protective).unwrap();
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert_eq!(category_count(&recovered, "rollback-recovered"), 1);
+    assert!(config.path().is_file(), "fallback must be installed as canonical");
+    assert!(!stage.exists(), "the abandoned pre-rename candidate stage is reclaimed");
+    assert_eq!(fs::read(&rollback).unwrap(), rollback_before, "rollback evidence remains retained");
+    assert_eq!(fs::read(&protective).unwrap(), protective_before, "protective evidence remains retained");
+    assert_eq!(BackupStore::new(&directory).read_restore_state().unwrap(), None);
+    drop(recovered);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn startup_recovery_accepts_current_schema_operational_inventory_movements() {
+    let directory = temporary_directory("recover-operational-inventory");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    versioned_database(config.path(), CURRENT_SCHEMA_VERSION);
+    Connection::open(config.path())
+        .unwrap()
+        .execute(
+            "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, request_id, resulting_quantity) VALUES (1, 'stock_entry', 1, 'restart-safe-entry', 9)",
+            [],
+        )
+        .unwrap();
+
+    let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+    let listed = recovered
+        .with_read(list_catalog_maintenance)
+        .expect("a valid current-schema inventory movement must not disable the database");
+
+    assert!(matches!(
+        listed,
+        CatalogMaintenanceListResponse::Success { records } if !records.is_empty()
+    ));
+    drop(recovered);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn startup_recovery_restores_a_valid_rollback_after_live_moved_crash() {
+    let directory = temporary_directory("recover-live-moved");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback");
+    database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
+    let store = BackupStore::new(&directory);
+    write_restore_state(&directory, RestoreState::LiveMoved);
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    assert_eq!(category_count(&recovered, "rollback"), 1);
+    assert!(config.path().exists());
+    assert_eq!(store.read_restore_state().unwrap(), None);
+    assert!(directory.join("pre-restore.sqlite3").exists());
+    drop(recovered);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn startup_recovery_uses_the_retained_protective_database_when_rollback_is_unavailable() {
+    let directory = temporary_directory("recover-protective");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    fs::write(directory.join("restore-rollback.sqlite3"), b"not sqlite").unwrap();
+    database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
+    let store = BackupStore::new(&directory);
+    write_restore_state(&directory, RestoreState::LiveMoved);
+
+    let recovered = DatabaseState::recover_on_startup(config, &store);
+
+    assert_eq!(category_count(&recovered, "protective"), 1);
+    assert_eq!(store.read_restore_state().unwrap(), None);
+    assert!(directory.join("pre-restore.sqlite3").exists());
+    drop(recovered);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn startup_recovery_leaves_database_unavailable_without_a_safe_candidate() {
+    let directory = temporary_directory("recover-unavailable");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    fs::write(directory.join("restore-rollback.sqlite3"), b"not sqlite").unwrap();
+    fs::write(directory.join("pre-restore.sqlite3"), b"not sqlite").unwrap();
+    let store = BackupStore::new(&directory);
+    write_restore_state(&directory, RestoreState::LiveMoved);
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    assert_eq!(
+        recovered.with_read(|_| Ok(())).unwrap_err(),
+        "database_unavailable"
+    );
+    assert!(!config.path().exists());
+    assert_eq!(
+        store.read_restore_state().unwrap(),
+        Some(RestoreState::LiveMoved)
+    );
+    assert!(directory.join("pre-restore.sqlite3").exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[derive(Clone)]
+struct CandidateStore {
+    candidate: RestoreCandidate,
+    rechecked: RestoreCandidate,
+}
+
+impl RestoreCandidateStore for CandidateStore {
+    fn prepare(&self, _: &Path) -> Result<RestoreCandidate, RestoreError> {
+        Ok(self.candidate.clone())
+    }
+
+    fn recheck(&self, _: &RestoreCandidate) -> Result<RestoreCandidate, RestoreError> {
+        Ok(self.rechecked.clone())
+    }
+}
+
+struct BackupProtection {
+    should_fail: bool,
+    calls: Cell<u8>,
+}
+
+impl ProtectiveBackup for BackupProtection {
+    fn create_and_validate(&self) -> Result<(), RestoreError> {
+        self.calls.set(self.calls.get() + 1);
+        if self.should_fail {
+            Err(RestoreError::RestoreFailed)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+struct FixedToken;
+
+impl RestoreTokenSource for FixedToken {
+    fn next_token(&mut self) -> String {
+        "opaque-token".into()
+    }
+}
+
+fn candidate() -> RestoreCandidate {
+    RestoreCandidate {
+        stage: PathBuf::from("staging/candidate.sqlite3"),
+        schema_version: CURRENT_SCHEMA_VERSION,
+        size_bytes: 4096,
+        sha256: "candidate-checksum".into(),
+        facts: OperationalFacts {
+            catalog_records: 1,
+            confirmed_sales: 1,
+            stock_balances: 1,
+            movement_records: 2,
+            schema_history_version: CURRENT_SCHEMA_VERSION,
+        },
+    }
+}
+
+fn coordinator(
+    rechecked: RestoreCandidate,
+    protective_failure: bool,
+) -> BackupCoordinator<CandidateStore, BackupProtection, FixedToken> {
+    let candidate = candidate();
+    BackupCoordinator::new(
+        CandidateStore {
+            candidate: candidate.clone(),
+            rechecked,
+        },
+        BackupProtection {
+            should_fail: protective_failure,
+            calls: Cell::new(0),
+        },
+        FixedToken,
+        60,
+    )
+}
+
+#[test]
+fn requires_explicit_confirmation_and_rejects_mismatched_or_reused_tokens() {
+    let mut coordinator = coordinator(candidate(), false);
+    let PrepareRestoreResult::Prepared { token, .. } =
+        coordinator.prepare(Path::new("backup.sqlite3"), 10)
+    else {
+        panic!("candidate should prepare");
+    };
+
+    assert_eq!(
+        coordinator.confirm(&token, false, 11),
+        ConfirmRestoreResult::Failed(RestoreError::ConfirmationRequired)
+    );
+    assert_eq!(
+        coordinator.confirm("different-token", true, 11),
+        ConfirmRestoreResult::Failed(RestoreError::TokenInvalid)
+    );
+    let ConfirmRestoreResult::ReadyForReplacement { candidate } =
+        coordinator.confirm(&token, true, 11)
+    else {
+        panic!("confirmed candidate should be ready for Slice 2B");
+    };
+    assert_eq!(candidate.facts.catalog_records, 1);
+    assert_eq!(candidate.facts.confirmed_sales, 1);
+    assert_eq!(candidate.facts.stock_balances, 1);
+    assert_eq!(candidate.facts.movement_records, 2);
+    assert_eq!(
+        candidate.facts.schema_history_version,
+        CURRENT_SCHEMA_VERSION
+    );
+    assert_eq!(
+        coordinator.confirm(&token, true, 12),
+        ConfirmRestoreResult::Failed(RestoreError::TokenInvalid)
+    );
+}
+
+#[test]
+fn rejects_expired_or_changed_candidates_before_protective_backup() {
+    let mut expired = coordinator(candidate(), false);
+    let PrepareRestoreResult::Prepared { token, .. } =
+        expired.prepare(Path::new("backup.sqlite3"), 10)
+    else {
+        panic!("candidate should prepare");
+    };
+    assert_eq!(
+        expired.confirm(&token, true, 71),
+        ConfirmRestoreResult::Failed(RestoreError::TokenExpired)
+    );
+
+    let mut changed = candidate();
+    changed.sha256 = "changed-checksum".into();
+    let mut coordinator = coordinator(changed, true);
+    let PrepareRestoreResult::Prepared { token, .. } =
+        coordinator.prepare(Path::new("backup.sqlite3"), 10)
+    else {
+        panic!("candidate should prepare");
+    };
+    assert_eq!(
+        coordinator.confirm(&token, true, 11),
+        ConfirmRestoreResult::Failed(RestoreError::InvalidBackup)
+    );
+}
+
+#[test]
+fn aborts_before_replacement_when_protective_backup_fails() {
+    let mut coordinator = coordinator(candidate(), true);
+    let PrepareRestoreResult::Prepared { token, .. } =
+        coordinator.prepare(Path::new("backup.sqlite3"), 10)
+    else {
+        panic!("candidate should prepare");
+    };
+
+    assert_eq!(
+        coordinator.confirm(&token, true, 11),
+        ConfirmRestoreResult::Failed(RestoreError::RestoreFailed)
+    );
+}
+
+#[test]
+fn backup_command_boundary_serializes_only_allowlisted_stable_and_safe_outcomes() {
+    let request: PrepareRestoreRequest =
+        serde_json::from_str(r#"{"source_token":"native-picker-token"}"#).unwrap();
+    assert_eq!(request.source_token, "native-picker-token");
+    assert!(serde_json::from_str::<PrepareRestoreRequest>(
+        r#"{"source":"/media/USB/backup.sqlite3"}"#
+    )
+    .is_err());
+    assert!(serde_json::from_str::<PrepareRestoreRequest>(
+        r#"{"source_token":"token","unexpected":true}"#
+    )
+    .is_err());
+    assert_eq!(
+        serde_json::to_value(BackupResponse::error("invalid_backup")).unwrap(),
+        serde_json::json!({
+            "kind": "error",
+            "code": "invalid_backup",
+            "message": "The selected backup is invalid.",
+        })
+    );
+    for (code, message) in [
+        ("restore_failed", "The restore could not be completed."),
+        ("database_unavailable", "The database is unavailable."),
+    ] {
+        let serialized = serde_json::to_value(BackupResponse::error(code)).unwrap();
+        assert_eq!(
+            serialized,
+            serde_json::json!({ "kind": "error", "code": code, "message": message })
+        );
+        let text = serialized.to_string();
+        for internal in [
+            "SQLite",
+            "restore-state.json",
+            "restore-rollback.sqlite3",
+            "pre-restore.sqlite3",
+            "recovery source",
+        ] {
+            assert!(
+                !text.contains(internal),
+                "leaked internal detail: {internal}"
+            );
+        }
+    }
+    let created = serde_json::to_value(BackupResponse::Created {
+        file_name: "backup-safe-name.sqlite3".into(),
+        created_at_unix_seconds: 1,
+        size_bytes: 2,
+        schema_version: 23,
+        durability_warning: true,
+        cleanup_warning: false,
+    }).unwrap();
+    assert_eq!(created["file_name"], "backup-safe-name.sqlite3");
+    assert_eq!(created["durability_warning"], true);
+    assert_eq!(created["cleanup_warning"], false);
+    assert!(created.get("path").is_none(), "created backup responses never disclose an absolute path");
+
+    assert_eq!(
+        ALLOWED_COMMANDS,
+        [
+            "choose_backup_destination_command",
+            "choose_restore_source_command",
+            "create_backup_command",
+            "prepare_restore_command",
+            "confirm_restore_command",
+        ]
+    );
+
+    let directory = temporary_directory("command-unavailable");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let store = BackupStore::new(&directory);
+    fs::write(directory.join("restore-rollback.sqlite3"), b"not sqlite").unwrap();
+    fs::write(directory.join("pre-restore.sqlite3"), b"not sqlite").unwrap();
+    write_restore_state(&directory, RestoreState::LiveMoved);
+    let state = DatabaseState::recover_on_startup(config, &store);
+    let mut commands = BackupCommandState::new(&directory);
+
+    assert_eq!(
+        prepare_restore(
+            &state,
+            &mut commands,
+            PrepareRestoreRequest {
+                source_token: "unissued-token".into(),
+            }
+        ),
+        BackupResponse::error("database_unavailable")
+    );
+    assert_eq!(
+        confirm_restore(
+            &state,
+            &mut commands,
+            ConfirmRestoreRequest {
+                token: "unknown-token".into(),
+                confirmed: true,
+            }
+        ),
+        BackupResponse::error("token_invalid")
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(feature = "desktop")]
+#[test]
+fn maps_nonblocking_picker_callbacks_to_the_typed_command_contract() {
+    let selected = tauri::async_runtime::block_on(select_callback_path(|complete| {
+        complete(Some(PathBuf::from("/media/USB á")));
+    }));
+    let cancelled = tauri::async_runtime::block_on(select_callback_path(|complete| {
+        complete(None);
+    }));
+
+    assert_eq!(
+        selected,
+        PathSelection::Selected {
+            path: PathBuf::from("/media/USB á")
+        }
+    );
+    assert_eq!(cancelled, PathSelection::Cancelled);
+    assert_eq!(
+        serde_json::to_value(cancelled).unwrap(),
+        serde_json::json!({ "kind": "cancelled" })
+    );
+}
