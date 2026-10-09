@@ -142,7 +142,8 @@ fn export_uses_active_filters_and_returns_paginated_pdf_bytes() {
     assert!(document.pages.len() >= 2);
     let extracted_pages = document.extract_text();
     let extracted = extracted_pages.concat().join(" ");
-    assert!(extracted.contains("Repuestos Autos"));
+    assert!(extracted.contains("Velay"));
+    assert!(!extracted.contains("Repuestos Autos"));
     assert!(extracted.contains("Libro de movimientos"));
     assert!(extracted.contains(&format!(
         "Período: desde {} (incluido) hasta {} (exclusivo)",
@@ -168,6 +169,7 @@ fn export_uses_active_filters_and_returns_paginated_pdf_bytes() {
     assert!(extracted.contains("Ingreso de stock"));
     for (page_index, page_text) in extracted_pages.iter().enumerate() {
         let page_text = page_text.join(" ");
+        assert!(page_text.contains("Velay"), "page {page_index} omits branding");
         assert!(
             page_text.contains("Libro de movimientos"),
             "page {page_index} omits title"

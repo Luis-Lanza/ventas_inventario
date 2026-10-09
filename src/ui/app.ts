@@ -8,6 +8,7 @@ import { OnboardingScreen } from "./onboarding/onboarding-screen.ts";
 import { InventoryScreen } from "./inventory/inventory-screen.ts";
 import { BackupScreen } from "./backup/backup-screen.ts";
 import { SaleScreen } from "./sales/sale-screen.ts";
+import { createSaleSession, type SaleSession } from "./sales/sale-session.ts";
 import { SalesHistoryScreen } from "./sales/history-screen.ts";
 import { CatalogMaintenanceScreen } from "./catalog/catalog-maintenance-screen.ts";
 import { MovementLedgerScreen } from "./reports/movement-ledger-screen.ts";
@@ -25,28 +26,34 @@ export type NavigationAction = (typeof NAVIGATION_ACTION)[keyof typeof NAVIGATIO
 export function screenAfter(_current: Screen, action: NavigationAction): Screen {
   return action === NAVIGATION_ACTION.OPEN_DASHBOARD ? SCREEN.DASHBOARD : action === NAVIGATION_ACTION.OPEN_SALES_HISTORY ? SCREEN.SALES_HISTORY : action === NAVIGATION_ACTION.OPEN_REPORTS ? SCREEN.REPORTS : action === NAVIGATION_ACTION.OPEN_INVENTORY ? SCREEN.INVENTORY : action === NAVIGATION_ACTION.OPEN_BACKUP ? SCREEN.BACKUP : action === NAVIGATION_ACTION.OPEN_CATALOG ? SCREEN.CATALOG : action === NAVIGATION_ACTION.START_ONBOARDING ? SCREEN.ONBOARDING : SCREEN.SALES;
 }
-function screenContent(screen: Screen, onNavigate: (action: NavigationAction) => void, refreshInventoryCount: () => void, inventoryFilter: "all" | "alerts", openInventoryAlerts: () => void, canRestore: boolean) {
+function screenContent(screen: Screen, onNavigate: (action: NavigationAction) => void, refreshInventoryCount: () => void, inventoryFilter: "all" | "alerts", openInventoryAlerts: () => void, canRestore: boolean, inventoryEntry: number, saleSession: SaleSession) {
   if (screen === SCREEN.DASHBOARD) return createElement(DashboardScreen, { onOpenInventoryAlerts: openInventoryAlerts });
   if (screen === SCREEN.ONBOARDING) return createElement(OnboardingScreen, { onBack: () => onNavigate(NAVIGATION_ACTION.RETURN_TO_SALES) });
-  if (screen === SCREEN.INVENTORY) return createElement(InventoryScreen, { key: inventoryFilter, initialStockState: inventoryFilter, onInventoryAlertsRefresh: refreshInventoryCount });
+  if (screen === SCREEN.INVENTORY) return createElement(InventoryScreen, { key: `${inventoryFilter}:${inventoryEntry}`, initialStockState: inventoryFilter, onInventoryAlertsRefresh: refreshInventoryCount });
   if (screen === SCREEN.BACKUP) return createElement(BackupScreen, { canRestore });
   if (screen === SCREEN.CATALOG) return createElement(CatalogMaintenanceScreen);
   if (screen === SCREEN.SALES_HISTORY) return createElement(SalesHistoryScreen);
   if (screen === SCREEN.REPORTS) return createElement(MovementLedgerScreen);
-  return createElement(SaleScreen, { onInventoryAlertsRefresh: refreshInventoryCount });
+  return createElement(SaleScreen, { session: saleSession, onInventoryAlertsRefresh: refreshInventoryCount });
 }
 export function App() {
   return createElement(ActionNotificationProvider, null, createElement(AppContent));
 }
 function AppContent() {
   const notifications = useActionNotifications();
+  const [saleSession] = useState(() => createSaleSession(() => crypto.randomUUID()));
+  useEffect(() => saleSession.attachOwner(), [saleSession]);
   const [screen, setScreen] = useState<Screen>(SCREEN.DASHBOARD);
   const [accessMode, setAccessMode] = useState<"loading" | "activation" | "active" | "recovery">("loading");
   const [inventoryCount, setInventoryCount] = useState<number | null>(null);
   const [inventoryFilter, setInventoryFilter] = useState<"all" | "alerts">("all");
+  const [inventoryEntry, setInventoryEntry] = useState(0);
   const alertAttempt = useRef(0);
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; alertAttempt.current += 1; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; alertAttempt.current += 1; };
+  }, []);
   const refreshInventoryCount = () => {
     const attempt = ++alertAttempt.current;
     setInventoryCount(null);
@@ -66,14 +73,16 @@ function AppContent() {
   }, []);
   useEffect(() => { if (accessMode === "active" || accessMode === "recovery") refreshInventoryCount(); }, [accessMode]);
   const navigate = (action: NavigationAction) => {
-    if (accessMode === "recovery" && ![NAVIGATION_ACTION.OPEN_DASHBOARD, NAVIGATION_ACTION.OPEN_SALES_HISTORY, NAVIGATION_ACTION.OPEN_REPORTS, NAVIGATION_ACTION.OPEN_BACKUP].includes(action)) return;
+    const recoveryActions: readonly NavigationAction[] = [NAVIGATION_ACTION.OPEN_DASHBOARD, NAVIGATION_ACTION.OPEN_SALES_HISTORY, NAVIGATION_ACTION.OPEN_REPORTS, NAVIGATION_ACTION.OPEN_BACKUP];
+    if (accessMode === "recovery" && !recoveryActions.includes(action)) return;
     setInventoryFilter("all");
     setScreen((current) => screenAfter(current, action));
     refreshInventoryCount();
   };
   const openInventoryAlerts = () => {
     if (accessMode === "recovery") return;
-    setInventoryFilter("all");
+    setInventoryFilter("alerts");
+    setInventoryEntry((current) => current + 1);
     setScreen(SCREEN.INVENTORY);
     refreshInventoryCount();
   };
@@ -89,6 +98,6 @@ function AppContent() {
           setAccessMode("active");
         },
       })
-      : createElement(AppShell, { screen, onNavigate: navigate, onInventoryAlerts: openInventoryAlerts, inventoryCue, recoveryMode: accessMode === "recovery" }, screenContent(screen, navigate, refreshInventoryCount, inventoryFilter, openInventoryAlerts, accessMode === "active"));
+      : createElement(AppShell, { screen, onNavigate: navigate, onInventoryAlerts: openInventoryAlerts, inventoryCue, recoveryMode: accessMode === "recovery" }, screenContent(screen, navigate, refreshInventoryCount, inventoryFilter, openInventoryAlerts, accessMode === "active", inventoryEntry, saleSession));
   return content;
 }

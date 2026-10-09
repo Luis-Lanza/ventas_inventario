@@ -6,13 +6,19 @@ export function parseBsToCentavos(value: string): number | null {
   const whole = Number(match[1]);
   const cents = Number((match[2] ?? "").padEnd(2, "0") || 0);
   const centavos = whole * 100 + cents;
-  return Number.isSafeInteger(whole) && whole > 0 && Number.isSafeInteger(centavos) ? centavos : null;
+  return Number.isSafeInteger(whole) && centavos > 0 && Number.isSafeInteger(centavos) ? centavos : null;
 }
 
 export function parsePositiveWhole(value: string): number | null {
   if (!/^\d+$/.test(value.trim())) return null;
   const quantity = Number(value);
   return Number.isSafeInteger(quantity) && quantity > 0 ? quantity : null;
+}
+
+export function parseOpeningQuantity(value: string): number | null {
+  if (!/^\d+$/.test(value.trim())) return null;
+  const quantity = Number(value);
+  return Number.isSafeInteger(quantity) && quantity >= 0 ? quantity : null;
 }
 
 export interface AttributeValidationError { definitionId: number; message: string }

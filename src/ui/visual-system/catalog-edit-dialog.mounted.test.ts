@@ -30,11 +30,19 @@ function view(recoveryRequired: boolean, onReload = () => undefined) {
   }));
 }
 
-test("current purchase price is exposed as required in the rendered product form", () => {
+test("category editing names the schema definition group", () => {
+  view(false);
+  const definitions = screen.getByRole("group", { name: "Definición de atributos de la categoría" });
+  assert.ok(within(definitions).getByRole("button", { name: "Agregar campo" }));
+  assert.match(definitions.textContent ?? "", /nombre, tipo, obligatoriedad y opciones/);
+  assert.equal(screen.queryByRole("group", { name: "Valores de atributos del producto" }), null);
+});
+
+test("current purchase cost is optional with unknown margin and immutable history guidance", () => {
   render(createElement(CatalogEditDialog, {
     record: { ...record, target: "product", label: "Filtro" },
-    detail: { ...detail, target: "product", name: "Filtro", category_id: 2, attribute_definitions: [] },
-    form: { ...form, sku: "FLT", purchase_price_centavos: "2000", sale_price_centavos: "3000", minimum_sale_price_centavos: "2500" },
+    detail: { ...detail, target: "product", name: "Filtro", category_id: 2, category_revision: 0, sku: "FLT", purchase_price_centavos: null, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, low_stock_threshold: 1, primary_location_id: null, attribute_definitions: [{ definition_id: 10, label: "Marca", field_type: "text", required: true, options: [], active: true }], attribute_values: [{ definition_id: 10, value: "Bosch" }] },
+    form: { ...form, attribute_values: { 10: "Bosch" }, sku: "FLT", purchase_price_centavos: "", sale_price_centavos: "3000", minimum_sale_price_centavos: "2500" },
     loading: false,
     pending: false,
     feedback: null,
@@ -49,7 +57,13 @@ test("current purchase price is exposed as required in the rendered product form
   }));
 
   const dialog = screen.getByRole("dialog", { name: "Editar Filtro" });
-  assert.equal(within(dialog).getByRole("textbox", { name: "Precio actual de compra (Bs)" }).getAttribute("aria-required"), "true");
+  assert.equal(within(dialog).getByRole("textbox", { name: "Precio actual de compra (Bs)" }).getAttribute("aria-required"), null);
+  assert.match(dialog.textContent ?? "", /Opcional: vacío significa costo desconocido, sin margen calculable/);
+  assert.match(dialog.textContent ?? "", /no modifica ventas históricas/);
+  const values = within(dialog).getByRole("group", { name: "Valores de atributos del producto" });
+  assert.equal((within(values).getByRole("textbox", { name: "Marca (obligatorio)" }) as HTMLInputElement).value, "Bosch");
+  assert.match(values.textContent ?? "", /El producto guarda los valores/);
+  assert.equal(within(dialog).queryByRole("group", { name: "Definición de atributos de la categoría" }), null);
 });
 
 test("recovery preserves the detail while disabling incompatible actions and exposing retry", async () => {
@@ -82,7 +96,7 @@ test("recovery preserves the detail while disabling incompatible actions and exp
 });
 
 const imageRecord = { target: "product" as const, entity_id: 1, label: "Filtro", activity: "active" as const, revision: 0 };
-const imageDetail = { ...imageRecord, category_id: 1, category_revision: 0, sku: "F-1", name: "Filtro", purchase_price_centavos: 100, sale_price_centavos: 200, minimum_sale_price_centavos: 100, primary_location_id: null, attribute_definitions: [], attribute_values: [] };
+const imageDetail = { ...imageRecord, category_id: 1, category_revision: 0, sku: "F-1", name: "Filtro", purchase_price_centavos: 100, sale_price_centavos: 200, minimum_sale_price_centavos: 100, low_stock_threshold: 1, primary_location_id: null, attribute_definitions: [], attribute_values: [] };
 const imageForm = { name: "Filtro", sku: "F-1", purchase_price_centavos: "1", sale_price_centavos: "2", minimum_sale_price_centavos: "1", attribute_values: {} };
 const noop = () => undefined;
 

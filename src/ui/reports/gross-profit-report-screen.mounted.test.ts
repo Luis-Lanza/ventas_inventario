@@ -1,10 +1,53 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 import { GrossProfitReportScreen } from "./gross-profit-report-screen.ts";
+function localContractDiagnostics(source: string) {
+ const config = ts.readConfigFile("tsconfig.json", ts.sys.readFile);
+ assert.equal(config.error, undefined);
+ const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd());
+ assert.equal(parsed.errors.length, 0);
+ assert.equal(parsed.options.strict, true);
+ const path = fileURLToPath(new URL("local-contract-fixture.ts", import.meta.url));
+ const options = { ...parsed.options, noEmit: true };
+ const host = ts.createCompilerHost(options);
+ const read = host.readFile.bind(host), exists = host.fileExists.bind(host);
+ host.readFile = file => file === path ? source : read(file);
+ host.fileExists = file => file === path || exists(file);
+ return ts.getPreEmitDiagnostics(ts.createProgram([path], options, host));
+}
+test("strict whole-App callers accept standalone and explicit-period local screens", () => {
+ const diagnostics = localContractDiagnostics(`
+ import { createElement } from "react";
+ import { App } from "../app.ts";
+ import { LocationManagementScreen } from "../catalog/location-management-screen.ts";
+ import { MovementLedgerScreen } from "./movement-ledger-screen.ts";
+ import { GrossProfitReportScreen } from "./gross-profit-report-screen.ts";
+ createElement(App);
+ createElement(LocationManagementScreen);
+ createElement(MovementLedgerScreen);
+ createElement(GrossProfitReportScreen);
+ createElement(GrossProfitReportScreen, { period: { from: "2024-03-10", to: "2024-03-20" } });
+ `);
+ assert.equal(diagnostics.length, 0, ts.formatDiagnosticsWithColorAndContext(diagnostics, {
+  getCanonicalFileName: path => path, getCurrentDirectory: ts.sys.getCurrentDirectory, getNewLine: () => "\n",
+ }));
+});
+test("strict local props reject non-date period values without ignoring program diagnostics", () => {
+ const diagnostics = localContractDiagnostics(`
+ import { GrossProfitReportScreen, type GrossProfitReportScreenProps } from "./gross-profit-report-screen.ts";
+ import { createElement } from "react";
+ const props: GrossProfitReportScreenProps = { period: { from: 42, to: "2024-03-20" } };
+ createElement(GrossProfitReportScreen, { period: { from: "2024-03-10", to: false } });
+ `);
+ assert.deepEqual(diagnostics.map(diagnostic => diagnostic.code), [2322, 2769]);
+ assert.ok(diagnostics.every(diagnostic => diagnostic.file?.fileName.endsWith("local-contract-fixture.ts")));
+});
 const report = (amount_centavos = 1250, missing_cost_line_count = 0, activity_count = 1) => ({ kind: "success", report: { amount_centavos, missing_cost_line_count, activity_count } });
 const operation = (id: number, page = 1) => ({ occurred_at: "2024-03-10T11:30:00Z", operation_kind: "venta", sale_id: id, return_id: null, product_name: "Filtro", sku: `SKU-${id}`, signed_quantity: 2, negotiated_unit_price_centavos: 1250, unit_cost_snapshot_centavos: null, cost_state: "unknown", signed_gross_profit_centavos: null });
 const operations = (rows = [operation(7)], page = 1, total = 1) => ({ kind: "success", report: { rows, page, page_size: 20, total, total_pages: Math.ceil(total / 20) } });

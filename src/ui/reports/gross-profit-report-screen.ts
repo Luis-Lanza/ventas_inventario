@@ -1,4 +1,4 @@
-import { createElement, useEffect, useReducer, useRef } from "react";
+import { createElement, useEffect, useReducer, useRef, type ChangeEvent, type FormEvent } from "react";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { grossProfitCommands } from "../../commands/gross-profit.ts";
 import { exportGrossProfitOperationsCommand, grossProfitOperationsCommands, type GrossProfitOperation } from "../../commands/gross-profit-operations.ts";
@@ -12,7 +12,9 @@ const money = (centavos: number) => `Bs ${centavos < 0 ? "−" : ""}${(Math.abs(
 const signed = (value: number) => `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value)}`;
 const rowName = (row: GrossProfitOperation) => row.operation_kind === "venta" ? `Venta #${row.sale_id}` : `Devolución #${row.return_id} · Venta #${row.sale_id}`;
 
-export function GrossProfitReportScreen({ period }: { period?: Period } = {}) {
+export interface GrossProfitReportScreenProps { period?: Period }
+
+export function GrossProfitReportScreen({ period }: GrossProfitReportScreenProps) {
  const [state, dispatch] = useReducer(createGrossProfitReportFlow, undefined, () => initialGrossProfitReportState(currentMonth()));
  const notifications = useActionNotifications();
  const mounted = useRef(true); const rangeRequest = useRef(0); const operationsRequest = useRef(0); const pageRequestInFlight = useRef<number | null>(null); const exportInFlight = useRef(false);
@@ -57,9 +59,9 @@ export function GrossProfitReportScreen({ period }: { period?: Period } = {}) {
   createElement("td", null, row.signed_gross_profit_centavos === null ? "No calculable" : money(row.signed_gross_profit_centavos))));
  return createElement("section", { "aria-label": "Resultados de ganancia bruta", "data-ui-gross-profit-report": true, "aria-busy": state.summary_status === "loading" || state.operations_status === "loading" || undefined },
   period ? null : createElement("header", { "data-ui-report-header": true }, createElement("h1", { id: "gross-profit-heading" }, "Ganancia bruta"), createElement("p", null, "Total del período según ventas confirmadas y devoluciones registradas.")),
-  (period ? null : createElement(Panel, { label: "Período" }, createElement("form", { "data-ui-gross-profit-filters": true, onSubmit: (event: Event) => { event.preventDefault(); if (valid) runRange(state.draft); } },
-   createElement(Field, { kind: "date", label: "Desde", control: createElement("input", { type: "date", required: true, value: state.draft.from, onChange: (event: Event) => dispatch({ type: "draft_changed", period: { ...state.draft, from: (event.currentTarget as HTMLInputElement).value } }) }) }),
-   createElement(Field, { kind: "date", label: "Hasta", control: createElement("input", { type: "date", required: true, value: state.draft.to, onChange: (event: Event) => dispatch({ type: "draft_changed", period: { ...state.draft, to: (event.currentTarget as HTMLInputElement).value } }) }) }),
+  (period ? null : createElement(Panel, { label: "Período" }, createElement("form", { "data-ui-gross-profit-filters": true, onSubmit: (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (valid) runRange(state.draft); } },
+   createElement(Field, { kind: "date", label: "Desde", control: createElement("input", { type: "date", required: true, value: state.draft.from, onChange: (event: ChangeEvent<HTMLInputElement>) => dispatch({ type: "draft_changed", period: { ...state.draft, from: event.currentTarget.value } }) }) }),
+   createElement(Field, { kind: "date", label: "Hasta", control: createElement("input", { type: "date", required: true, value: state.draft.to, onChange: (event: ChangeEvent<HTMLInputElement>) => dispatch({ type: "draft_changed", period: { ...state.draft, to: event.currentTarget.value } }) }) }),
    createElement(Action, { variant: "primary", type: "submit", disabled: !valid }, "Aplicar período")))),
   createElement(Panel, { label: period ? "Resultados" : "Ganancia bruta" },
    createElement("div", { "data-ui-report-actions": true }, createElement(Action, { variant: "secondary", onClick: exportPdf, disabled: !exportReady, pending: state.export_status === "pending", pendingLabel: "Exportar PDF" }, "Exportar PDF")),

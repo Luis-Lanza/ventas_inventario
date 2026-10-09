@@ -79,9 +79,12 @@ test("sends only the Catalog credential with physical-count IPC and decodes boun
 });
 
 test("rejects fractional inventory quantities before invoking IPC", async () => {
-  const commands = createInventoryCommands(async () => ({ kind: "success" }));
+  let calls = 0;
+  const commands = createInventoryCommands(async () => { calls += 1; return { kind: "success" }; });
   assert.deepEqual(await commands.confirmStockEntry({ request_id: "550e8400-e29b-41d4-a716-446655440212", product_id: 1, quantity: 1.5, unit_purchase_price_centavos: 100, note: null }), { kind: "error", code: "invalid_quantity", message: "The inventory operation could not be completed." });
-  assert.deepEqual(await commands.confirmPhysicalCount({ request_id: "550e8400-e29b-41d4-a716-446655440213", product_id: 1, count: 1.5, reason: "counted" }), { kind: "error", code: "invalid_count", message: "The inventory operation could not be completed." });
+  assert.equal(calls, 0);
+  assert.deepEqual(await commands.confirmPhysicalCount({ request_id: "550e8400-e29b-41d4-a716-446655440213", product_id: 1, count: 1.5, reason: "counted", catalog_password: "catalog-secret" }), { kind: "error", code: "invalid_count", message: "The inventory operation could not be completed." });
+  assert.equal(calls, 0);
 });
 
 test("preserves the stable request conflict code from inventory IPC", async () => {

@@ -69,7 +69,7 @@ fn page_attributes_include_every_definition_in_id_order_and_default_missing_valu
     connection.execute("INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 12, '50', '50')", []).unwrap();
     create_product(&mut connection, CreateProductInput {
         sku: "ZZZ-001".into(), name: "Zulu filter".into(), category_id: 1,
-        purchase_price_centavos: 100, sale_price_centavos: 200,
+        purchase_price_centavos: Some(100), sale_price_centavos: 200,
         minimum_sale_price_centavos: 100, low_stock_threshold: None, opening_quantity: 2,
         attribute_values: vec![AttributeValueInput { definition_id: 12, value: "99".into() }],
     }).unwrap();

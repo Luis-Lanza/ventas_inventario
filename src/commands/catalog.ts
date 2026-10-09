@@ -17,8 +17,9 @@ export interface InventoryBrowseProduct { product_id: number; category_id: numbe
 export interface InventoryBrowsePage { products: InventoryBrowseProduct[]; categories: ProductBrowseCategory[]; page: number; page_size: number; total: number; total_pages: number; }
 export interface SalesBrowseProduct { product_id: number; category_id: number; sku: string; name: string; category_name: string; available_quantity: number; purchase_price_centavos: number | null; sale_price_centavos: number; list_price_centavos: number; catalog_unit_price_centavos: number; minimum_sale_price_centavos: number; primary_location_code: string | null; attribute_values: ProductBrowseAttribute[]; }
 export interface SalesBrowsePage { products: SalesBrowseProduct[]; categories: ProductBrowseCategory[]; page: number; page_size: number; total: number; total_pages: number; }
-export type ProductBrowserProduct = ProductBrowseResult | SalesBrowseProduct;
-export type ProductBrowserPage = ProductBrowsePage | SalesBrowsePage;
+export type CatalogProductBrowseResult = ProductBrowseResult;
+export type ProductBrowserProduct = Readonly<InventoryBrowseProduct>;
+export interface ProductBrowserPage<T extends InventoryBrowseProduct = InventoryBrowseProduct> { products: readonly T[]; categories: readonly ProductBrowseCategory[]; page: number; page_size: number; total: number; total_pages: number; }
 export interface CatalogMaintenanceRecord { entity_id: number; target: (typeof CATALOG_TARGET)[keyof typeof CATALOG_TARGET]; label: string; activity: "active" | "archived"; revision: number; active_product_count?: number; }
 export interface CatalogCategoryMaintenanceRecord extends CatalogMaintenanceRecord { target: typeof CATALOG_TARGET.CATEGORY; active_product_count: number; }
 export interface MaintainCatalogInput { target: CatalogMaintenanceRecord["target"]; entity_id: number; intent: (typeof CATALOG_INTENT)[keyof typeof CATALOG_INTENT]; expected_revision: number; }
@@ -35,7 +36,7 @@ export type SalesProductThumbnailResponse = { kind: "success"; product_id: numbe
 export type SalesProductOriginalResponse = SalesProductThumbnailResponse;
 export type SalesProductOriginalLoader = (product_id: number) => Promise<SalesProductOriginalResponse>;
 export interface CategoryEditInput { target: typeof CATALOG_TARGET.CATEGORY; entity_id: number; expected_revision: number; name: string; }
-export interface ProductEditInput { target: typeof CATALOG_TARGET.PRODUCT; entity_id: number; expected_revision: number; expected_category_revision: number; sku: string; name: string; purchase_price_centavos: number; sale_price_centavos: number; minimum_sale_price_centavos: number; low_stock_threshold?: number; attribute_values: CatalogAttributeValue[]; }
+export interface ProductEditInput { target: typeof CATALOG_TARGET.PRODUCT; entity_id: number; expected_revision: number; expected_category_revision: number; sku: string; name: string; purchase_price_centavos: number | null; sale_price_centavos: number; minimum_sale_price_centavos: number; low_stock_threshold?: number; attribute_values: CatalogAttributeValue[]; }
 export interface CategorySchemaFieldInput { definition_id: number | null; label: string; field_type: CatalogAttributeDefinition["field_type"]; required: boolean; options: string[]; }
 export interface EditCategorySchemaInput { category_id: number; expected_revision: number; fields: CategorySchemaFieldInput[]; }
 export type CatalogEditInput = CategoryEditInput | ProductEditInput;

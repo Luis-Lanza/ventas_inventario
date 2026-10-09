@@ -7,12 +7,54 @@ import {
   createListCategoriesCommand,
 } from "./onboarding.ts";
 
+test("preserves bounded owner authorization failures for both creation commands", async () => {
+  const product = { sku: "x", name: "x", category_id: 1, purchase_price_centavos: 1, sale_price_centavos: 2, minimum_sale_price_centavos: 1, opening_quantity: 1, attribute_values: [] };
+  for (const [code, message] of [["license_required", "Se requiere una licencia válida para modificar el catálogo."], ["catalog_access_required", "Desbloqueá el catálogo para continuar."]]) {
+    const native = { kind: "error", code, message: "SQL private details", field_error: { definition_id: 9, reason: "invalid_number" } };
+    assert.deepEqual(await createCreateCategoryCommand(async () => native)({ name: "x", fields: [] }), { kind: "error", code, message });
+    assert.deepEqual(await createCreateProductCommand(async () => native)(product), { kind: "error", code, message });
+  }
+  for (const native of [{ kind: "error", code: "catalog_access_required", message: 1 }, { kind: "error", code: "unknown", message: "private" }]) {
+    assert.equal((await createCreateProductCommand(async () => native)(product)).kind, "error");
+    const result = await createCreateCategoryCommand(async () => native)({ name: "x", fields: [] });
+    assert.equal(result.kind, "error");
+    if (result.kind === "error") assert.equal(result.code, "persistence_failure");
+  }
+});
+
 test("projects valid categories and products while dropping native fields", async () => {
   const category = { category_id: 3, name: "Belts", fields: [{ definition_id: 9, label: "Material", field_type: "option", required: true, options: ["Rubber"], hidden: true }], hidden: true };
   const product = { product_id: 8, sku: "BEL-1", name: "Accessory belt", category_id: 3, category_name: "Belts", purchase_price_centavos: 2000, sale_price_centavos: 4500, minimum_sale_price_centavos: 3500, low_stock_threshold: 3, available_quantity: 6, active: true, hidden: true };
   assert.deepEqual(await createListCategoriesCommand(async () => ({ kind: "success", categories: [category] }))(), { kind: "success", categories: [{ category_id: 3, name: "Belts", fields: [{ definition_id: 9, label: "Material", field_type: "option", required: true, options: ["Rubber"] }] }] });
   assert.deepEqual(await createCreateCategoryCommand(async () => ({ kind: "success", ...category }))({ name: "Belts", fields: [] }), { kind: "success", category_id: 3, name: "Belts", fields: [{ definition_id: 9, label: "Material", field_type: "option", required: true, options: ["Rubber"] }] });
   assert.deepEqual(await createCreateProductCommand(async () => ({ kind: "success", ...product }))({ sku: "BEL-1", name: "Accessory belt", category_id: 3, purchase_price_centavos: 2000, sale_price_centavos: 4500, minimum_sale_price_centavos: 3500, opening_quantity: 6, attribute_values: [] }), { kind: "success", product_id: 8, sku: "BEL-1", name: "Accessory belt", category_id: 3, category_name: "Belts", purchase_price_centavos: 2000, sale_price_centavos: 4500, minimum_sale_price_centavos: 3500, low_stock_threshold: 3, available_quantity: 6, active: true });
+});
+
+test("decodes explicit unknown purchase cost and rejects missing or invalid costs", async () => {
+  const request = { sku: "UNKNOWN-1", name: "Unknown", category_id: 1, purchase_price_centavos: null, sale_price_centavos: 200, minimum_sale_price_centavos: 100, opening_quantity: 0, attribute_values: [] };
+  const product = { kind: "success", product_id: 3, sku: request.sku, name: request.name, category_id: 1, category_name: "Retail", purchase_price_centavos: null, sale_price_centavos: 200, minimum_sale_price_centavos: 100, low_stock_threshold: 1, available_quantity: 0, active: true };
+  let payload: unknown;
+  assert.deepEqual(await createCreateProductCommand(async (_command, input) => { payload = input; return product; })(request), product);
+  assert.deepEqual(payload, { request });
+  const { purchase_price_centavos: _cost, ...missing } = product;
+  for (const response of [missing, ...[undefined, "100", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].map((purchase_price_centavos) => ({ ...product, purchase_price_centavos }))]) {
+    assert.deepEqual(await createCreateProductCommand(async () => response)(request), { kind: "error", code: "persistence_failure", message: "The product could not be persisted." });
+  }
+});
+
+test("accepts zero available stock and rejects invalid creation quantities", async () => {
+  const request = { sku: "ZERO-1", name: "Zero stock", category_id: 1, purchase_price_centavos: 100, sale_price_centavos: 200, minimum_sale_price_centavos: 100, opening_quantity: 0, attribute_values: [] };
+  const product = { kind: "success", product_id: 3, sku: request.sku, name: request.name, category_id: 1, category_name: "Retail", purchase_price_centavos: 100, sale_price_centavos: 200, minimum_sale_price_centavos: 100, low_stock_threshold: 1, available_quantity: 0, active: true };
+  const invalidOpening = createCreateProductCommand(async () => ({ kind: "error", code: "invalid_opening_quantity", message: "private native detail" }));
+  assert.deepEqual(await invalidOpening({ ...request, opening_quantity: -1 }), { kind: "error", code: "invalid_opening_quantity", message: "Opening stock must be a nonnegative whole number." });
+  let payload: unknown;
+  const command = createCreateProductCommand(async (_command, input) => { payload = input; return product; });
+  assert.deepEqual(await command(request), product);
+  assert.deepEqual(payload, { request });
+  for (const available_quantity of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, "0"]) {
+    const invalid = createCreateProductCommand(async () => ({ ...product, available_quantity }));
+    assert.deepEqual(await invalid(request), { kind: "error", code: "persistence_failure", message: "The product could not be persisted." });
+  }
 });
 
 test("rejects malformed onboarding data atomically and checks numeric transport", async () => {

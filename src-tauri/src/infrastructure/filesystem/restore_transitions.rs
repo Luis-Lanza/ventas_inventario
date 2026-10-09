@@ -7,6 +7,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 
 use super::StorageError;
+use crate::identity::DATABASE_FILENAME;
 
 const PREPARED: &[u8] = br#"{"state":"prepared"}"#;
 const LIVE_MOVED: &[u8] = br#"{"state":"live_moved"}"#;
@@ -53,7 +54,7 @@ trait DurableFs {
 #[cfg(test)]
 #[rustfmt::skip]
 fn verify_test_phase(root: &Path, phase: VerificationPhase<'_>, inspect: impl Fn(&Path) -> io::Result<Option<bool>>, read: impl Fn(&Path) -> io::Result<Vec<u8>>, entries: impl Fn(&Path) -> io::Result<Vec<PathBuf>>) -> io::Result<()> {
-    let canonical = root.join("repuestos-autos.sqlite3"); let marker = root.join("restore-state.json");
+    let canonical = root.join(DATABASE_FILENAME); let marker = root.join("restore-state.json");
     let required = |path: &Path| -> io::Result<bool> { Ok(inspect(path)? == Some(true)) };
     let optional = |path: &Path| -> io::Result<bool> { Ok(inspect(path)?.unwrap_or(true)) };
     let active = |path: &Path| -> io::Result<bool> { Ok(required(path)? && matches!(read(path)?.as_slice(), PREPARED | LIVE_MOVED | CANDIDATE_INSTALLED)) };
@@ -168,7 +169,7 @@ impl<F: DurableFs> RestoreTransitions<F> {
     ) -> Result<(), StorageError> {
         publish_ready()?;
         let marker = self.marker();
-        let canonical = self.root.join("repuestos-autos.sqlite3");
+        let canonical = self.root.join(DATABASE_FILENAME);
         self.run(FsOperation::Verify(
             &self.root,
             VerificationPhase::Completion {
@@ -504,7 +505,7 @@ mod platform {
     #[rustfmt::skip]
     fn verify_layout(root: &Path, phase: VerificationPhase<'_>) -> io::Result<()> {
         if !root.is_absolute() || has_lexically_ambiguous_component(root.as_os_str()) { return Err(io::ErrorKind::Unsupported.into()); }
-        let canonical_expected = root.join("repuestos-autos.sqlite3"); let marker_expected = root.join("restore-state.json");
+        let canonical_expected = root.join(crate::identity::DATABASE_FILENAME); let marker_expected = root.join("restore-state.json");
         let root_volume = volume_path(root)?;
         if volume_filesystem(&root_volume)? != OsStr::new("NTFS") || unsafe { GetDriveTypeW(root_volume.as_ptr()) } != DRIVE_FIXED { return Err(io::ErrorKind::Unsupported.into()); }
         let mut sidecars = Vec::new();
@@ -756,7 +757,7 @@ mod platform {
             let root = directory("layout");
             let staging = root.join("backup-restore").join("staging");
             fs::create_dir_all(&staging).unwrap();
-            let canonical = root.join("repuestos-autos.sqlite3");
+            let canonical = root.join(crate::identity::DATABASE_FILENAME);
             let protective = root.join("pre-restore.sqlite3");
             let stage = staging.join("candidate.sqlite3");
             for path in [&canonical, &protective, &stage] {
@@ -778,7 +779,7 @@ mod platform {
             let root = directory("layout-interior-dot");
             let staging = root.join("backup-restore").join("staging");
             fs::create_dir_all(&staging).unwrap();
-            let canonical = root.join("repuestos-autos.sqlite3");
+            let canonical = root.join(crate::identity::DATABASE_FILENAME);
             let protective = root.join("pre-restore.sqlite3");
             let stage = staging.join(".").join("candidate.sqlite3");
             for path in [&canonical, &protective, &stage] {
@@ -938,7 +939,7 @@ pub(super) fn prepare(root: &Path, stage: &Path, protective: &Path) -> Result<()
     production(root).prepare_durable_restore(
         stage,
         protective,
-        &root.join("repuestos-autos.sqlite3"),
+        &root.join(DATABASE_FILENAME),
     )
 }
 
@@ -1123,7 +1124,7 @@ mod tests {
 
     fn seeded() -> RecordingFs {
         RecordingFs::seeded(&[
-            ("/app/repuestos-autos.sqlite3", b"live"),
+            ("/app/velay.sqlite3", b"live"),
             ("/app/backup-restore/staging/stage.sqlite3", b"stage"),
             ("/app/pre-restore.sqlite3", b"protective"),
             ("/app/restore-state.json", PREPARED),
@@ -1140,7 +1141,7 @@ mod tests {
     #[test]
     fn protocol_orders_exact_markers_barriers_installation_and_retained_recovery() {
         let stage = Path::new("/app/backup-restore/staging/stage.sqlite3");
-        let canonical = Path::new("/app/repuestos-autos.sqlite3");
+        let canonical = Path::new(CANONICAL);
         let interrupted = completed_cycle();
         interrupted.prepare_durable_restore(stage, Path::new("/app/pre-restore.sqlite3"), canonical).unwrap();
         assert_eq!(interrupted.fs.0.borrow().durable.get(Path::new("/app/restore-state.json")), Some(&PREPARED.to_vec()));
@@ -1196,7 +1197,7 @@ mod tests {
     #[test]
     fn failpoints_before_and_after_every_operation_keep_recovery_evidence() {
         let stage = Path::new("/app/backup-restore/staging/stage.sqlite3");
-        let canonical = Path::new("/app/repuestos-autos.sqlite3");
+        let canonical = Path::new(CANONICAL);
         assert_all_failpoints(completed_cycle, |value| {
             value.prepare_durable_restore(stage, Path::new("/app/pre-restore.sqlite3"), canonical)
         });
@@ -1329,14 +1330,14 @@ mod tests {
 
     fn completed_cycle() -> RestoreTransitions<RecordingFs> {
         protocol(RecordingFs::seeded(&[
-            ("/app/repuestos-autos.sqlite3", b"live"),
+            (CANONICAL, b"live"),
             (STAGE, b"stage"),
             (PROTECTIVE, b"protective"),
         ]))
     }
 
     const STAGE: &str = "/app/backup-restore/staging/stage.sqlite3";
-    const CANONICAL: &str = "/app/repuestos-autos.sqlite3";
+    const CANONICAL: &str = "/app/velay.sqlite3";
     const PROTECTIVE: &str = "/app/pre-restore.sqlite3";
 
     #[rustfmt::skip]
@@ -1417,7 +1418,7 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         let transitions = protocol(RecordingFs::seeded(&[
-            ("/app/repuestos-autos.sqlite3", b"live"),
+            (CANONICAL, b"live"),
             ("/app/pre-restore.sqlite3", b"protective"),
             ("/app/restore-rollback.sqlite3", b"rollback"),
             ("/app/restore-state.json", LIVE_MOVED),
@@ -1433,7 +1434,7 @@ mod tests {
             PathBuf::from(format!("/other-volume/backup-restore/staging/{}.sqlite3", uuid::Uuid::new_v4())),
         ] {
             let rejected = protocol(RecordingFs::seeded(&[
-                ("/app/repuestos-autos.sqlite3", b"live"),
+                (CANONICAL, b"live"),
                 ("/app/restore-rollback.sqlite3", b"rollback"),
                 ("/app/restore-state.json", LIVE_MOVED),
             ]));

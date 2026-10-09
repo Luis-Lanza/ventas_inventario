@@ -4,18 +4,37 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { mockIPC as installIPC } from "@tauri-apps/api/mocks";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import type { InventoryBrowseProduct } from "../../commands/catalog.ts";
 import { App } from "../app.ts";
 import { InventoryScreen } from "./inventory-screen.ts";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 
-const product = { product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 8, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, primary_location_code: null, attribute_values: [], revision: 0 };
+type LegacyInventoryFixture = Omit<InventoryBrowseProduct, "sale_price_centavos"> & {
+  sale_price_centavos?: InventoryBrowseProduct["sale_price_centavos"];
+  catalog_unit_price_centavos: number;
+  list_price_centavos: number;
+  revision: number;
+  attribute_values: never[];
+};
+const product: LegacyInventoryFixture = { product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 8, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, primary_location_code: null, attribute_values: [], revision: 0 };
 const browse = (products: typeof product[] = [product]) => ({ products: products.map((item) => ({ product_id: item.product_id, category_id: item.category_id, sku: item.sku, name: item.name, category_name: item.category_name, available_quantity: item.available_quantity, sale_price_centavos: item.sale_price_centavos ?? item.list_price_centavos ?? item.catalog_unit_price_centavos, minimum_sale_price_centavos: item.minimum_sale_price_centavos, primary_location_code: item.primary_location_code })), categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: products.length, total_pages: products.length ? 1 : 0 });
 const success = (request_id: string) => ({ kind: "success", request_id, product_id: 1, previous_quantity: 10, quantity_delta: 3, resulting_quantity: 11, occurred_at: "2025-01-01T00:00:00Z", note: null });
+function isMockPayloadRecord(payload: unknown): payload is Record<string, unknown> {
+  return typeof payload === "object" && payload !== null && !Array.isArray(payload);
+}
 function mockIPC(handler: (command: string, payload?: { request?: unknown }) => unknown) {
-  installIPC((command, payload) => handler(command === "browse_inventory_products_command" ? "browse_products_command" : command, payload));
+  const adapter = (command: string, payload?: unknown) => {
+    if (payload !== undefined && !isMockPayloadRecord(payload)) {
+      throw new TypeError("Inventory mock payload must be a record or undefined.");
+    }
+    return handler(command === "browse_inventory_products_command" ? "browse_products_command" : command, payload);
+  };
+  installIPC(adapter);
+  return adapter;
 }
 function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? ids.at(-1) }); }
 
@@ -28,17 +47,53 @@ async function searchAndSelect() {
   return user;
 }
 
+test("rejects array payloads at the restricted Inventory mock boundary while preserving supported forwarding", async () => {
+  const calls: Array<{ command: string; payload: unknown }> = [];
+  const adapter = mockIPC((command, payload) => {
+    calls.push({ command, payload });
+    return "mock-boundary-result";
+  });
+  const rejection = { name: "TypeError", message: "Inventory mock payload must be a record or undefined." };
+  await assert.rejects(invoke("browse_inventory_products_command", [1]), rejection);
+  assert.equal(calls.length, 0);
+  await assert.rejects(invoke("list_inventory_alerts_command", []), rejection);
+  assert.throws(() => adapter("list_inventory_alerts_command", null), rejection);
+  assert.throws(() => adapter("list_inventory_alerts_command", "mock-boundary-nonrecord"), rejection);
+  assert.equal(calls.length, 0);
+
+  const ordinary = { request: { mock_boundary_marker: "ordinary-record" } };
+  const empty = {};
+  assert.equal(await invoke("browse_inventory_products_command", ordinary), "mock-boundary-result");
+  assert.equal(calls[0].command, "browse_products_command");
+  assert.equal(calls[0].payload, ordinary);
+  assert.equal(await invoke("list_inventory_alerts_command", empty), "mock-boundary-result");
+  assert.equal(calls[1].command, "list_inventory_alerts_command");
+  assert.equal(calls[1].payload, empty);
+  // Direct callback seam: public invoke defaults undefined arguments to {}.
+  assert.equal(adapter("list_inventory_alerts_command", undefined), "mock-boundary-result");
+  assert.equal(calls[2].command, "list_inventory_alerts_command");
+  assert.equal(calls[2].payload, undefined);
+  assert.equal(calls.length, 3);
+});
+
 test("loads operational Inventory browse while the Catalog session is locked", async () => {
+  const nativeProduct = { product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 0, sale_price_centavos: 50, minimum_sale_price_centavos: 1, primary_location_code: "A-2" };
   const calls: string[] = [];
   installIPC((command) => {
     calls.push(command);
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
-    if (command === "browse_inventory_products_command") return browse();
+    if (command === "browse_inventory_products_command") return { products: [nativeProduct], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 };
     throw new Error(`Unexpected command while Catalog is locked: ${command}`);
   });
   render(createElement(InventoryScreen));
   assert.ok(await screen.findByText("Filter"));
   assert.deepEqual(calls.sort(), ["browse_inventory_products_command", "list_inventory_alerts_command"]);
+  assert.ok(screen.getByText("Bs 0,50"));
+  await userEvent.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+  assert.ok(screen.getByText("SKU: FLT"));
+  assert.ok(screen.getByText("Stock actual: 0"));
+  assert.ok(screen.getByText("Ubicación principal: A-2"));
+  assert.equal(screen.queryByText("No registrado"), null);
 });
 
 test("shows the selection intro only alongside results, not initial, loading, empty or error feedback", async () => {
@@ -545,6 +600,32 @@ test("retries an exact inventory envelope and replaces its identity after edits 
   assert.notEqual(requests[3].request_id, requests[2].request_id);
 });
 
+for (const [price, centavos] of [["0.50", 50], ["0.01", 1]] as const) {
+  test(`receives stock with supplied sub-Bs prices ${price} as ${centavos} centavos`, async () => {
+    const requests: Record<string, unknown>[] = [];
+    mockIPC((command, payload) => {
+      if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+      if (command === "browse_products_command") return browse();
+      if (command === "confirm_stock_entry_command") {
+        const request = payload?.request as Record<string, unknown>;
+        requests.push(request);
+        return success(String(request.request_id));
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    render(createElement(InventoryScreen));
+    const user = await searchAndSelect();
+    await user.type(screen.getByLabelText("Cantidad (unidades enteras)"), "3");
+    for (const label of ["Precio de compra (Bs)", "Precio de venta (Bs)", "Precio mínimo de venta (Bs)"]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value: price } });
+    }
+    await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+    await waitFor(() => assert.equal(requests.length, 1));
+    assert.deepEqual(requests[0], { request_id: requests[0].request_id, product_id: 1, quantity: 3, unit_purchase_price_centavos: centavos, sale_price_centavos: centavos, minimum_sale_price_centavos: centavos, note: null });
+    await screen.findByText("Operación guardada. Stock actual: 11.");
+  });
+}
+
 test("omits blank optional prices from the stock-entry IPC request", async () => {
   let request: Record<string, unknown> | undefined;
   mockIPC((command, payload) => {
@@ -600,7 +681,7 @@ test("shows the assigned generated location in the selected product without chan
   assert.equal(screen.queryByText("Ubicación principal: A1-SHELF2"), null);
 });
 
-test("uses All Stock for normal Inventory entry and stock-alert cue navigation", async () => {
+test("uses All Stock for normal Inventory entry and Alerts for stock-alert cue navigation", async () => {
   const browseRequests: unknown[] = [];
   let cueVisible = false;
   mockIPC((command, payload) => {
@@ -626,9 +707,9 @@ test("uses All Stock for normal Inventory entry and stock-alert cue navigation",
   await waitFor(() => assert.match(inventory.textContent ?? "", /⚠ 1 alerta de stock/));
   await user.click(inventory);
   const returnedFilter = await screen.findByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement;
-  assert.equal(returnedFilter.value, "all");
+  assert.equal(returnedFilter.value, "alerts");
   assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
-  assert.deepEqual(browseRequests.at(-1), { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });
+  assert.deepEqual(browseRequests.at(-1), { request: { query: null, category_id: null, stock_state: "alerts", activity: "active", page: 1, page_size: 20 } });
 });
 
 test("shared inventory outcomes have one owner; dismissal preserves fields, advisory and retry envelope", async () => {

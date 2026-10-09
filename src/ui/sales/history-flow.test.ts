@@ -4,11 +4,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { createPostSaleCommands } from "../../commands/post-sale.ts";
-import { createSalesHistoryCommands, type SalesHistoryDetail, type SalesHistorySummary } from "../../commands/sales-history.ts";
+import { createSalesHistoryCommands, type SalesHistoryDetail, type SalesHistoryListResponse, type SalesHistorySummary } from "../../commands/sales-history.ts";
 import {
   correctionFocusTarget,
   createHistoryFlow,
   initialHistoryState,
+  type HistoryAction,
 } from "./history-flow.ts";
 import {
   createSalesHistoryInteraction,
@@ -27,7 +28,7 @@ const summary: SalesHistorySummary = {
   has_corrections: false,
 };
 
-const emptyHistoryList = async () => ({
+const emptyHistoryList = async (): Promise<SalesHistoryListResponse> => ({
   kind: "success" as const,
   sales: [],
   has_more: false,
@@ -914,7 +915,7 @@ test("guards list and detail retrieval against obsolete completion order", async
 
 test("invalidates completion after disposal and obsolete correction success", async () => {
   let resolveList!: (value: Awaited<ReturnType<typeof emptyHistoryList>>) => void;
-  let resolveReturn!: (value: { kind: "success" }) => void;
+  let resolveReturn!: () => void;
   const detailCalls: number[] = [];
   const interaction = createSalesHistoryInteraction({
     list: () => new Promise((resolve) => { resolveList = resolve; }),
@@ -922,7 +923,26 @@ test("invalidates completion after disposal and obsolete correction success", as
       detailCalls.push(saleId);
       return { kind: "success", detail: { ...detail, sale_id: saleId } };
     },
-    createReturn: () => new Promise((resolve) => { resolveReturn = resolve; }),
+    createReturn: async (request) => {
+      const lines = request.lines.map(({ sale_line_id, quantity }) => {
+        const originalLine = detail.lines.find((line) => line.sale_line_id === sale_line_id);
+        if (!originalLine) throw new Error("Requested return line is missing from the original detail.");
+        return { sale_line_id, product_id: originalLine.product_id, quantity };
+      });
+      await new Promise<void>((resolve) => { resolveReturn = resolve; });
+      return {
+        kind: "success",
+        result: {
+          request_id: request.request_id,
+          // Synthetic metadata reuses the earlier positive fixture, not native persistence facts.
+          return_id: 12,
+          sale_id: request.sale_id,
+          status: "confirmed",
+          occurred_at: "2024-03-11 05:00:00",
+          lines,
+        },
+      };
+    },
   });
   let state = flow(
     initialHistoryState,
@@ -939,7 +959,7 @@ test("invalidates completion after disposal and obsolete correction success", as
 
   const correction = interaction.submitReturn(state, dispatch);
   await interaction.select({ ...summary, sale_id: 72 }, dispatch);
-  resolveReturn({ kind: "success" });
+  resolveReturn();
   await correction;
   assert.equal(state.detail?.sale_id, 72);
   assert.deepEqual(detailCalls, [72]);

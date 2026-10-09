@@ -373,6 +373,16 @@ test("rejects unsafe, nonpositive, and inconsistent catalog facts", async () => 
   }
 });
 
+test("sends an exact explicit-null purchase cost edit IPC envelope", async () => {
+  const calls: unknown[] = [];
+  const commands = createCatalogMaintenanceCommands(async (command, payload) => {
+    calls.push({ command, payload });
+    return { kind: "success", target: "product", entity_id: 1, label: "", activity: "active", revision: 9 };
+  });
+  await commands.edit({ target: "product", entity_id: 1, expected_revision: 8, expected_category_revision: 3, sku: "FLT", name: "Renamed", purchase_price_centavos: null, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, attribute_values: [] });
+  assert.deepEqual(calls, [{ command: "edit_catalog_command", payload: { request: { target: "product", entity_id: 1, expected_revision: 8, expected_category_revision: 3, sku: "FLT", name: "Renamed", purchase_price_centavos: null, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, attribute_values: [] } } }]);
+});
+
 test("edits category schemas through a typed envelope and decodes recoverable stale-schema errors", async () => {
   const calls: unknown[] = [];
   let response: unknown = { kind: "success", entity_id: 2, target: "category", label: "", activity: "active", revision: 4 };

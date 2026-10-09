@@ -40,7 +40,7 @@ test("activation import failure belongs to the shared host without hiding recove
   const user = userEvent.setup({ document });
   await screen.findByRole("textbox", { name: "Tu código de instalación" });
   await user.click(screen.getByRole("button", { name: "Importar archivo de licencia" }));
-  const main = screen.getByRole("main", { name: "Activá Repuestos Autos" });
+  const main = screen.getByRole("main", { name: "Activá Velay" });
   const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
   assert.ok(await within(host).findByText("El archivo de licencia no corresponde a este equipo."));
   assert.equal(within(main).queryByText("El archivo de licencia no corresponde a este equipo."), null);

@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
-import { mockIPC } from "@tauri-apps/api/mocks";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { mockIPC as nativeMockIPC } from "@tauri-apps/api/mocks";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { OnboardingScreen } from "./onboarding-screen.ts";
+import { CatalogMaintenanceScreen } from "../catalog/catalog-maintenance-screen.ts";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
+
+function mockIPC(callback: Parameters<typeof nativeMockIPC>[0]) {
+  nativeMockIPC((command, payload) => command === "catalog_access_status_command" ? { kind: "status", status: "unlocked" } : callback(command, payload));
+}
 
 const category = { category_id: 1, name: "Filtros", fields: [{ definition_id: 10, label: "Marca", field_type: "text", required: true, options: [] }] };
 const decimalCategory = { category_id: 1, name: "Filtros", fields: [{ definition_id: 11, label: "Longitud", field_type: "number", required: true, options: [] }] };
@@ -19,6 +24,137 @@ async function enterValidProduct(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3");
   await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco");
 }
+
+test("separates category definitions from product values with accessible groups", async () => {
+  mockIPC((command) => command === "list_categories_command" ? success() : undefined);
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  const values = await screen.findByRole("group", { name: "Valores de atributos del producto" });
+  assert.ok(within(values).getByRole("textbox", { name: "Marca" }));
+  assert.equal(within(values).getByRole("textbox", { name: "Marca" }).getAttribute("aria-required"), "true");
+  const definitions = screen.getByRole("group", { name: "Definición de atributos de la categoría" });
+  assert.ok(within(definitions).getByRole("textbox", { name: "Nombre del campo" }));
+  assert.ok(within(definitions).getByRole("combobox", { name: "Tipo de campo" }));
+  assert.ok(within(definitions).getByRole("checkbox", { name: "Campo obligatorio" }));
+  assert.equal(within(values).queryByRole("textbox", { name: "Nombre del campo" }), null);
+});
+
+test("product values retain required text, number and option validation and payload identifiers", async () => {
+  let request: unknown;
+  const readRequest = (): unknown => request;
+  const fields = [...category.fields,
+    { definition_id: 11, label: "Longitud", field_type: "number", required: true, options: [] },
+    { definition_id: 12, label: "Color", field_type: "option", required: true, options: ["Rojo", "Azul"] },
+  ];
+  mockIPC((command, payload) => {
+    if (command === "list_categories_command") return { kind: "success", categories: [{ ...category, fields }] };
+    if (command === "create_product_command") { request = payload; return { kind: "error", code: "persistence_failure", message: "private" }; }
+  });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  const values = await screen.findByRole("group", { name: "Valores de atributos del producto" });
+  const user = userEvent.setup({ document });
+  await enterValidProduct(user);
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  assert.equal(request, undefined);
+  assert.equal(document.activeElement, within(values).getByRole("spinbutton", { name: "Longitud" }));
+  await user.type(within(values).getByRole("spinbutton", { name: "Longitud" }), "1.5");
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  assert.equal(request, undefined);
+  assert.equal(document.activeElement, within(values).getByRole("combobox", { name: "Color" }));
+  await user.selectOptions(within(values).getByRole("combobox", { name: "Color" }), "Azul");
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  await waitFor(() => assert.ok(request));
+  const captured = readRequest();
+  assert.ok(typeof captured === "object" && captured !== null && !Array.isArray(captured));
+  assert.ok("request" in captured);
+  const capturedRequest = captured.request;
+  assert.ok(typeof capturedRequest === "object" && capturedRequest !== null && !Array.isArray(capturedRequest));
+  assert.ok("attribute_values" in capturedRequest);
+  assert.deepEqual(capturedRequest.attribute_values, [
+    { definition_id: 10, value: "ACDelco" },
+    { definition_id: 11, value: "1.5" },
+    { definition_id: 12, value: "Azul" },
+  ]);
+});
+
+test("shares unlock across navigation and blocks creation after manual lock", async () => {
+  let status = "locked", unlocks = 0, writes = 0;
+  nativeMockIPC((command) => {
+    if (command === "catalog_access_status_command") return { kind: "status", status };
+    if (command === "catalog_access_unlock_command") { status = "unlocked"; unlocks++; return { kind: "success" }; }
+    if (command === "catalog_access_lock_command") { status = "locked"; return { kind: "success" }; }
+    if (command === "list_categories_command") return success();
+    if (command === "create_category_command" || command === "create_product_command") writes++;
+  });
+  const user = userEvent.setup({ document });
+  const view = render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByRole("button", { name: "Desbloquear catálogo" });
+  assert.equal(screen.queryByRole("button", { name: "Crear producto" }), null);
+  await user.type(screen.getByLabelText("Contraseña"), "owner-password");
+  await user.click(screen.getByRole("button", { name: "Desbloquear catálogo" }));
+  await screen.findByLabelText("Marca");
+  view.rerender(createElement(CatalogMaintenanceScreen));
+  await screen.findByRole("button", { name: "Bloquear catálogo" });
+  view.rerender(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  assert.equal(unlocks, 1);
+  await user.click(screen.getByRole("button", { name: "Bloquear catálogo" }));
+  await screen.findByRole("button", { name: "Desbloquear catálogo" });
+  view.rerender(createElement(CatalogMaintenanceScreen));
+  await screen.findByRole("button", { name: "Desbloquear catálogo" });
+  assert.equal(writes, 0);
+});
+
+test("reuses setup and recovery acknowledgement before exposing creation", async () => {
+  for (const initial of ["setup_required", "locked"]) {
+    let confirmations = 0;
+    nativeMockIPC((command) => {
+      if (command === "catalog_access_status_command") return { kind: "status", status: initial };
+      if (command === "catalog_access_begin_setup_command" || command === "catalog_access_begin_recovery_command") return { kind: "recovery_code", recovery_code: "A".repeat(48) };
+      if (command === "catalog_access_finish_setup_command" || command === "catalog_access_finish_recovery_command") { confirmations++; return { kind: "success" }; }
+      if (command === "list_categories_command") return success();
+    });
+    const user = userEvent.setup({ document });
+    const view = render(createElement(OnboardingScreen, { onBack: () => undefined }));
+    if (initial === "locked") {
+      await user.click(await screen.findByRole("button", { name: "Usar código de recuperación" }));
+      await user.type(screen.getByLabelText("Código de recuperación"), "OLD-RECOVERY");
+    }
+    await user.type(await screen.findByLabelText("Nueva contraseña"), "owner-password");
+    await user.type(screen.getByLabelText("Confirmar contraseña"), "owner-password");
+    await user.click(screen.getByRole("button", { name: initial === "locked" ? "Restablecer contraseña" : "Configurar catálogo" }));
+    const proceed = await screen.findByRole("button", { name: "Continuar al catálogo" });
+    assert.equal((proceed as HTMLButtonElement).disabled, true);
+    assert.equal(screen.queryByRole("button", { name: "Crear producto" }), null);
+    assert.equal(confirmations, 0);
+    await user.click(screen.getByRole("checkbox", { name: "Confirmo que guardé el código de recuperación" }));
+    await user.click(proceed);
+    await screen.findByLabelText("Marca");
+    assert.equal(confirmations, 1);
+    view.unmount();
+  }
+});
+
+test("returns stale unlocked onboarding to the shared gate on native authorization refusal", async () => {
+  for (const target of ["category", "product"]) {
+    mockIPC((command) => {
+      if (command === "list_categories_command") return success();
+      if (command === "create_category_command" || command === "create_product_command") return { kind: "error", code: "catalog_access_required", message: "private" };
+    });
+    const user = userEvent.setup({ document });
+    const view = render(createElement(OnboardingScreen, { onBack: () => undefined }));
+    await screen.findByLabelText("Marca");
+    if (target === "category") await user.type(screen.getByLabelText("Nombre de la categoría"), "Nueva");
+    else {
+      await enterValidProduct(user);
+      fireEvent.change(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), { target: { value: "0" } });
+    }
+    await user.click(screen.getByRole("button", { name: target === "category" ? "Crear categoría" : "Crear producto" }));
+    await screen.findByRole("button", { name: "Desbloquear catálogo" });
+    assert.ok(screen.getByText("Desbloqueá el catálogo para continuar."));
+    assert.equal(screen.queryByRole("button", { name: "Crear producto" }), null);
+    view.unmount();
+  }
+});
 
 test("publishes category outcomes repeatedly but keeps category validation inline", async () => {
   let code = "persistence_failure";
@@ -100,7 +236,7 @@ test("publishes product persistence error and subsequent full success without hi
   assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="success"]'), null);
 });
 
-test("keeps product onboarding and its location path operational while Catalog is locked", async () => {
+test("keeps product onboarding and its location path operational with the shared Catalog session unlocked", async () => {
   const calls: string[] = [];
   mockIPC((command) => {
     calls.push(command);
@@ -137,20 +273,149 @@ test("shows loading then exact empty-category guidance", async () => {
   let resolve!: (value: unknown) => void;
   mockIPC((command) => command === "list_categories_command" ? new Promise((done) => { resolve = done; }) : undefined);
   render(createElement(OnboardingScreen, { onBack: () => undefined }));
-  assert.equal(screen.getByRole("status").textContent, "Cargando categorías…");
+  await screen.findByText("Cargando categorías…");
   resolve({ kind: "success", categories: [] });
   assert.ok(await screen.findByText("Creá una categoría para habilitar el alta de productos.", { exact: true }));
   assert.equal(screen.queryByLabelText("Categoría"), null);
 });
-test("renders shared Spanish panels and submits required purchase and sale prices", async () => {
+test("creates with blank or whitespace cost as explicit null and resets the form", async () => {
+  const requests: Record<string, unknown>[] = [];
+  mockIPC((command, payload) => {
+    if (command === "list_categories_command") return success();
+    if (command === "create_product_command") {
+      const request = (payload as { request: Record<string, unknown> }).request;
+      requests.push(request);
+      return { kind: "success", product_id: 2, ...request, category_name: "Filtros", available_quantity: request.opening_quantity, active: true };
+    }
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  for (const [cost, stock] of [["", "0"], ["   ", "3"]]) {
+    await enterValidProduct(user);
+    const purchase = screen.getByRole("textbox", { name: "Precio de compra (Bs)" });
+    fireEvent.change(purchase, { target: { value: cost } });
+    fireEvent.change(screen.getByLabelText("Stock inicial (unidades enteras)"), { target: { value: stock } });
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+    await screen.findByText(`Producto creado: FIL-1. Stock inicial: ${stock} unidades.`, { exact: true });
+    assert.equal(requests.at(-1)!.purchase_price_centavos, null);
+    assert.equal(purchase.getAttribute("aria-required"), null);
+    for (const label of ["SKU", "Nombre del producto", "Precio de compra (Bs)", "Precio de venta (Bs)", "Marca"]) {
+      assert.equal((screen.getByLabelText(label) as HTMLInputElement).value, "");
+    }
+  }
+  assert.equal(requests.length, 2);
+  assert.ok(screen.getByText(/Opcional.*margen/));
+});
+
+for (const [price, centavos] of [["0.50", 50], ["0.01", 1]] as const) {
+  test(`creates with supplied sub-Bs prices ${price} as ${centavos} centavos`, async () => {
+    const requests: Record<string, unknown>[] = [];
+    mockIPC((command, payload) => {
+      if (command === "list_categories_command") return success();
+      if (command === "create_product_command") {
+        const request = (payload as { request: Record<string, unknown> }).request;
+        requests.push(request);
+        return { kind: "success", product_id: 2, ...request, category_name: "Filtros", available_quantity: request.opening_quantity, active: true };
+      }
+    });
+    const user = userEvent.setup({ document });
+    render(createElement(OnboardingScreen, { onBack: () => undefined }));
+    await screen.findByLabelText("Marca");
+    await enterValidProduct(user);
+    for (const label of ["Precio de compra (Bs)", "Precio de venta (Bs)", "Precio mínimo de venta (Bs)"]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value: price } });
+    }
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+    await waitFor(() => assert.equal(requests.length, 1));
+    assert.deepEqual(requests[0], { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: centavos, sale_price_centavos: centavos, minimum_sale_price_centavos: centavos, low_stock_threshold: 1, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] });
+    await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true });
+  });
+}
+
+test("sub-Bs creation retains minimum validation and blank purchase cost", async () => {
+  const requests: Record<string, unknown>[] = [];
+  mockIPC((command, payload) => {
+    if (command === "list_categories_command") return success();
+    if (command === "create_product_command") {
+      const request = (payload as { request: Record<string, unknown> }).request;
+      requests.push(request);
+      return { kind: "success", product_id: 2, ...request, category_name: "Filtros", available_quantity: request.opening_quantity, active: true };
+    }
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  await enterValidProduct(user);
+  fireEvent.change(screen.getByLabelText("Precio de compra (Bs)"), { target: { value: " " } });
+  fireEvent.change(screen.getByLabelText("Precio de venta (Bs)"), { target: { value: "0.50" } });
+  const minimum = screen.getByLabelText("Precio mínimo de venta (Bs)");
+  fireEvent.change(minimum, { target: { value: "0.51" } });
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  assert.equal(requests.length, 0);
+  assert.equal(document.activeElement, minimum);
+  assert.equal(minimum.getAttribute("aria-invalid"), "true");
+  fireEvent.change(minimum, { target: { value: "0.01" } });
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true });
+  assert.deepEqual([requests[0].purchase_price_centavos, requests[0].sale_price_centavos, requests[0].minimum_sale_price_centavos], [null, 50, 1]);
+});
+
+test("rejects supplied invalid purchase cost without invoking and focuses its field", async () => {
+  let writes = 0;
+  mockIPC((command) => command === "list_categories_command" ? success() : command === "create_product_command" ? (writes++, undefined) : undefined);
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  await enterValidProduct(user);
+  const purchase = screen.getByLabelText("Precio de compra (Bs)");
+  for (const value of ["0", "-1", "no", "1,234", "0.001", "NaN", "Infinity", "9007199254740992"]) {
+    fireEvent.change(purchase, { target: { value } });
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+    assert.equal(document.activeElement, purchase);
+    assert.equal(purchase.getAttribute("aria-invalid"), "true");
+    assert.equal(writes, 0);
+  }
+});
+
+test("renders shared Spanish panels and submits supplied purchase and required sale prices", async () => {
   let request: unknown;
   mockIPC((command, payload) => command === "list_categories_command" ? success() : command === "create_product_command" ? (request = payload, { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true }) : undefined);
   const user = userEvent.setup({ document }); render(createElement(OnboardingScreen, { onBack: () => undefined }));
-  assert.ok(screen.getByRole("heading", { name: "Alta de productos", level: 1 })); assert.ok(screen.getByRole("heading", { name: "Crear categoría", level: 2 }));
+  assert.ok(await screen.findByRole("heading", { name: "Alta de productos", level: 1 })); assert.ok(screen.getByRole("heading", { name: "Crear categoría", level: 2 }));
   await screen.findByLabelText("Marca"); assert.ok(screen.getByRole("heading", { name: "Crear producto activo", level: 2 }));
   await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1"); await user.type(screen.getByRole("textbox", { name: "Nombre del producto" }), "Filtro"); await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "80,00"); await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "125,50"); await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00"); await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3"); await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco"); await user.click(screen.getByRole("button", { name: "Crear producto" }));
   assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, low_stock_threshold: 1, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } }); assert.equal((await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true })).getAttribute("role"), "status");
 });
+test("creates zero-stock products after rejecting negative, fractional, and unsafe opening quantities", async () => {
+  let calls = 0, request: unknown;
+  mockIPC((command, payload) => {
+    if (command === "list_categories_command") return success();
+    if (command === "create_product_command") {
+      calls++; request = payload;
+      return { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 0, active: true };
+    }
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  await enterValidProduct(user);
+  const stock = screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" });
+  for (const value of ["-1", "1.5", "9007199254740992"]) {
+    fireEvent.change(stock, { target: { value } });
+    await user.click(screen.getByRole("button", { name: "Crear producto" }));
+    assert.equal(stock.getAttribute("aria-invalid"), "true");
+    assert.equal(document.activeElement, stock);
+    assert.equal(screen.getByText("Ingresá una cantidad entera no negativa.").id, "opening-stock-error");
+    assert.equal(calls, 0);
+  }
+  fireEvent.change(stock, { target: { value: "0" } });
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  await screen.findByText("Producto creado: FIL-1. Stock inicial: 0 unidades.", { exact: true });
+  assert.equal((request as { request: { opening_quantity: number } }).request.opening_quantity, 0);
+  assert.equal(calls, 1);
+});
+
 test("submits a chosen low-stock threshold and rejects zero or fractional values with accessible field feedback", async () => {
   let request: unknown;
   let createCalls = 0;
@@ -356,7 +621,7 @@ test("offers guided native controls for active locations with live status and an
 test("prevents duplicate category submission and localizes failure", async () => {
   let resolve!: (value: unknown) => void, calls = 0;
   mockIPC((command) => command === "list_categories_command" ? { kind: "success", categories: [] } : command === "create_category_command" ? (calls++, new Promise((done) => { resolve = done; })) : undefined);
-  const user = userEvent.setup({ document }); render(createElement(OnboardingScreen, { onBack: () => undefined })); await user.type(screen.getByRole("textbox", { name: "Nombre de la categoría" }), "Filtros");
+  const user = userEvent.setup({ document }); render(createElement(OnboardingScreen, { onBack: () => undefined })); await user.type(await screen.findByRole("textbox", { name: "Nombre de la categoría" }), "Filtros");
   const submit = screen.getByRole("button", { name: "Crear categoría" }); await user.click(submit); await user.click(submit); assert.equal(calls, 1); assert.ok(screen.getByRole("button", { name: "Creando categoría…" })); resolve({ kind: "error", code: "category_failed", message: "native detail" }); await waitFor(() => assert.equal(screen.getByRole("alert").textContent, "No se pudo crear la categoría."));
 });
 test("focuses the first invalid product field", async () => {

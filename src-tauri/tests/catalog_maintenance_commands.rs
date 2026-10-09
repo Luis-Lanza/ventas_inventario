@@ -10,6 +10,19 @@ use repuestos_autos::commands::catalog::{
 use repuestos_autos::infrastructure::sqlite::open_seeded_catalog;
 
 #[test]
+fn nullable_edit_cost_is_accepted_and_preserved_on_metadata_edit() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let request: EditCatalogRequest = serde_json::from_value(serde_json::json!({
+        "target": "product", "entity_id": 1, "expected_revision": 0,
+        "expected_category_revision": 0, "sku": "FLT-001", "name": "Renamed",
+        "purchase_price_centavos": null, "sale_price_centavos": 2500,
+        "minimum_sale_price_centavos": 2500, "attribute_values": []
+    })).expect("explicit null must represent unknown cost");
+    assert!(matches!(edit_catalog(&mut connection, request).unwrap(), CatalogMaintenanceResponse::Success(_)));
+    assert_eq!(connection.query_row("SELECT name, purchase_price_centavos, revision FROM products WHERE id = 1", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, i64>(2)?))).unwrap(), ("Renamed".into(), None, 1));
+}
+
+#[test]
 fn sku_conflicts_are_global_typed_and_leave_metadata_search_and_audit_unchanged() {
     let mut connection = open_seeded_catalog().unwrap();
     connection.execute_batch("INSERT INTO products (id, sku, name, category_id, active, list_price_centavos, minimum_unit_price_centavos) VALUES (91, '  OtHeR  ', 'Shared name', 2, 0, 2500, 2500);
@@ -336,7 +349,7 @@ fn schema_edit_is_typed_registered_use_case_and_stale_product_saves_are_recovera
             expected_revision: 0,
             sku: "FLT-001".into(),
             name: "Oil filter".into(),
-            purchase_price_centavos: 2_000,
+            purchase_price_centavos: Some(2_000),
             sale_price_centavos: 2_500,
             minimum_sale_price_centavos: 2_500,
             low_stock_threshold: None,

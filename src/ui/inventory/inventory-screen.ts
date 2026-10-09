@@ -1,29 +1,16 @@
 import { createElement, type FormEvent, useCallback, useEffect, useId, useReducer, useRef, useState } from "react";
 
-import { browseInventoryProducts, type InventoryBrowsePage, type ProductBrowseResult, type ProductSearchResult, type ProductStockState } from "../../commands/catalog.ts";
+import { browseInventoryProducts, type InventoryBrowseProduct, type ProductSearchResult, type ProductStockState } from "../../commands/catalog.ts";
 import { inventoryCommands, type InventoryResponse } from "../../commands/inventory.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Panel } from "../visual-system/structure.ts";
-import { createInventoryFlow, initialInventoryState, projectedBalance, stockEntryPrices, type InventoryState } from "./inventory-flow.ts";
+import { createInventoryFlow, initialInventoryState, projectedBalance, stockEntryPrices, type InventoryProduct, type InventoryState } from "./inventory-flow.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } from "../catalog/product-browser.ts";
 
 export const inventoryScreenDescription = "Operaciones de entrada de stock y conteo físico.";
-type Product = ProductBrowseResult;
+type Product = InventoryBrowseProduct;
 type LoadState = "initial" | "loading" | "ready" | "unavailable";
-
-function inventoryBrowserPage(page: InventoryBrowsePage) {
-  return {
-    ...page,
-    products: page.products.map((product) => ({
-      ...product,
-      purchase_price_centavos: null,
-      revision: 0,
-      primary_location_code: product.primary_location_code,
-      attribute_values: [],
-    })),
-  } as import("../../commands/catalog.ts").ProductBrowsePage;
-}
 
 export function inventoryProductLabel(product: Product) { return `${product.sku} — ${product.name} (${product.available_quantity})`; }
 
@@ -33,7 +20,7 @@ export function InventoryProductResults({ products, onSelect }: { products: Prod
 }
 
 export function createInventoryCatalogInteraction(searchActiveProducts: (query: string) => Promise<ProductSearchResult[]> = async () => []) {
-  return { search: searchActiveProducts, select: (product: Product | ProductSearchResult) => ({ type: "product_selected" as const, product }) };
+  return { search: searchActiveProducts, select: (product: InventoryProduct) => ({ type: "product_selected" as const, product }) };
 }
 
 export function InventoryOperationChoices({ operation, onChange, disabled = false }: { operation: InventoryState["operation"]; onChange: (operation: InventoryState["operation"]) => void; disabled?: boolean }) {
@@ -54,7 +41,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
   const [ordinaryFailure, setOrdinaryFailure] = useState(false);
   const onAlertCueChange = props?.onAlertCueChange;
   const [state, dispatch] = useReducer(createInventoryFlow, initialInventoryState);
-  const [browser, browserDispatch] = useReducer(createProductBrowserFlow, { ...initialProductBrowserState, stock_state: props.initialStockState ?? "all" });
+  const [browser, browserDispatch] = useReducer(createProductBrowserFlow<InventoryBrowseProduct>, { ...initialProductBrowserState, stock_state: props.initialStockState ?? "all" });
   const [alertState, setAlertState] = useState<LoadState>("loading");
   const [catalogPassword, setCatalogPassword] = useState("");
   const mounted = useRef(true);
@@ -84,8 +71,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     searchAttempt.current = attempt;
     browserDispatch({ type: "browse_started", query, category_id, stock_state, activity: "active", page, request_id: attempt });
     try {
-      const safe = await browseInventoryProducts({ query, category_id, stock_state, activity: "active", page, page_size: 20 });
-      const result = inventoryBrowserPage(safe);
+      const result = await browseInventoryProducts({ query, category_id, stock_state, activity: "active", page, page_size: 20 });
       if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
     } catch { if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local. Reintentá." }); }
   }
@@ -148,12 +134,12 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     createElement("div", { "data-ui-inventory-layout": true },
       createElement(Panel, { label: "Operación de inventario" } as never,
         !state.product && browser.status === "results" ? createElement("p", { "data-ui-inventory-intro": true }, "Seleccioná un producto para comenzar.") : null,
-        !state.product ? createElement(ProductBrowser, { state: browser, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage, onSelect: (product) => { setCatalogPassword(""); dispatch(catalog.select(product)); }, actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending }) as never : null,
+        !state.product ? createElement(ProductBrowser<InventoryBrowseProduct>, { state: browser, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage, onSelect: (product) => { setCatalogPassword(""); dispatch(catalog.select(product)); }, actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending }) as never : null,
         state.product ? createElement("div", { "data-ui-inventory-operation": true, "aria-busy": pending || undefined },
           createElement("div", { "data-ui-inventory-selection": true },
-            createElement("div", { "data-ui-inventory-identity": true }, createElement("strong", null, state.product.name), createElement("span", { "data-ui-kind": "sku" }, `SKU: ${(state.product as Product).sku}`)),
+            createElement("div", { "data-ui-inventory-identity": true }, createElement("strong", null, state.product.name), state.product.sku !== undefined ? createElement("span", { "data-ui-kind": "sku" }, `SKU: ${state.product.sku}`) : null),
             createElement("span", { "data-ui-inventory-stock": true }, `Stock actual: ${state.product.available_quantity}`),
-            createElement("span", { "data-ui-inventory-primary-location": true }, `Ubicación principal: ${state.product.primary_location_code ?? "Sin ubicación asignada"}`)),
+            state.product.primary_location_code !== undefined ? createElement("span", { "data-ui-inventory-primary-location": true }, `Ubicación principal: ${state.product.primary_location_code ?? "Sin ubicación asignada"}`) : null),
           createElement(InventoryOperationChoices, { operation: state.operation, disabled: pending, onChange: (operation) => { setCatalogPassword(""); dispatch({ type: "operation_changed", operation }); } }),
           createElement("div", { "data-ui-inventory-fields": true }, state.operation === "stock_entry"
             ? createElement(Field, { kind: "quantity", label: "Cantidad (unidades enteras)", hint: "Solo unidades enteras positivas.", error: value && !whole ? "Ingresá una cantidad entera mayor que cero." : undefined, control: createElement("input", { min: 1, value, disabled: pending, onChange: (event) => dispatch({ type: "entry_quantity_changed", value: event.target.value }) }) } as never)

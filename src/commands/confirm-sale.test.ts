@@ -14,14 +14,15 @@ test("sends only the reduced confirmation payload", async () => {
     };
   });
 
-  const result = await confirmSale({
+  const reducedRequest = {
     request_id: "550e8400-e29b-41d4-a716-446655440050",
     lines: [{ product_id: 1, quantity: 2, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: {
       amount_tendered_centavos: 3_000,
       qr_applied_centavos: 2_000,
     },
-  });
+  };
+  const result = await confirmSale(reducedRequest);
 
   assert.deepEqual(result, {
     kind: "error",
@@ -71,21 +72,24 @@ test("preserves nullable payment inputs for cash, QR, and mixed confirmation", a
     };
   });
 
-  await confirmSale({
+  const cashRequest = {
     request_id: "550e8400-e29b-41d4-a716-446655440051",
     lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: { amount_tendered_centavos: 2_500, qr_applied_centavos: null },
-  });
-  await confirmSale({
+  };
+  await confirmSale(cashRequest);
+  const qrRequest = {
     request_id: "550e8400-e29b-41d4-a716-446655440052",
     lines: [{ product_id: 2, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: { amount_tendered_centavos: null, qr_applied_centavos: 2_500 },
-  });
-  await confirmSale({
+  };
+  await confirmSale(qrRequest);
+  const mixedRequest = {
     request_id: "550e8400-e29b-41d4-a716-446655440053",
     lines: [{ product_id: 3, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: { amount_tendered_centavos: 1_500, qr_applied_centavos: 1_000 },
-  });
+  };
+  await confirmSale(mixedRequest);
 
   assert.deepEqual(captured, [
     {
@@ -143,11 +147,12 @@ test("returns persisted authoritative summaries and backend errors unchanged", a
     total_centavos: 5_500,
   }));
 
-  const result = await confirmSale({
+  const authoritativeRequest = {
     request_id: "550e8400-e29b-41d4-a716-446655440054",
     lines: [{ product_id: 1, quantity: 2, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: { amount_tendered_centavos: null, qr_applied_centavos: 5_500 },
-  });
+  };
+  const result = await confirmSale(authoritativeRequest);
 
   assert.equal(result.kind, "success");
   assert.equal(result.lines[0].unit_price_centavos, 2_750);
@@ -161,12 +166,13 @@ test("decodes request conflicts without coercing them to persistence failures", 
     message: "SQLite digest details",
   }));
 
-  assert.deepEqual(
-    await confirmSale({
+  const conflictRequest = {
       request_id: "550e8400-e29b-41d4-a716-446655440055",
       lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0 }],
       payment: { amount_tendered_centavos: null, qr_applied_centavos: 2500 },
-    }),
+    };
+  assert.deepEqual(
+    await confirmSale(conflictRequest),
     {
       kind: "error",
       code: "request_conflict",
@@ -203,7 +209,7 @@ test("rejects invalid request identities before invocation", async () => {
   await assert.rejects(
     confirmSale({
       request_id: "550E8400-E29B-41D4-A716-446655440055",
-      lines: [{ product_id: 1, quantity: 1 }],
+      lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500 }],
       payment: { amount_tendered_centavos: null, qr_applied_centavos: null },
     }),
     /canonical UUID v4/,
@@ -235,7 +241,7 @@ test("reconstructs the IPC payload from allowlisted request fields", async () =>
       amount_applied_centavos: 2_500,
     },
     payments: [{ method: "cash", amount_applied_centavos: 2_500 }],
-  } as ConfirmSaleRequest;
+  };
 
   await confirmSale(request);
 
@@ -250,6 +256,27 @@ test("reconstructs the IPC payload from allowlisted request fields", async () =>
   ]);
 });
 
+test("rejects an absent captured price before invocation", async () => {
+  let invoked = false;
+  const confirmSale = createConfirmSaleCommand(async () => {
+    invoked = true;
+    return null;
+  });
+  const line = { product_id: 1, quantity: 1, captured_unit_price_centavos: 2500 };
+  assert.equal(Reflect.deleteProperty(line, "captured_unit_price_centavos"), true);
+  assert.equal(Object.hasOwn(line, "captured_unit_price_centavos"), false);
+  const request = {
+    request_id: "550e8400-e29b-41d4-a716-446655440055",
+    lines: [line],
+    payment: { amount_tendered_centavos: null, qr_applied_centavos: null },
+  };
+
+  await assert.rejects(confirmSale(request), {
+    message: "Captured price must be a positive safe integer.",
+  });
+  assert.equal(invoked, false);
+});
+
 test("rejects unsafe, non-integer, negative, and non-positive values before invocation", async () => {
   let invoked = false;
   const confirmSale = createConfirmSaleCommand(async () => {
@@ -258,17 +285,17 @@ test("rejects unsafe, non-integer, negative, and non-positive values before invo
   });
   const request = {
     request_id: "550e8400-e29b-41d4-a716-446655440055",
-    lines: [{ product_id: 1, quantity: 1 }],
+    lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500 }],
     payment: { amount_tendered_centavos: null, qr_applied_centavos: null },
   };
 
   for (const invalidRequest of [
-    { ...request, lines: [{ product_id: 0, quantity: 1 }] },
-    { ...request, lines: [{ product_id: 1.5, quantity: 1 }] },
-    { ...request, lines: [{ product_id: 1, quantity: 0 }] },
+    { ...request, lines: [{ product_id: 0, quantity: 1, captured_unit_price_centavos: 2500 }] },
+    { ...request, lines: [{ product_id: 1.5, quantity: 1, captured_unit_price_centavos: 2500 }] },
+    { ...request, lines: [{ product_id: 1, quantity: 0, captured_unit_price_centavos: 2500 }] },
     {
       ...request,
-      lines: [{ product_id: 1, quantity: Number.MAX_SAFE_INTEGER + 1 }],
+      lines: [{ product_id: 1, quantity: Number.MAX_SAFE_INTEGER + 1, captured_unit_price_centavos: 2500 }],
     },
     {
       ...request,
@@ -290,6 +317,21 @@ test("rejects unsafe, non-integer, negative, and non-positive values before invo
       confirmSale(invalidRequest),
       /safe integer|positive|non-negative/,
     );
+    if (invalidRequest.payment.amount_tendered_centavos === -1) {
+      await assert.rejects(confirmSale(invalidRequest), {
+        message: "Tendered cash must be a non-negative safe integer.",
+      });
+    }
+    if (invalidRequest.payment.amount_tendered_centavos === 1.5) {
+      await assert.rejects(confirmSale(invalidRequest), {
+        message: "Tendered cash must be a non-negative safe integer.",
+      });
+    }
+    if (invalidRequest.payment.qr_applied_centavos === Number.MAX_SAFE_INTEGER + 1) {
+      await assert.rejects(confirmSale(invalidRequest), {
+        message: "QR amount must be a non-negative safe integer.",
+      });
+    }
   }
 
   assert.equal(invoked, false);
@@ -303,11 +345,12 @@ test("decodes non-positive final-price validation as a bounded field error", asy
     message: "The final price must be positive.",
   }));
 
-  assert.deepEqual(await confirmSale({
+  const finalPriceRequest = {
     request_id: "550e8400-e29b-41d4-a716-446655440058",
     lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0, final_unit_price_centavos: 2500 }],
     payment: { amount_tendered_centavos: null, qr_applied_centavos: 2500 },
-  }), {
+  };
+  assert.deepEqual(await confirmSale(finalPriceRequest), {
     kind: "error",
     code: "invalid_final_price",
     message: "The final price must be positive.",
@@ -320,11 +363,12 @@ test("decodes the bounded minimum-price violation and nullable snapshots", async
     product_id: 1,
     current_minimum_unit_price_centavos: 2_700,
   }));
-  assert.deepEqual(await confirmSale({
+  const minimumPriceRequest = {
     request_id: "550e8400-e29b-41d4-a716-446655440058",
     lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: { amount_tendered_centavos: null, qr_applied_centavos: 2_500 },
-  }), {
+  };
+  assert.deepEqual(await confirmSale(minimumPriceRequest), {
     kind: "minimum_price_violation",
     product_id: 1,
     current_minimum_unit_price_centavos: 2_700,
@@ -341,11 +385,12 @@ test("decodes the bounded minimum-price violation and nullable snapshots", async
     payments: [{ method: "qr", amount_applied_centavos: 2_750 }],
     total_centavos: 2_750,
   }));
-  const result = await withSnapshots({
+  const snapshotRequest = {
     request_id: "550e8400-e29b-41d4-a716-446655440059",
     lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: { amount_tendered_centavos: null, qr_applied_centavos: 2_750 },
-  });
+  };
+  const result = await withSnapshots(snapshotRequest);
   assert.equal(result.kind, "success");
   if (result.kind === "success") {
     assert.equal(result.lines[0].minimum_unit_price_snapshot_centavos, 2_500);

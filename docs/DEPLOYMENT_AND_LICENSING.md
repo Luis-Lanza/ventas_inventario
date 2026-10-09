@@ -1,4 +1,6 @@
-# Deployment and licensing
+# Velay deployment and licensing
+
+Velay is an independent offline retail fork for a single Bolivian store and one PC, using `Bs`. Repuestos Autos is maintained separately. This guide describes the retained license policy and Velay's separate technical identity; it does not change commercial terms.
 
 ## Decision
 
@@ -22,6 +24,22 @@ The code is a machine-binding hash, not a signing secret. Each accepted license 
 | License | The vendor signs the license with Ed25519. The app contains the public verification key and checks the signature and PC binding locally. |
 | Key custody | The private signing key stays on vendor-controlled storage, outside Git, the app build inputs, installer, and customer PC. Never copy a real public key or key ID into this guide or support messages. |
 | File handling | Customers import the vendor-provided `.lic` file through the app. Rejected imports do not replace an existing valid license. |
+
+## Application, data, and backup identity
+
+| Boundary | Velay identity |
+| --- | --- |
+| Application / license product | `com.velay.app` |
+| Windows canonical database | `%APPDATA%\com.velay.app\velay.sqlite3` |
+| Default Linux canonical database | `~/.local/share/com.velay.app/velay.sqlite3` (or `$XDG_DATA_HOME/com.velay.app/velay.sqlite3`) |
+| SQLite database / backup family | `application_id` ASCII `VLAY`: `0x564C4159`, decimal `1447838041` |
+| License envelope family | `velay-license`; signed-message prefix `velay-license\0v1\0`, with Velay machine-binding domain separation |
+
+The signing keys are unchanged, but the product, envelope, and domain separation isolate Velay licenses from Repuestos Autos licenses. An old-product license is not a Velay license. Rejected imports preserve an existing valid license.
+
+There is **no old-product database or backup compatibility/migration path**. Foreign and unmarked databases/backups are rejected rather than adopted; do not rename or manually stamp them to bypass validation. The `VLAY` marker identifies a family, not authenticity or tamper resistance. Create and restore Velay backups through the app, including its supported assets and recovery evidence, and keep external/customer data out of this repository.
+
+Internal Cargo/npm package names and inherited artwork are not redesigned by this identity work.
 
 ## Unlicensed recovery and access
 
@@ -56,12 +74,22 @@ A license is for one PC and cannot be self-transferred. A license for a differen
 - Never print, log, paste into tickets, or commit private-key material. Do not store customer records or issued `.lic` files in this repository.
 - If the signing key is lost, licenses for that key cannot be issued. If it is compromised, treat it as a vendor security incident; rotation requires an application trust update and customer rollout.
 
+## Acceptance status and limits
+
+Available Linux deterministic tests and frontend builds do not validate the Windows `MachineGuid` runtime, WebView2, NSIS installation, or native desktop dialogs/rendering. Windows installation, offline activation, upgrade, and backup/restore acceptance remain **pending** until exercised on a supported PC. Browser/desktop visual acceptance is also pending; a mounted DOM test is not a visual acceptance run.
+
+Inherited application TypeScript errors and four historical W9 audit failures are tracked separately from this identity work. Do not disable those checks or describe the overall application as release-ready based on focused branding tests.
+
+Retail V1 is in progress: zero opening stock, optional purchase cost at creation, unified catalog-session authorization, and draft retention across navigation remain pending. This guide does not claim those changes are implemented.
+
 ## Pre-release Windows verification checklist
 
 - [ ] On a clean supported Windows PC, install the signed NSIS installer; verify the WebView2 offline setup path where applicable and the intended per-machine/per-user behavior.
 - [ ] Confirm first launch shows an installation code and works offline.
 - [ ] Import a vendor-signed `.lic` file; verify activation succeeds only on the intended PC and remains active after restart with the network disconnected.
-- [ ] Verify malformed, altered, unsupported, unknown-key, and different-PC license files fail closed; a rejected import must leave a previously valid license intact.
+- [ ] Verify malformed, altered, unsupported, unknown-key, different-PC, and old Repuestos Autos license files fail closed; a rejected import must leave a previously valid license intact.
+- [ ] Confirm the window and activation screen identify Velay and the canonical database is `%APPDATA%\com.velay.app\velay.sqlite3`.
+- [ ] Create and restore a Velay backup with catalog, stock, sales, movements, and supported assets; verify old-product, foreign, unmarked, and invalid backups never replace live data.
 - [ ] Without a valid license, verify reads/history/reports, export, and backup creation work; sales and other business mutations, corrections, and operator restore are blocked.
 - [ ] Verify startup crash recovery still runs without a valid license, and verify a valid license permits the normal operator restore flow.
 - [ ] Update over an existing installation; confirm application data and backups are preserved and migrations are preceded by a verified backup.

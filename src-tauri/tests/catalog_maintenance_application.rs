@@ -101,7 +101,7 @@ impl CatalogMetadataRepository for MetadataRepository {
         revision: i64,
         _: &str,
         _: &str,
-        _: i64,
+        _: Option<i64>,
         _: i64,
         _: i64,
         _: i64,
@@ -137,7 +137,7 @@ fn product(revision: i64) -> EditCatalogInput {
         revision,
         "FLT-002",
         "  PREMIUM FILTER ",
-        2_000,
+        Some(2_000),
         4_000,
         3_000,
         0,
@@ -202,7 +202,7 @@ fn product_patches_reject_normalized_sku_conflicts_and_guarded_stale_writes() {
     }
     assert_eq!(
         edit(
-            EditCatalogInput::product(1, 0, "FLT-002", "Premium Filter", 2_000, 4_000, 3_000, 1, vec![]),
+            EditCatalogInput::product(1, 0, "FLT-002", "Premium Filter", Some(2_000), 4_000, 3_000, 1, vec![]),
             false,
             false,
         ),

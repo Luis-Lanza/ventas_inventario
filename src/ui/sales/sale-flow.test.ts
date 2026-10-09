@@ -23,12 +23,14 @@ test("parses optional Spanish Bs input without floating-point authority", () => 
   assert.equal(parseOptionalBs("0"), 0);
   assert.equal(parseOptionalBs("125,5"), 12_550);
   assert.equal(parseOptionalBs("0002,09"), 209);
+  assert.equal(parseOptionalBs("0,50"), 50);
+  assert.equal(parseOptionalBs("0,01"), 1);
   assert.equal(parseOptionalBs("90071992547409,91"), Number.MAX_SAFE_INTEGER);
 });
 
 test("rejects malformed and unsafe Bs input with the public correction", () => {
   const correction = "Ingresá un monto válido en Bs, con hasta dos decimales.";
-  for (const value of ["-1", "+1", "1e2", "1.25", "1,234", "12,", " 1", "9x", "90071992547409,92"]) {
+  for (const value of ["-1", "+1", "1e2", "1.25", "0.50", "0.01", "0,001", "1,234", "NaN", "Infinity", "12,", " 1", "9x", "90071992547409,92"]) {
     assert.throws(() => parseOptionalBs(value), { name: "RangeError", message: correction });
   }
 });
@@ -48,6 +50,20 @@ const brakePad: SalesBrowseProduct = {
   list_price_centavos: 2_500,
   minimum_sale_price_centavos: 2_500,
 };
+
+test("negotiated comma prices accept positive centavos without weakening minimums", () => {
+  const added = createSaleFlow(initialSaleState, { type: "add_product", product: { ...brakePad, sale_price_centavos: 50, minimum_sale_price_centavos: 1 } });
+  for (const [value, expected] of [["0,50", 50], ["0,01", 1]] as const) {
+    const priced = createSaleFlow(added, { type: "line_final_price_changed", product_id: 1, value });
+    assert.equal(effectiveDraftUnitPriceCentavos(priced.lines[0]), expected);
+    assert.deepEqual(priced.price_errors, {});
+  }
+  for (const value of ["0", "-0,01", "0,001", "NaN", "Infinity", "90071992547409,92", "0.50"]) {
+    assert.ok(createSaleFlow(added, { type: "line_final_price_changed", product_id: 1, value }).price_errors[1], value);
+  }
+  const raisedMinimum = createSaleFlow(initialSaleState, { type: "add_product", product: { ...brakePad, sale_price_centavos: 50, minimum_sale_price_centavos: 50 } });
+  assert.ok(createSaleFlow(raisedMinimum, { type: "line_final_price_changed", product_id: 1, value: "0,01" }).price_errors[1]);
+});
 
 test("same-name products remain separate cart intents and confirmation identities", () => {
   const other = { ...brakePad, product_id: 2, sku: "BP-200", sale_price_centavos: 3000 };
@@ -136,7 +152,7 @@ test("uses canonical sale price for a draft and falls back to legacy prices", ()
   assert.equal(canonicalDraft.lines[0].sale_price_centavos, 3_000);
   assert.equal(canonicalDraft.lines[0].final_price_input, "30,00");
 
-  const legacy = { ...brakePad, sale_price_centavos: undefined, list_price_centavos: 2_700 } as unknown as ProductSearchResult;
+  const legacy = { ...brakePad, sale_price_centavos: undefined, list_price_centavos: 2_700 } as unknown as SalesBrowseProduct;
   const legacyDraft = createSaleFlow(initialSaleState, { type: "add_product", product: legacy });
   assert.equal(legacyDraft.lines[0].sale_price_centavos, 2_700);
 });

@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { GrossProfitOperationsResponse } from "../../commands/gross-profit-operations.ts";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 import { MovementLedgerScreen } from "./movement-ledger-screen.ts";
 
@@ -123,6 +124,10 @@ test("applies shared dates to the gross-profit mode and exposes only its histori
 const report = { kind: "success", report: { amount_centavos: 1250, missing_cost_line_count: 0, activity_count: 1 } };
 const historicalOperations = { kind: "success", report: { rows: [{ occurred_at: "2024-03-10T11:30:00Z", operation_kind: "venta", sale_id: 7, return_id: null, product_name: "Filtro histórico", sku: "SKU-7", signed_quantity: 2, negotiated_unit_price_centavos: 1250, unit_cost_snapshot_centavos: 500, cost_state: "known", signed_gross_profit_centavos: 1500 }], page: 1, page_size: 20, total: 1, total_pages: 1 } };
 test("keeps the unified gross-profit PDF disabled until results are ready", async () => {
+ const emptyOperations: GrossProfitOperationsResponse = {
+  kind: "success",
+  report: { rows: [], page: 1, page_size: 20, total: 0, total_pages: 0 },
+ };
  for (const resultState of ["loading", "error", "empty"] as const) {
   let finishSummary!: (value: unknown) => void;
   let finishOperations!: (value: unknown) => void;
@@ -137,7 +142,7 @@ test("keeps the unified gross-profit PDF disabled until results are ready", asyn
    if (command === "gross_profit_operations_command") {
     if (resultState === "loading") return new Promise(resolve => { finishOperations = resolve; });
     if (resultState === "error") return { kind: "error", code: "persistence_failure", message: "bounded" };
-    return operations([], 1, 0);
+    return emptyOperations;
    }
    if (command === "export_gross_profit_operations_command") { exports++; return { kind: "success" }; }
    throw new Error(`Unexpected command: ${command}`);
@@ -160,6 +165,7 @@ test("keeps the unified gross-profit PDF disabled until results are ready", asyn
    assert.equal((screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement).disabled, true);
   } else {
    assert.ok(await screen.findByText("No hay ventas ni devoluciones en el período aplicado."));
+   await waitFor(() => assert.equal(within(screen.getByRole("region", { name: "Operaciones de ganancia bruta" })).getByRole("status").textContent, "No hay operaciones en el período aplicado."));
    assert.equal((screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement).disabled, true);
   }
   assert.equal(exports, 0);
@@ -272,6 +278,39 @@ test("preserves custom applied date, product, and movement filters across pagina
  await user.click(screen.getByRole("button", { name: "Siguiente" }));
  await waitFor(() => assert.equal((screen.getByRole("button", { name: "Siguiente" }) as HTMLButtonElement).disabled, true));
  assert.deepEqual((requests[4] as { request: Record<string, unknown> }).request, { ...expectedFilters, page: 3, page_size: 50 });
+});
+test("refuses reversed or missing dates without issuing a ledger request", async () => {
+ const { requests } = mount(); render(createElement(MovementLedgerScreen));
+ await screen.findByRole("table");
+ for (const [from, to] of [["2024-03-20", "2024-03-10"], ["", "2024-03-25"]]) {
+  fireEvent.change(screen.getByLabelText("Desde"), { target: { value: from } });
+  fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: to } });
+  const apply = screen.getByRole("button", { name: "Aplicar filtros" });
+  assert.equal((apply as HTMLButtonElement).disabled, true);
+  fireEvent.click(apply);
+  assert.equal(requests.length, 1);
+ }
+});
+test("hides ledger pagination while a deferred page loads and retains both bounds", async () => {
+ let finish!: (value: unknown) => void;
+ let calls = 0;
+ const { requests } = mount(() => ++calls === 1 ? page([movement], true) : new Promise(resolve => { finish = resolve; }));
+ const view = render(createElement(MovementLedgerScreen));
+ await screen.findByRole("table");
+ assert.equal((screen.getByRole("button", { name: "Anterior" }) as HTMLButtonElement).disabled, true);
+ const next = screen.getByRole("button", { name: "Siguiente" });
+ fireEvent.click(next);
+ assert.ok(screen.getByText("Cargando movimientos…"));
+ assert.equal(screen.queryByRole("button", { name: "Siguiente" }), null);
+ assert.equal(screen.queryByRole("button", { name: "Anterior" }), null);
+ assert.equal(requests.length, 2);
+ await act(async () => { finish(page([movement], false)); });
+ assert.ok(screen.getByText("Página 2"));
+ assert.equal((screen.getByRole("button", { name: "Siguiente" }) as HTMLButtonElement).disabled, true);
+ assert.equal((screen.getByRole("button", { name: "Anterior" }) as HTMLButtonElement).disabled, false);
+ fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+ assert.equal(requests.length, 2);
+ view.unmount();
 });
 test("keeps date, control, and product-feedback rows structurally separate and responsive", async () => {
  mount(); render(createElement(MovementLedgerScreen));

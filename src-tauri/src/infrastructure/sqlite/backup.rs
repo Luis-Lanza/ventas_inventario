@@ -5,7 +5,7 @@ use std::time::Duration;
 use rusqlite::{backup::Backup, Connection, OpenFlags};
 
 use super::{
-    migrate_if_needed, validate_foreign_keys, CURRENT_SCHEMA_VERSION,
+    migrate_if_needed, validate_family, validate_foreign_keys, CURRENT_SCHEMA_VERSION,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -23,6 +23,8 @@ pub fn create_snapshot(
     source: &Connection,
     snapshot: &Path,
 ) -> Result<DatabaseMetadata, BackupValidationError> {
+    validate_restored_database(source)?;
+    validate_existing_destination(snapshot)?;
     if let Some(parent) = snapshot.parent() {
         if let Err(error) = fs::create_dir_all(parent) {
             report_io_failure("snapshot_directory_create", &error);
@@ -42,6 +44,7 @@ pub fn create_snapshot(
         report_sqlite_failure("snapshot_copy", &error);
         return Err(BackupValidationError::InvalidBackup);
     }
+    validate_restored_database(&destination)?;
     metadata(&destination)
 }
 
@@ -51,6 +54,11 @@ pub fn stage_and_validate(
 ) -> Result<DatabaseMetadata, BackupValidationError> {
     let source = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|_| BackupValidationError::InvalidBackup)?;
+    let version = metadata(&source)?.schema_version;
+    if !(1..=CURRENT_SCHEMA_VERSION).contains(&version) {
+        return Err(BackupValidationError::UnsupportedSchema);
+    }
+    validate_existing_destination(stage)?;
     if let Some(parent) = stage.parent() {
         fs::create_dir_all(parent).map_err(|_| BackupValidationError::InvalidBackup)?;
     }
@@ -59,10 +67,7 @@ pub fn stage_and_validate(
     Backup::new(&source, &mut destination)
         .and_then(|backup| backup.run_to_completion(128, Duration::from_millis(1), None))
         .map_err(|_| BackupValidationError::InvalidBackup)?;
-    let version = metadata(&destination)?.schema_version;
-    if !(1..=CURRENT_SCHEMA_VERSION).contains(&version) {
-        return Err(BackupValidationError::UnsupportedSchema);
-    }
+    metadata(&destination)?;
     migrate_if_needed(&mut destination).map_err(|_| BackupValidationError::InvalidBackup)?;
     validate_restored_database(&destination)?;
     metadata(&destination)
@@ -105,7 +110,20 @@ pub fn validate_restored_database(connection: &Connection) -> Result<(), BackupV
     validate_foreign_keys(connection).map_err(|_| BackupValidationError::InvalidBackup)
 }
 
+fn validate_existing_destination(path: &Path) -> Result<(), BackupValidationError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => {
+            let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(|_| BackupValidationError::InvalidBackup)?;
+            validate_family(&connection).map_err(|_| BackupValidationError::InvalidBackup)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        _ => Err(BackupValidationError::InvalidBackup),
+    }
+}
+
 fn metadata(connection: &Connection) -> Result<DatabaseMetadata, BackupValidationError> {
+    validate_family(connection).map_err(|_| BackupValidationError::InvalidBackup)?;
     let integrity: String = match connection.query_row("PRAGMA integrity_check", [], |row| row.get(0)) {
         Ok(integrity) => integrity,
         Err(error) => {

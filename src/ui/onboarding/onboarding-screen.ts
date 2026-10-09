@@ -1,11 +1,12 @@
 import { createElement as h, useEffect, useReducer, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { createCategory, createProduct, FIELD_TYPE, listCategories, type Category, type CategoryFieldInput, type FieldType } from "../../commands/onboarding.ts";
-import { onboardingProductLocationCommands, type ProductLocationRecord, type ProductLocationSegment } from "../../commands/catalog.ts";
+import { catalogAccessCommands, onboardingProductLocationCommands, type CatalogAccessStatus, type ProductLocationRecord, type ProductLocationSegment } from "../../commands/catalog.ts";
+import { CatalogAccessGate, accessErrorMessage } from "../catalog/catalog-access-gate.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { LocationPicker } from "../visual-system/location-picker.ts";
 import { Panel } from "../visual-system/structure.ts";
-import { attributeValuesFor, parseBsToCentavos, parsePositiveWhole, validateCategoryAttributes } from "./onboarding-form.ts";
+import { attributeValuesFor, parseBsToCentavos, parseOpeningQuantity, parsePositiveWhole, validateCategoryAttributes } from "./onboarding-form.ts";
 import { canSubmitCategory, canSubmitProduct, createOnboardingFlow, initialOnboardingState } from "./onboarding-flow.ts";
 
 interface Props { onBack: () => void }
@@ -13,6 +14,34 @@ type PendingField = CategoryFieldInput & { optionsText: string };
 const emptyField: PendingField = { label: "", field_type: FIELD_TYPE.TEXT, required: false, options: [], optionsText: "" };
 
 export function OnboardingScreen({ onBack }: Props) {
+  const [status, setStatus] = useState<CatalogAccessStatus | "loading">("loading");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [lockPending, setLockPending] = useState(false);
+  const mounted = useRef(true), lock = useRef(false);
+  useEffect(() => {
+    void catalogAccessCommands.status().then((response) => {
+      if (mounted.current) setStatus(response.kind === "status" ? response.status : "unavailable");
+    }).catch(() => { if (mounted.current) setStatus("unavailable"); });
+    return () => { mounted.current = false; };
+  }, []);
+  const lockCatalog = async () => {
+    if (lock.current) return;
+    lock.current = true; setLockPending(true); setNotice(null);
+    try {
+      const response = await catalogAccessCommands.lock();
+      if (!mounted.current) return;
+      if (response.kind === "success") { setStatus("locked"); setNotice("Catálogo bloqueado."); }
+      else setNotice(accessErrorMessage(response));
+    } catch { if (mounted.current) setNotice("No se pudo bloquear el catálogo."); }
+    finally { if (mounted.current) { lock.current = false; setLockPending(false); } }
+  };
+  if (status !== "unlocked") return h("div", null,
+    h(Action, { variant: "tertiary", onClick: onBack }, "Volver a ventas"),
+    h(CatalogAccessGate, { status, notice, onUnlocked: () => { setNotice(null); setStatus("unlocked"); } }));
+  return h(OnboardingForm, { onBack, lockPending, notice, onLock: () => void lockCatalog(), onAccessRequired: (message: string) => { setNotice(message); setStatus("locked"); } });
+}
+
+function OnboardingForm({ onBack, onLock, onAccessRequired, lockPending, notice }: Props & { onLock: () => void; onAccessRequired: (message: string) => void; lockPending: boolean; notice: string | null }) {
   const notifications = useActionNotifications();
   const [routineOutcome, setRoutineOutcome] = useState(false);
   const [state, dispatch] = useReducer(createOnboardingFlow, initialOnboardingState);
@@ -66,7 +95,7 @@ export function OnboardingScreen({ onBack }: Props) {
   };
   const submitCategory = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canSubmitCategory(state) || categoryLock.current || productLock.current) return;
+    if (lockPending || !canSubmitCategory(state) || categoryLock.current || productLock.current) return;
     if (!categoryName.trim()) { setFieldError("category"); focus("category-name"); return; }
     const id = ++mutation.current; categoryLock.current = true; setRoutineOutcome(false); setFieldError(""); dispatch({ type: "category_started", requestId: id });
     try {
@@ -76,6 +105,7 @@ export function OnboardingScreen({ onBack }: Props) {
         setRoutineOutcome(true); notifications?.publish({ severity: "success", message: `Categoría creada: ${response.name}.` });
         dispatch({ type: "category_succeeded", requestId: id, category: response }); setSelectedId(String(response.category_id)); setCategoryName(""); setCategoryFields([]);
       } else {
+        if (response.code === "catalog_access_required" || response.code === "license_required") { onAccessRequired(response.message); return; }
         if (response.code === "persistence_failure") { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear la categoría." }); }
         dispatch({ type: "category_failed", requestId: id });
       }
@@ -84,8 +114,9 @@ export function OnboardingScreen({ onBack }: Props) {
   };
   const submitProduct = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canSubmitProduct(state) || productLock.current || categoryLock.current) return;
-    const productErrors = !selected ? "category" : !sku.trim() ? "sku" : !productName.trim() ? "name" : parseBsToCentavos(purchasePrice) === null ? "purchase-price" : parseBsToCentavos(listPrice) === null ? "list-price" : parseBsToCentavos(minimumSalePrice) === null ? "minimum-price" : parseBsToCentavos(minimumSalePrice)! > parseBsToCentavos(listPrice)! ? "minimum-price" : parsePositiveWhole(stock) === null ? "stock" : lowStockThreshold.trim() !== "" && parsePositiveWhole(lowStockThreshold) === null ? "low-stock-threshold" : "";
+    if (lockPending || !canSubmitProduct(state) || productLock.current || categoryLock.current) return;
+    const purchaseCost = purchasePrice.trim() === "" ? null : parseBsToCentavos(purchasePrice);
+    const productErrors = !selected ? "category" : !sku.trim() ? "sku" : !productName.trim() ? "name" : purchasePrice.trim() !== "" && purchaseCost === null ? "purchase-price" : parseBsToCentavos(listPrice) === null ? "list-price" : parseBsToCentavos(minimumSalePrice) === null ? "minimum-price" : parseBsToCentavos(minimumSalePrice)! > parseBsToCentavos(listPrice)! ? "minimum-price" : parseOpeningQuantity(stock) === null ? "stock" : lowStockThreshold.trim() !== "" && parsePositiveWhole(lowStockThreshold) === null ? "low-stock-threshold" : "";
     const attributeError = selected && !productErrors ? validateCategoryAttributes(selected, attributes) : null;
     if (productErrors || attributeError) {
       setFieldError(attributeError ? `attribute-${attributeError.definitionId}` : productErrors); setFieldErrorMessage("");
@@ -108,7 +139,7 @@ export function OnboardingScreen({ onBack }: Props) {
         if (latest) setSelectedId(String(latest.category_id));
         return;
       }
-      const response = await createProduct({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, purchase_price_centavos: parseBsToCentavos(purchasePrice)!, sale_price_centavos: parseBsToCentavos(listPrice)!, minimum_sale_price_centavos: parseBsToCentavos(minimumSalePrice)!, low_stock_threshold: lowStockThreshold.trim() === "" ? 1 : parsePositiveWhole(lowStockThreshold)!, opening_quantity: parsePositiveWhole(stock)!, attribute_values: attributeValuesFor(latest!, attributes) });
+      const response = await createProduct({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, purchase_price_centavos: purchaseCost, sale_price_centavos: parseBsToCentavos(listPrice)!, minimum_sale_price_centavos: parseBsToCentavos(minimumSalePrice)!, low_stock_threshold: lowStockThreshold.trim() === "" ? 1 : parsePositiveWhole(lowStockThreshold)!, opening_quantity: parseOpeningQuantity(stock)!, attribute_values: attributeValuesFor(latest!, attributes) });
       if (!mounted.current || id !== mutation.current) return;
       if (response.kind === "success") {
         let locationMessage = "";
@@ -133,6 +164,7 @@ export function OnboardingScreen({ onBack }: Props) {
         dispatch({ type: "product_succeeded", requestId: id, message });
         setSku(""); setProductName(""); setPurchasePrice(""); setListPrice(""); setMinimumSalePrice(""); setStock(""); setLowStockThreshold(""); setAttributes({}); setPrimaryLocationId("");
       }
+      else if (response.code === "catalog_access_required" || response.code === "license_required") { onAccessRequired(response.message); }
       else if (response.code === "invalid_attribute_value") {
         const fieldError = response.field_error;
         if (fieldError && selected!.fields.some((field) => field.definition_id === fieldError.definition_id)) {
@@ -150,30 +182,35 @@ export function OnboardingScreen({ onBack }: Props) {
     } catch { if (mounted.current && id === mutation.current) { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear el producto." }); dispatch({ type: "product_failed", requestId: id }); } }
     finally { productLock.current = false; }
   };
-  const pending = state.categoryStatus === "pending" || state.productStatus === "pending";
+  const pending = lockPending || state.categoryStatus === "pending" || state.productStatus === "pending";
   const feedback = state.feedback && !(notifications && routineOutcome) && (state.categoryStatus === "error" || state.productStatus === "error" || state.categoryStatus === "success" || state.productStatus === "success") ? h(Feedback, { kind: state.categoryStatus === "error" || state.productStatus === "error" ? "error" : "success" } as never, state.feedback) : null;
   const fieldControl = (field: Category["fields"][number]) => field.field_type === FIELD_TYPE.OPTION ? h("select", { id: `attribute-${field.definition_id}`, "aria-required": field.required || undefined, value: attributes[field.definition_id] ?? "", disabled: pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => setAttributes({ ...attributes, [field.definition_id]: event.target.value }) }, h("option", { value: "" }, "Seleccioná"), field.options.map((option) => h("option", { key: option, value: option }, option))) : h("input", { id: `attribute-${field.definition_id}`, "aria-required": field.required || undefined, type: field.field_type === FIELD_TYPE.NUMBER ? "number" : "text", step: field.field_type === FIELD_TYPE.NUMBER ? "any" : undefined, value: attributes[field.definition_id] ?? "", disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setAttributes({ ...attributes, [field.definition_id]: event.target.value }) });
 
   return h("main", { "aria-labelledby": "onboarding-heading", "data-ui-onboarding": true },
-    h("h1", { id: "onboarding-heading" }, "Alta de productos"), h(Action, { variant: "tertiary", onClick: onBack }, "Volver a ventas"), feedback,
+    h("h1", { id: "onboarding-heading" }, "Alta de productos"), h(Action, { variant: "tertiary", onClick: onBack }, "Volver a ventas"),
+    h(Action, { variant: "secondary", disabled: pending, onClick: onLock }, lockPending ? "Bloqueando…" : "Bloquear catálogo"),
+    notice ? h(Feedback, { kind: "error", children: notice }) : null, feedback,
     h("div", { "data-ui-onboarding-layout": true },
       h(Panel, { label: "Crear categoría" } as never, h("form", { onSubmit: submitCategory, "aria-busy": state.categoryStatus === "pending" || undefined },
         h(Field, { kind: "text", label: "Nombre de la categoría", error: fieldError === "category" ? "Ingresá un nombre para la categoría." : undefined, control: h("input", { id: "category-name", value: categoryName, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setCategoryName(event.target.value) }) } as never),
-        h("fieldset", null, h("legend", null, "Agregar campo"), h(Field, { kind: "text", label: "Nombre del campo", control: h("input", { id: "field-label", value: pendingField.label, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPendingField({ ...pendingField, label: event.target.value }) }) } as never), h(Field, { kind: "select", label: "Tipo de campo", control: h("select", { id: "field-type", value: pendingField.field_type, disabled: pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => setPendingField({ ...pendingField, field_type: event.target.value as FieldType }) }, h("option", { value: FIELD_TYPE.TEXT }, "Texto"), h("option", { value: FIELD_TYPE.NUMBER }, "Número"), h("option", { value: FIELD_TYPE.OPTION }, "Opción")) } as never), pendingField.field_type === FIELD_TYPE.OPTION ? h(Field, { kind: "text", label: "Opciones separadas por coma", control: h("input", { id: "field-options", value: pendingField.optionsText, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPendingField({ ...pendingField, optionsText: event.target.value }) }) } as never) : null, h("label", null, h("input", { type: "checkbox", checked: pendingField.required, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPendingField({ ...pendingField, required: event.target.checked }) }), " Campo obligatorio"), h(Action, { variant: "secondary", type: "button", disabled: pending || !pendingField.label.trim(), onClick: addField }, "Agregar campo")),
+        h("fieldset", null, h("legend", null, "Definición de atributos de la categoría"), h("p", null, "La categoría define el nombre, tipo, obligatoriedad y opciones de cada atributo; los valores se completan en cada producto."), h(Field, { kind: "text", label: "Nombre del campo", control: h("input", { id: "field-label", value: pendingField.label, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPendingField({ ...pendingField, label: event.target.value }) }) } as never), h(Field, { kind: "select", label: "Tipo de campo", control: h("select", { id: "field-type", value: pendingField.field_type, disabled: pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => setPendingField({ ...pendingField, field_type: event.target.value as FieldType }) }, h("option", { value: FIELD_TYPE.TEXT }, "Texto"), h("option", { value: FIELD_TYPE.NUMBER }, "Número"), h("option", { value: FIELD_TYPE.OPTION }, "Opción")) } as never), pendingField.field_type === FIELD_TYPE.OPTION ? h(Field, { kind: "text", label: "Opciones separadas por coma", control: h("input", { id: "field-options", value: pendingField.optionsText, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPendingField({ ...pendingField, optionsText: event.target.value }) }) } as never) : null, h("label", null, h("input", { type: "checkbox", checked: pendingField.required, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPendingField({ ...pendingField, required: event.target.checked }) }), " Campo obligatorio"), h(Action, { variant: "secondary", type: "button", disabled: pending || !pendingField.label.trim(), onClick: addField }, "Agregar campo")),
         categoryFields.length ? h("ul", { "aria-label": "Campos pendientes" }, categoryFields.map((field, index) => h("li", { key: `${field.label}-${index}` }, `${field.label} · ${field.required ? "obligatorio" : "opcional"}`))) : null,
         h(Action, { variant: "primary", type: "submit", pending: state.categoryStatus === "pending", pendingLabel: "Creando categoría…" }, "Crear categoría"))),
       state.categoriesStatus === "loading" ? h(Feedback, { kind: "loading" } as never, "Cargando categorías…") : state.categoriesStatus === "empty" ? h(Feedback, { kind: "empty" } as never, "Creá una categoría para habilitar el alta de productos.") : state.categoriesStatus === "error" ? h(Feedback, { kind: "error" } as never, h("span", null, "No se pudieron cargar las categorías. ", h(Action, { variant: "tertiary", onClick: loadCategories }, "Reintentar"))) : h(Panel, { label: "Crear producto activo" } as never, h("form", { onSubmit: submitProduct, noValidate: true, "aria-busy": state.productStatus === "pending" || undefined },
         h(Field, { kind: "select", label: "Categoría", error: fieldError === "category" ? "Seleccioná una categoría." : undefined, control: h("select", { id: "product-category", value: selectedId, disabled: pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => { setSelectedId(event.target.value); setAttributes({}); } }, state.categories.map((category) => h("option", { key: category.category_id, value: category.category_id }, category.name))) } as never),
         h(Field, { kind: "sku", label: "SKU", error: fieldError === "sku" ? "Ingresá el SKU." : undefined, control: h("input", { id: "product-sku", value: sku, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setSku(event.target.value) }) } as never),
         h(Field, { kind: "text", label: "Nombre del producto", error: fieldError === "name" ? "Ingresá el nombre del producto." : undefined, control: h("input", { id: "product-name", value: productName, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setProductName(event.target.value) }) } as never),
-        h(Field, { kind: "money", label: "Precio de compra (Bs)", hint: "Obligatorio; usá coma decimal. No se asigna un costo predeterminado.", error: fieldError === "purchase-price" ? "Ingresá un precio de compra positivo y válido en Bs." : undefined, control: h("input", { id: "purchase-price", value: purchasePrice, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPurchasePrice(event.target.value), "aria-required": true }) } as never),
+        h(Field, { kind: "money", label: "Precio de compra (Bs)", hint: "Opcional; dejalo vacío si desconocés el costo. Sin costo no se puede calcular el margen; no se inventa un valor. Usá coma decimal.", error: fieldError === "purchase-price" ? "Ingresá un precio de compra positivo y válido en Bs." : undefined, control: h("input", { id: "purchase-price", value: purchasePrice, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPurchasePrice(event.target.value) }) } as never),
         h(Field, { kind: "money", label: "Precio de venta (Bs)", hint: "Usá coma decimal; se envían centavos enteros.", error: fieldError === "list-price" ? "Ingresá un precio de venta válido en Bs." : undefined, control: h("input", { id: "list-price", value: listPrice, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setListPrice(event.target.value) }) } as never),
             h(Field, { kind: "money", label: "Precio mínimo de venta (Bs)", hint: "No puede superar el precio de venta.", error: fieldError === "minimum-price" ? "Ingresá un precio mínimo válido y menor o igual al precio de venta." : undefined, control: h("input", { id: "minimum-sale-price", value: minimumSalePrice, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setMinimumSalePrice(event.target.value) }) } as never),
-        h(Field, { kind: "quantity", label: "Stock inicial (unidades enteras)", error: fieldError === "stock" ? "Ingresá una cantidad entera mayor que cero." : undefined, control: h("input", { id: "opening-stock", value: stock, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setStock(event.target.value) }) } as never),
+        h(Field, { kind: "quantity", label: "Stock inicial (unidades enteras)", hint: "Cantidad entera no negativa; podés crear el producto con 0 unidades.", error: fieldError === "stock" ? "Ingresá una cantidad entera no negativa." : undefined, control: h("input", { id: "opening-stock", min: 0, value: stock, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setStock(event.target.value) }) } as never),
         h(Field, { kind: "quantity", label: "Umbral de stock bajo (opcional)", hint: "Dejalo vacío para usar 1 unidad.", error: fieldError === "low-stock-threshold" ? "Ingresá un umbral entero mayor o igual a 1." : undefined, control: h("input", { id: "low-stock-threshold", min: 1, value: lowStockThreshold, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setLowStockThreshold(event.target.value) }) } as never),
         h(LocationPicker, { id: "product-primary-location", label: "Ubicación principal (opcional)", locations: productLocations, segments: locationSegments, selectedId: primaryLocationId, disabled: pending, status: locationsStatus, onChange: setPrimaryLocationId }),
         locationsStatus === "error" ? h("p", null, "Podés asignar la ubicación después desde Catálogo.") : null,
-        selected?.fields.map((field) => h(Field, { key: field.definition_id, kind: field.field_type === FIELD_TYPE.OPTION ? "select" : "text", label: field.label, hint: field.required ? "Campo obligatorio." : "Campo opcional.", error: fieldError === `attribute-${field.definition_id}` ? fieldErrorMessage || validateCategoryAttributes(selected!, attributes)?.message : undefined, control: fieldControl(field) } as never)),
+        selected?.fields.length ? h("fieldset", null,
+          h("legend", null, "Valores de atributos del producto"),
+          h("p", null, "El producto guarda los valores según los atributos definidos por su categoría."),
+          selected.fields.map((field) => h(Field, { key: field.definition_id, kind: field.field_type === FIELD_TYPE.OPTION ? "select" : "text", label: field.label, hint: field.required ? "Campo obligatorio." : "Campo opcional.", error: fieldError === `attribute-${field.definition_id}` ? fieldErrorMessage || validateCategoryAttributes(selected!, attributes)?.message : undefined, control: fieldControl(field) } as never))) : null,
         h(Action, { variant: "primary", type: "submit", pending: state.productStatus === "pending", pendingLabel: "Creando producto…" }, "Crear producto"))))
   );
 }

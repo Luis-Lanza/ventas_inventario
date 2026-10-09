@@ -37,7 +37,7 @@ fn valid_product(category_id: i64, definitions: &[(i64, &str)]) -> CreateProduct
         sku: "BEL-101".into(),
         name: "Accessory belt".into(),
         category_id,
-        purchase_price_centavos: 2_000,
+        purchase_price_centavos: Some(2_000),
         sale_price_centavos: 4_500,
         minimum_sale_price_centavos: 3_500,
         low_stock_threshold: None,
@@ -160,6 +160,174 @@ fn creates_product_attributes_balance_and_opening_movement_atomically() {
 }
 
 #[test]
+fn unknown_purchase_cost_creates_with_explicit_null_response() {
+    for quantity in [0, 6] {
+        let mut connection = open_seeded_catalog().unwrap();
+        let request = serde_json::json!({
+            "sku": "UNKNOWN-1", "name": "Unknown cost", "category_id": 2,
+            "purchase_price_centavos": null, "sale_price_centavos": 4500,
+            "minimum_sale_price_centavos": 3500, "opening_quantity": quantity,
+            "attribute_values": []
+        });
+        let input = serde_json::from_value::<CreateProductInput>(request);
+        assert!(input.is_ok(), "explicit null purchase cost must be accepted: {input:?}");
+        let response = repuestos_autos::commands::onboarding::create_product(&mut connection, input.unwrap()).unwrap();
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(json, serde_json::json!({
+            "kind": "success", "product_id": 3, "sku": "UNKNOWN-1", "name": "Unknown cost",
+            "category_id": 2, "category_name": "Bujias", "purchase_price_centavos": null,
+            "sale_price_centavos": 4500, "minimum_sale_price_centavos": 3500,
+            "low_stock_threshold": 1, "available_quantity": quantity, "active": true
+        }));
+        let persisted = connection.query_row(
+            "SELECT p.purchase_price_centavos, b.quantity, (SELECT COUNT(*) FROM inventory_movements WHERE product_id = p.id) FROM products p JOIN stock_balances b ON b.product_id = p.id WHERE p.id = 3",
+            [], |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+        ).unwrap();
+        assert_eq!(persisted, (None, quantity, i64::from(quantity > 0)));
+    }
+}
+
+#[test]
+fn supplied_invalid_cost_refuses_all_creation_writes_atomically() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let counts = |connection: &rusqlite::Connection| connection.query_row(
+        "SELECT (SELECT COUNT(*) FROM products), (SELECT COUNT(*) FROM stock_balances), (SELECT COUNT(*) FROM inventory_movements), (SELECT COUNT(*) FROM product_attribute_values), (SELECT COUNT(*) FROM catalog_product_search)",
+        [], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
+    ).unwrap();
+    let before = counts(&connection);
+    for cost in [0, -1, 9_007_199_254_740_992] {
+        let input = CreateProductInput { purchase_price_centavos: Some(cost), ..valid_product(2, &[]) };
+        assert_eq!(create_product(&mut connection, input).unwrap_err(), CreateProductError::InvalidPurchasePrice);
+        assert_eq!(counts(&connection), before);
+    }
+}
+
+#[test]
+fn unknown_created_cost_remains_unknown_in_sale_and_reports_after_current_cost_changes() {
+    use repuestos_autos::commands::gross_profit::{gross_profit, GrossProfitRequest, GrossProfitResponse};
+    use repuestos_autos::commands::gross_profit_operations::{gross_profit_operations, GrossProfitOperationsRequest};
+    let mut connection = open_seeded_catalog().unwrap();
+    let product = create_product(&mut connection, CreateProductInput {
+        purchase_price_centavos: None, ..valid_product(2, &[])
+    }).unwrap();
+    let sale = confirm_sale(&mut connection, ConfirmSaleRequest {
+        request_id: "550e8400-e29b-41d4-a716-446655440063".into(),
+        lines: vec![RequestedLine {
+            product_id: product.product_id, quantity: 1, captured_unit_price_centavos: 4500,
+            captured_revision: 0, final_unit_price_centavos: None,
+            acknowledged_price_centavos: None, acknowledged_revision: None,
+        }],
+        payment: PaymentInputRequest { amount_tendered_centavos: None, qr_applied_centavos: Some(4500) },
+    }).unwrap();
+    assert!(matches!(sale, ConfirmSaleResponse::Success(_)));
+    let snapshot = |connection: &rusqlite::Connection| connection.query_row(
+        "SELECT unit_cost_snapshot_centavos FROM sale_lines WHERE product_id = ?1",
+        [product.product_id], |row| row.get::<_, Option<i64>>(0),
+    ).unwrap();
+    assert_eq!(snapshot(&connection), None);
+    let report = || GrossProfitRequest { from_utc: "2000-01-01T00:00:00.000Z".into(), to_exclusive_utc: "2100-01-01T00:00:00.000Z".into() };
+    let before = gross_profit(&connection, report());
+    assert!(matches!(&before, GrossProfitResponse::Success { report } if report.missing_cost_line_count == 1 && report.amount_centavos == 0));
+    let operations = serde_json::to_value(gross_profit_operations(&connection, GrossProfitOperationsRequest {
+        from_utc: report().from_utc, to_exclusive_utc: report().to_exclusive_utc, page: 1, page_size: 20,
+    })).unwrap();
+    assert_eq!(operations["report"]["rows"][0]["cost_state"], "unknown");
+    assert_eq!(operations["report"]["rows"][0]["signed_gross_profit_centavos"], serde_json::Value::Null);
+    connection.execute("UPDATE products SET purchase_price_centavos = 2000 WHERE id = ?1", [product.product_id]).unwrap();
+    assert_eq!(snapshot(&connection), None);
+    assert_eq!(gross_profit(&connection, report()), before);
+}
+
+#[test]
+fn zero_opening_stock_persists_balance_without_fictitious_movement() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let definitions = definition_ids(&connection, category_id);
+    let product = create_product(&mut connection, CreateProductInput {
+        opening_quantity: 0,
+        ..valid_product(category_id, &[(definitions[0], "1050")])
+    }).unwrap();
+
+    assert_eq!(product.available_quantity, 0);
+    let results = repuestos_autos::catalog::search_active_products(&connection, "BEL-101").unwrap();
+    assert_eq!(results[0].product_id, product.product_id);
+    assert_eq!(results[0].available_quantity, 0);
+    assert_eq!(connection.query_row(
+        "SELECT quantity FROM stock_balances WHERE product_id = ?1",
+        [product.product_id], |row| row.get::<_, i64>(0),
+    ).unwrap(), 0);
+    assert_eq!(connection.query_row(
+        "SELECT COUNT(*) FROM inventory_movements WHERE product_id = ?1",
+        [product.product_id], |row| row.get::<_, i64>(0),
+    ).unwrap(), 0);
+    assert!(connection.execute(
+        "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta) VALUES (?1, 'opening_stock', 0)",
+        [product.product_id],
+    ).is_err(), "zero opening movements remain forbidden by the schema");
+}
+
+#[test]
+fn negative_opening_stock_refuses_atomically_with_nonnegative_error_text() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let definitions = definition_ids(&connection, category_id);
+    let counts = |connection: &rusqlite::Connection| connection.query_row(
+        "SELECT (SELECT COUNT(*) FROM products), (SELECT COUNT(*) FROM stock_balances), (SELECT COUNT(*) FROM inventory_movements), (SELECT COUNT(*) FROM product_attribute_values), (SELECT COUNT(*) FROM catalog_product_search)",
+        [], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
+    ).unwrap();
+    let before = counts(&connection);
+    let response = repuestos_autos::commands::onboarding::create_product(&mut connection, CreateProductInput {
+        opening_quantity: -1,
+        ..valid_product(category_id, &[(definitions[0], "1050")])
+    }).unwrap();
+    let json = serde_json::to_value(response).unwrap();
+    assert_eq!(json["kind"], "error");
+    assert_eq!(json["code"], "invalid_opening_quantity");
+    assert_eq!(json["message"], "Opening stock must be a nonnegative whole number.");
+    assert_eq!(counts(&connection), before);
+}
+
+#[test]
+fn zero_stock_requires_a_positive_receipt_before_sale() {
+    use repuestos_autos::commands::inventory::{confirm_stock_entry_command, InventoryCommandResponse, StockEntryRequest};
+    let mut connection = open_seeded_catalog().unwrap();
+    let product = create_product(&mut connection, CreateProductInput {
+        opening_quantity: 0,
+        ..valid_product(2, &[])
+    }).unwrap();
+    let sale_request = |quantity| ConfirmSaleRequest {
+        request_id: "550e8400-e29b-41d4-a716-446655440061".into(),
+        lines: vec![RequestedLine {
+            product_id: product.product_id, quantity, captured_unit_price_centavos: 4_500,
+            captured_revision: 0, final_unit_price_centavos: None,
+            acknowledged_price_centavos: None, acknowledged_revision: None,
+        }],
+        payment: PaymentInputRequest { amount_tendered_centavos: None, qr_applied_centavos: Some(4_500) },
+    };
+    for (quantity, code) in [(0, "invalid_quantity"), (1, "insufficient_stock")] {
+        let response = confirm_sale(&mut connection, sale_request(quantity)).unwrap();
+        assert!(matches!(response, ConfirmSaleResponse::Error(error) if error.code == code));
+    }
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM sales", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    let receipt = |quantity| StockEntryRequest {
+        request_id: "550e8400-e29b-41d4-a716-446655440062".into(), product_id: product.product_id,
+        quantity, unit_purchase_price_centavos: Some(2_000), sale_price_centavos: None,
+        minimum_sale_price_centavos: None, note: None,
+    };
+    assert!(matches!(confirm_stock_entry_command(&mut connection, receipt(0)).unwrap(), InventoryCommandResponse::Error(_)));
+    let InventoryCommandResponse::Success(entry) = confirm_stock_entry_command(&mut connection, receipt(2)).unwrap() else {
+        panic!("expected stock receipt");
+    };
+    assert_eq!((entry.previous_quantity, entry.quantity_delta, entry.resulting_quantity), (0, 2, 2));
+    let ConfirmSaleResponse::Success(sale) = confirm_sale(&mut connection, sale_request(1)).unwrap() else {
+        panic!("expected sale after receipt");
+    };
+    assert_eq!(sale.total_centavos, 4_500);
+    assert_eq!(repuestos_autos::catalog::search_active_products(&connection, "BEL-101").unwrap()[0].available_quantity, 1);
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM inventory_movements WHERE product_id = ?1 AND movement_type = 'opening_stock'", [product.product_id], |row| row.get::<_, i64>(0)).unwrap(), 0);
+}
+
+#[test]
 fn missing_required_field_persists_nothing() {
     let mut connection = open_seeded_catalog().unwrap();
     let category_id = create_configured_category(&mut connection);
@@ -193,7 +361,7 @@ fn rejects_duplicate_sku_invalid_price_quantity_number_and_option_with_stable_er
         (
             CreateProductInput {
                 sku: "BEL-102".into(),
-                purchase_price_centavos: 0,
+                purchase_price_centavos: Some(0),
                 sale_price_centavos: 4_500,
                 minimum_sale_price_centavos: 0,
                 ..valid_product(category_id, &[(definitions[0], "1050")])
@@ -203,7 +371,7 @@ fn rejects_duplicate_sku_invalid_price_quantity_number_and_option_with_stable_er
         (
             CreateProductInput {
                 sku: "BEL-106".into(),
-                purchase_price_centavos: 2_000,
+                purchase_price_centavos: Some(2_000),
                 sale_price_centavos: 4_500,
                 minimum_sale_price_centavos: 5_000,
                 ..valid_product(category_id, &[(definitions[0], "1050")])
@@ -213,7 +381,7 @@ fn rejects_duplicate_sku_invalid_price_quantity_number_and_option_with_stable_er
         (
             CreateProductInput {
                 sku: "BEL-103".into(),
-                opening_quantity: 0,
+                opening_quantity: -1,
                 ..valid_product(category_id, &[(definitions[0], "1050")])
             },
             CreateProductError::InvalidOpeningQuantity,

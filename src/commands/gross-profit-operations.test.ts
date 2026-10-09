@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createGrossProfitOperationsCommands, createGrossProfitOperationsExportCommand, decodeGrossProfitOperations, decodeGrossProfitOperationsExport } from "./gross-profit-operations.ts";
 const row = { occurred_at: "2024-03-10T11:30:00Z", operation_kind: "venta", sale_id: 7, return_id: null, product_name: "Filtro", sku: "FIL-1", signed_quantity: 2, negotiated_unit_price_centavos: 1250, unit_cost_snapshot_centavos: null, cost_state: "unknown", signed_gross_profit_centavos: null };
-const page = (rows = [row], current = 1, total = 1) => ({ kind: "success", report: { rows, page: current, page_size: 20, total, total_pages: Math.ceil(total / 20) } });
+const page = (rows: unknown[] = [row], current = 1, total = 1) => ({ kind: "success", report: { rows, page: current, page_size: 20, total, total_pages: Math.ceil(total / 20) } });
 test("requests bounded pages using inclusive local dates and decodes explicit unknown cost", async () => {
  const calls: unknown[] = []; const commands = createGrossProfitOperationsCommands(async (name, payload) => { calls.push([name, payload]); return page(); });
  assert.deepEqual(await commands.load("2024-03-10", "2024-03-10", 1), page());
@@ -22,7 +22,9 @@ test("rejects unknown fields, malformed costs, unsafe profit arithmetic, and unb
  assert.equal(decodeGrossProfitOperations(page([row], 1, 21)).kind, "error", "a non-final page must be full");
  assert.equal(decodeGrossProfitOperations(page([row, row], 2, 21)).kind, "error", "the final page must have its exact remainder");
  assert.equal(decodeGrossProfitOperations({ kind: "success", report: { ...page().report, page_size: 101 } }).kind, "error");
- assert.equal(decodeGrossProfitOperations({ kind: "error", code: "internal", message: "unsafe" }).code, "persistence_failure");
+ const failure = decodeGrossProfitOperations({ kind: "error", code: "internal", message: "unsafe" });
+ assert.equal(failure.kind, "error");
+ assert.equal(failure.code, "persistence_failure");
 });
 test("strictly decodes saved, cancelled and bounded export outcomes without paths", async () => {
  assert.deepEqual(decodeGrossProfitOperationsExport({ kind: "success" }), { kind: "success" });

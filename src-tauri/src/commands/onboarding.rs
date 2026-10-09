@@ -73,6 +73,73 @@ pub fn create_product(
     })
 }
 
+pub fn create_category_authorized(
+    connection: &mut rusqlite::Connection,
+    license: &crate::commands::license::LicenseCommandState,
+    access: &crate::application::catalog::access::CatalogAccessSession,
+    request: CreateCategoryInput,
+) -> Result<CreateCategoryResponse, String> {
+    if let Some((code, message)) = crate::catalog_authorization_failure(license, access) {
+        return Ok(CreateCategoryResponse::Error(OnboardingError { code, message, field_error: None }));
+    }
+    create_category(connection, request)
+}
+
+pub fn create_product_authorized(
+    connection: &mut rusqlite::Connection,
+    license: &crate::commands::license::LicenseCommandState,
+    access: &crate::application::catalog::access::CatalogAccessSession,
+    request: CreateProductInput,
+) -> Result<CreateProductResponse, String> {
+    if let Some((code, message)) = crate::catalog_authorization_failure(license, access) {
+        return Ok(CreateProductResponse::Error(OnboardingError { code, message, field_error: None }));
+    }
+    create_product(connection, request)
+}
+
+#[cfg(test)]
+mod authorization_tests {
+    use super::*;
+
+    #[test]
+    fn creation_refuses_locked_and_relocked_sessions_without_changing_catalog_values() {
+        let mut connection = crate::infrastructure::sqlite::open_seeded_catalog().unwrap();
+        let root = std::env::temp_dir().join(format!("onboarding-access-{}", uuid::Uuid::new_v4()));
+        let license = crate::commands::license::LicenseCommandState::new(crate::application::license::LicenseService::new(
+            crate::infrastructure::windows_machine_identity::SystemMachineIdentity,
+            crate::application::license::FileLicenseStorage::new(&root),
+        ));
+        license.set_test_authorized(true);
+        let access = crate::application::catalog::access::CatalogAccessSession::open(crate::infrastructure::filesystem::catalog_access::CatalogAccessStore::new(&root));
+        for authorized in [false, true, false] {
+            access.set_test_authorized(authorized);
+            let before = serde_json::to_value(list_categories(&connection).unwrap()).unwrap();
+            let products_before = serde_json::to_value(crate::commands::catalog::browse_products(&connection, crate::commands::catalog::BrowseProductsRequest {
+                query: None, category_id: None, stock_state: "all".into(), activity: "all".into(), page: 1, page_size: 100,
+            })).unwrap();
+            let category = create_category_authorized(&mut connection, &license, &access, CreateCategoryInput { name: "Owner category".into(), fields: vec![crate::application::catalog::CategoryFieldInput { label: "Color".into(), field_type: "text".into(), required: false, options: vec![] }] }).unwrap();
+            let product = create_product_authorized(&mut connection, &license, &access, CreateProductInput {
+                sku: "OWNER-1".into(), name: "Owner product".into(), category_id: 1, purchase_price_centavos: Some(100), sale_price_centavos: 200,
+                minimum_sale_price_centavos: 100, low_stock_threshold: Some(1), opening_quantity: 0, attribute_values: vec![],
+            }).unwrap();
+            if authorized {
+                assert!(matches!(category, CreateCategoryResponse::Success(_)));
+                assert!(matches!(product, CreateProductResponse::Success(_)));
+            } else {
+                assert!(matches!(category, CreateCategoryResponse::Error(OnboardingError { code: "catalog_access_required", .. })));
+                assert!(matches!(product, CreateProductResponse::Error(OnboardingError { code: "catalog_access_required", .. })));
+                assert_eq!(serde_json::to_value(list_categories(&connection).unwrap()).unwrap(), before);
+                assert_eq!(serde_json::to_value(crate::commands::catalog::browse_products(&connection, crate::commands::catalog::BrowseProductsRequest {
+                    query: None, category_id: None, stock_state: "all".into(), activity: "all".into(), page: 1, page_size: 100,
+                })).unwrap(), products_before);
+            }
+        }
+        license.set_test_authorized(false);
+        let response = create_category_authorized(&mut connection, &license, &access, CreateCategoryInput { name: "Unlicensed".into(), fields: vec![] }).unwrap();
+        assert!(matches!(response, CreateCategoryResponse::Error(OnboardingError { code: "license_required", .. })));
+    }
+}
+
 fn map_category_error(error: CreateCategoryError) -> OnboardingError {
     let (code, message) = match error {
         CreateCategoryError::InvalidCategory => ("invalid_category", "Category name is required."),
@@ -133,7 +200,7 @@ fn map_product_error(error: CreateProductError) -> OnboardingError {
         ),
         CreateProductError::InvalidOpeningQuantity => (
             "invalid_opening_quantity",
-            "Opening stock must be a positive whole number.",
+            "Opening stock must be a nonnegative whole number.",
         ),
         CreateProductError::InvalidLowStockThreshold => (
             "invalid_low_stock_threshold",

@@ -18,7 +18,7 @@ export function ActivationScreen({ onRecovery, onActivated }: { onRecovery: () =
   useEffect(() => { void flow.current?.load(); return () => flow.current?.dispose(); }, []);
   const busy = state.outcome === "loading" || state.outcome === "import-pending";
   return h("main", { "aria-labelledby": "activation-heading", "data-ui-activation": true },
-    h("h1", { id: "activation-heading" }, "Activá Repuestos Autos"),
+    h("h1", { id: "activation-heading" }, "Activá Velay"),
     state.outcome === "loading" ? h("p", { role: "status", "aria-live": "polite" }, "Verificando el estado de la licencia…") : null,
     state.installationCode ? h("section", { "aria-labelledby": "installation-code-heading" },
       h("h2", { id: "installation-code-heading" }, "Código de instalación"),

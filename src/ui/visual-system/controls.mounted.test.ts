@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { createElement } from "react";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
+import { createElement, createRef, type ChangeEvent } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -30,7 +32,7 @@ function actionStateRule(selector: string, rules = productionStyle.sheet?.cssRul
 
 function reducedMotionRule(selector: string) {
   const media = [...(productionStyle.sheet?.cssRules ?? [])]
-    .find((rule): rule is CSSMediaRule => "media" in rule && rule.media.mediaText === "(prefers-reduced-motion: reduce)");
+    .find((rule): rule is CSSMediaRule => "media" in rule && typeof rule.media === "object" && rule.media !== null && "mediaText" in rule.media && rule.media.mediaText === "(prefers-reduced-motion: reduce)");
   return actionStateRule(selector, media?.cssRules);
 }
 
@@ -104,6 +106,76 @@ test("Field associates every native control family without owning its value", as
   assert.equal(money.getAttribute("inputmode"), "decimal");
   assert.equal(screen.getByText("Bs").getAttribute("aria-hidden"), "true");
   assert.equal(screen.getByRole("textbox", { name: "SKU" }).hasAttribute("data-ui-sku"), true);
+});
+
+test("shared createElement fixtures compile with strict application options", () => {
+  // The inherited test config excludes *.test.ts, so check these fixtures explicitly in memory.
+  const config = ts.readConfigFile(fileURLToPath(new URL("../../../tsconfig.json", import.meta.url)), ts.sys.readFile);
+  assert.equal(config.error, undefined);
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd());
+  const paths = ["controls.ts", "controls.mounted.test.ts", "structure.ts", "structure.mounted.test.ts"]
+    .map((path) => fileURLToPath(new URL(path, import.meta.url)));
+  const program = ts.createProgram(paths, { ...parsed.options, noEmit: true });
+  const diagnostics = ts.getPreEmitDiagnostics(program);
+  assert.equal(diagnostics.length, 0, ts.formatDiagnosticsWithColorAndContext(diagnostics, {
+    getCanonicalFileName: (path) => path,
+    getCurrentDirectory: () => process.cwd(),
+    getNewLine: () => "\n",
+  }));
+});
+
+test("shared controls accept typed positional children and forward native refs and events", async () => {
+  const inputRef = createRef<HTMLInputElement>();
+  let value = "";
+  let selection = "";
+  const user = userEvent.setup({ document });
+  render(createElement("div", null,
+    createElement("small", { id: "external-description" }, "Existing description"),
+    createElement(Field, {
+      kind: "text", label: "Forwarded input", hint: "Additional hint", error: "Invalid value",
+      control: createElement("input", {
+        id: "caller-input", ref: inputRef, name: "caller-name", defaultValue: "",
+        "aria-describedby": "external-description",
+        onChange: (event) => { value = event.currentTarget.value; },
+      }),
+    }),
+    createElement(Field, {
+      kind: "select", label: "Forwarded select",
+      control: createElement("select", {
+        onChange: (event: ChangeEvent<HTMLSelectElement>) => { selection = event.currentTarget.value; },
+      }, createElement("option", { value: "one" }, "One"), createElement("option", { value: "two" }, "Two")),
+    }),
+    createElement(Action, {
+      variant: "secondary",
+      "data-ui-catalog-lifecycle-action": "archived",
+      "data-ui-catalog-view-toggle": true,
+      "data-ui-sales-product-detail-trigger": true,
+      "data-ui-category-schema-discard": true,
+    }, "Typed action"),
+    createElement(Feedback, { kind: "error" }, "Typed feedback"),
+  ));
+  const input = screen.getByRole("textbox", { name: "Forwarded input" });
+  assert.equal(inputRef.current, input);
+  assert.equal(input.getAttribute("name"), "caller-name");
+  assert.equal(input.getAttribute("aria-describedby"), "external-description caller-input-hint caller-input-error");
+  await user.type(input, "Preserved");
+  assert.equal(value, "Preserved");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Forwarded select" }), "two");
+  assert.equal(selection, "two");
+  const button = screen.getByRole("button", { name: "Typed action" });
+  assert.equal(button.getAttribute("data-ui-catalog-lifecycle-action"), "archived");
+  for (const attribute of ["data-ui-catalog-view-toggle", "data-ui-sales-product-detail-trigger", "data-ui-category-schema-discard"]) {
+    assert.equal(button.getAttribute(attribute), "true");
+  }
+  assert.equal(screen.getByRole("alert").textContent, "Typed feedback");
+});
+
+test("Field rejects non-native and mismatched controls before rendering", () => {
+  const WrappedInput = () => createElement("input");
+  for (const control of [createElement("div"), createElement(WrappedInput), createElement("select"), createElement("textarea")]) {
+    assert.throws(() => Field({ kind: "text", label: "Rejected", control }), /requires a native input/);
+  }
+  assert.throws(() => Field({ kind: "select", label: "Rejected", control: createElement("input") }), /requires a native select/);
 });
 
 test("Feedback derives live intent and Badge keeps state meaning visible", async () => {

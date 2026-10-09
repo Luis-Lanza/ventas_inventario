@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Repuestos Autos",
+  "productName": "Velay",
   "version": "1.4.0",
-  "identifier": "com.repuestosautos.app",
+  "identifier": "com.velay.app",
   "build": {
     "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../dist",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Repuestos Autos",
+        "title": "Velay",
         "width": 1200,
         "height": 800,
         "minWidth": 960,

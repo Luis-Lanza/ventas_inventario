@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Category } from "../../commands/onboarding.ts";
-import { attributeValuesFor, parseBsToCentavos, parsePositiveWhole, validateCategoryAttributes } from "./onboarding-form.ts";
+import { attributeValuesFor, parseBsToCentavos, parseOpeningQuantity, parsePositiveWhole, validateCategoryAttributes } from "./onboarding-form.ts";
 
 const category: Category = { category_id: 1, name: "Filtros", fields: [
   { definition_id: 10, label: "Marca", field_type: "text", required: true, options: [] },
@@ -24,9 +24,22 @@ test("validates required attributes, finite numbers, and exact option membership
 test("parses comma and dot decimals into integer centavos", () => {
   assert.equal(parseBsToCentavos("125,50"), 12550); assert.equal(parseBsToCentavos("125.5"), 12550);
 });
+test("accepts positive sub-Bs prices and the safe centavo boundary", () => {
+  for (const [value, expected] of [["0.50", 50], ["0.01", 1], ["0,50", 50], ["0,01", 1], [" 0.01 ", 1], ["90071992547409.91", Number.MAX_SAFE_INTEGER]] as const) {
+    assert.equal(parseBsToCentavos(value), expected, value);
+  }
+});
 test("rejects blank, zero, invalid precision, and non-numeric money", () => {
-  for (const value of ["", " ", "0", "0,00", "125,999", "12.3.4", "Bs 12"]) assert.equal(parseBsToCentavos(value), null, value);
+  for (const value of ["", " ", "0", "0,00", "0.00", "-0.01", "+0.01", ".50", "0.", "1e2", "0.001", "1.001", "125,999", "12.3.4", "Bs 12", "NaN", "Infinity", "90071992547409.92", "9007199254740992"]) assert.equal(parseBsToCentavos(value), null, value);
 });
 test("accepts only positive safe whole-unit stock", () => {
-  assert.equal(parsePositiveWhole("8"), 8); for (const value of ["", "0", "  ", "1.5", "-1", "2,0"]) assert.equal(parsePositiveWhole(value), null, value);
+  assert.equal(parsePositiveWhole("8"), 8); for (const value of ["", "0", "  ", "1.5", "-1", "2,0", "9007199254740992"]) assert.equal(parsePositiveWhole(value), null, value);
+});
+test("opening stock alone accepts nonnegative safe whole units", () => {
+  for (const [value, expected] of [["0", 0], [" 0 ", 0], ["8", 8], ["9007199254740991", Number.MAX_SAFE_INTEGER]] as const) {
+    assert.equal(parseOpeningQuantity(value), expected);
+  }
+  for (const value of ["", " ", "-1", "-0", "1.5", "2,0", "1e3", "9007199254740992"]) {
+    assert.equal(parseOpeningQuantity(value), null, value);
+  }
 });

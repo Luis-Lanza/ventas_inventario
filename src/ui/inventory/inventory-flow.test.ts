@@ -7,12 +7,32 @@ test("retains one request through failures, reports stale projections, refreshes
   const selected = createInventoryFlow(initialInventoryState, { type: "product_selected", product: { product_id: 1, name: "Filter", available_quantity: 8 } });
   const pending = createInventoryFlow(selected, { type: "confirmation_started", request_id: "550e8400-e29b-41d4-a716-446655440221" });
   const retry = createInventoryFlow(createInventoryFlow(pending, { type: "confirmation_failed", message: "Retry." }), { type: "confirmation_started", request_id: "550e8400-e29b-41d4-a716-446655440222" });
-  const success = createInventoryFlow(retry, { type: "confirmation_succeeded", result: { request_id: pending.request_id!, previous_quantity: 10, resulting_quantity: 12 } });
+  // Reducer-only synthetic receipt fixture; not native persistence evidence. Delta is 12 - 10, not submitted quantity.
+  const success = createInventoryFlow(retry, { type: "confirmation_succeeded", result: { request_id: pending.request_id!, previous_quantity: 10, resulting_quantity: 12, product_id: 1, quantity_delta: 2, occurred_at: "2000-01-01 00:00:00", note: null } });
   const refreshed = createInventoryFlow(success, { type: "alerts_refreshed", alerts: [{ product_id: 2, product_name: "Spark plug", quantity: 0, classification: "out_of_stock" }] });
   assert.equal(retry.request_id, pending.request_id);
+  assert.deepEqual(success.result, {
+    request_id: pending.request_id!,
+    product_id: 1,
+    previous_quantity: 10,
+    quantity_delta: 2,
+    resulting_quantity: 12,
+    occurred_at: "2000-01-01 00:00:00",
+    note: null,
+  });
   assert.equal(success.advisory_notice, "Stock changed after the preview.");
   assert.equal(refreshed.alerts[0].classification, "out_of_stock");
   assert.deepEqual(createInventoryFlow(refreshed, { type: "discard" }), initialInventoryState);
+});
+
+test("selection retains supplied SKU and location but invents no facts for legacy selections", () => {
+  const minimal = { product_id: 1, name: "Cuaderno", available_quantity: 0 };
+  const legacy = createInventoryFlow(initialInventoryState, { type: "product_selected", product: minimal });
+  assert.equal(legacy.product, minimal);
+  assert.equal(legacy.product?.sku, undefined);
+  assert.equal(legacy.product?.primary_location_code, undefined);
+  const located = { ...minimal, sku: "GEN-1", primary_location_code: null };
+  assert.equal(createInventoryFlow(initialInventoryState, { type: "product_selected", product: located }).product, located);
 });
 
 test("projects an explicit physical zero but not a blank count", () => {
@@ -78,6 +98,22 @@ test("replaces request identity for every changed inventory payload", () => {
     state = fail(state, `inventory-${type}`);
     state = createInventoryFlow(state, { type, value });
     assert.equal(state.request_id, null, type);
+  }
+});
+
+test("receipt prices accept positive centavos but retain effective minimum relationships", () => {
+  const selected = createInventoryFlow(initialInventoryState, { type: "product_selected", product: { product_id: 1, name: "Filter", available_quantity: 8, sale_price_centavos: 50, minimum_sale_price_centavos: 1 } });
+  assert.deepEqual(stockEntryPrices(selected), { purchase: undefined, sale: undefined, minimum: undefined, valid: true });
+  for (const [value, expected] of [["0.50", 50], ["0.01", 1]] as const) {
+    const supplied = { ...selected, purchase_price: value, sale_price: value, minimum_sale_price: value };
+    assert.deepEqual(stockEntryPrices(supplied), { purchase: expected, sale: expected, minimum: expected, valid: true });
+  }
+  assert.equal(stockEntryPrices({ ...selected, minimum_sale_price: "0.51" }).valid, false);
+  assert.equal(stockEntryPrices({ ...selected, sale_price: "0.01", minimum_sale_price: "0.50" }).valid, false);
+  for (const field of ["purchase_price", "sale_price", "minimum_sale_price"] as const) {
+    for (const invalid of ["0", "-0.01", "0.001", "1.001", "NaN", "Infinity", "90071992547409.92"]) {
+      assert.equal(stockEntryPrices({ ...selected, [field]: invalid }).valid, false, `${field}: ${invalid}`);
+    }
   }
 });
 

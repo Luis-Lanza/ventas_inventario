@@ -26,7 +26,7 @@ export function fieldErrorsForCatalogEdit(detail: CatalogMetadataDetail, form: C
   if (form.name.trim() === "") errors.name = "Ingresá un nombre.";
   if (detail.target === CATALOG_TARGET.CATEGORY) return errors;
   if (form.sku?.trim() === "") errors.sku = "Ingresá un SKU.";
-  if (parseCatalogBs(form.purchase_price_centavos ?? "") === null) errors.purchase_price_centavos = "Ingresá un precio actual de compra válido en Bs.";
+  if ((form.purchase_price_centavos ?? "").trim() !== "" && parseCatalogBs(form.purchase_price_centavos ?? "") === null) errors.purchase_price_centavos = "Ingresá un precio actual de compra válido en Bs.";
   const salePrice = parseCatalogBs(form.sale_price_centavos ?? "");
   if (salePrice === null) errors.sale_price_centavos = "Ingresá un precio de venta válido en Bs.";
   const minimumPrice = parseCatalogBs(form.minimum_sale_price_centavos ?? "");
@@ -49,7 +49,7 @@ export function createCatalogEditRequest(detail: CatalogMetadataDetail, form: Ca
   if (detail.target === CATALOG_TARGET.CATEGORY) return { target: detail.target, entity_id: detail.entity_id, expected_revision: detail.revision, name: form.name };
   const activeDefinitions = detail.attribute_definitions.filter((field) => field.active !== false);
   const values = activeDefinitions.map((field) => ({ definition_id: field.definition_id, value: form.attribute_values[field.definition_id] ?? "" }));
-  return { target: detail.target, entity_id: detail.entity_id, expected_revision: detail.revision, expected_category_revision: detail.category_revision, sku: form.sku ?? "", name: form.name, purchase_price_centavos: parseCatalogBs(form.purchase_price_centavos ?? "") as number, sale_price_centavos: parseCatalogBs(form.sale_price_centavos ?? "") as number, minimum_sale_price_centavos: parseCatalogBs(form.minimum_sale_price_centavos ?? "") as number, low_stock_threshold: (form.low_stock_threshold ?? "").trim() === "" ? 1 : Number(form.low_stock_threshold), attribute_values: values.filter((value) => activeDefinitions.find((field) => field.definition_id === value.definition_id)?.required || value.value !== "") };
+  return { target: detail.target, entity_id: detail.entity_id, expected_revision: detail.revision, expected_category_revision: detail.category_revision, sku: form.sku ?? "", name: form.name, purchase_price_centavos: parseCatalogBs(form.purchase_price_centavos ?? ""), sale_price_centavos: parseCatalogBs(form.sale_price_centavos ?? "") as number, minimum_sale_price_centavos: parseCatalogBs(form.minimum_sale_price_centavos ?? "") as number, low_stock_threshold: (form.low_stock_threshold ?? "").trim() === "" ? 1 : Number(form.low_stock_threshold), attribute_values: values.filter((value) => activeDefinitions.find((field) => field.definition_id === value.definition_id)?.required || value.value !== "") };
 }
 export function createCatalogMaintenanceFlow(state: CatalogMaintenanceState, action: CatalogMaintenanceAction): CatalogMaintenanceState {
   switch (action.type) {

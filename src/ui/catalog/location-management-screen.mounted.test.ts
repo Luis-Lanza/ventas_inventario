@@ -105,13 +105,33 @@ test("builds ordered schemas from templates, previews generated codes, and creat
   let currentSchema = schema;
   let locations: typeof row[] = [];
   const requests: Record<string, unknown>[] = [];
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  const isStringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item: unknown) => typeof item === "string");
   mockIPC((command, payload) => {
     if (command === "list_catalog_categories_command") return { kind: "success", records: [] };
     if (command === "browse_products_command") return emptyBrowse;
     if (command === "location_schema_command") return { kind: "schema_success", schema: currentSchema };
     if (command === "list_product_locations_command") return { kind: "locations_success", locations };
-    if (command === "save_location_schema_command") { requests.push(payload?.request as Record<string, unknown>); currentSchema = { revision: currentSchema.revision + 1, segments: (payload?.request?.segments as string[]).map((label, position) => ({ id: position + 1, label, position })) }; return { kind: "schema_success", schema: currentSchema }; }
-    if (command === "create_product_location_command") { requests.push(payload?.request as Record<string, unknown>); const values = payload?.request?.values as string[]; const created = { location_id: 9, code: values.map((value) => value.replace(/[^a-z0-9]/gi, "").toUpperCase()).join("-"), values, active: true, revision: 0 }; locations = [...locations, created]; return { kind: "location_success", location: created }; }
+    if (command === "save_location_schema_command") {
+      assert.ok(isRecord(payload) && isRecord(payload.request));
+      const request = payload.request;
+      assert.ok(isStringArray(request.segments));
+      requests.push(request);
+      currentSchema = { revision: currentSchema.revision + 1, segments: request.segments.map((label, position) => ({ id: position + 1, label, position })) };
+      return { kind: "schema_success", schema: currentSchema };
+    }
+    if (command === "create_product_location_command") {
+      assert.ok(isRecord(payload) && isRecord(payload.request));
+      const request = payload.request;
+      assert.ok(isStringArray(request.values));
+      requests.push(request);
+      const values = request.values;
+      const created = { location_id: 9, code: values.map((value) => value.replace(/[^a-z0-9]/gi, "").toUpperCase()).join("-"), values, active: true, revision: 0 };
+      locations = [...locations, created];
+      return { kind: "location_success", location: created };
+    }
     throw new Error(`Unexpected command: ${command}`);
   });
   const management = await openLocations();
@@ -174,6 +194,28 @@ test("shows validation, duplicate-code recovery, inactive filtering, and assigne
   await userEvent.click(management.querySelector('[data-ui-location-list] input[type="checkbox"]')!);
   assert.equal(management.querySelectorAll('[data-ui-location-row]').length, 1);
   assert.equal(management.querySelector('[data-ui-location-row] code')?.textContent, "PB-12");
+});
+
+test("hydrates a custom stored schema and saves validated template selection with its native revision", async () => {
+  const requests: unknown[] = [];
+  mockIPC((command, payload) => {
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 7, segments: [{ id: 20, label: "Pasillo", position: 0 }] } };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    if (command === "save_location_schema_command") {
+      requests.push(payload);
+      return { kind: "schema_success", schema: { revision: 8, segments: [{ id: 21, label: "Sector", position: 0 }, { id: 22, label: "Gaveta", position: 1 }] } };
+    }
+    throw new Error(command);
+  });
+  render(createElement(LocationManagementScreen));
+  await screen.findByRole("textbox", { name: "Pasillo" });
+  const template = screen.getByRole("combobox", { name: "Plantilla" });
+  assert.equal((template as HTMLSelectElement).value, "Personalizado");
+  assert.equal((screen.getByRole("textbox", { name: "Segmento 1" }) as HTMLInputElement).value, "Pasillo");
+  await userEvent.selectOptions(template, "Sector · Gaveta");
+  await userEvent.click(screen.getByRole("button", { name: "Guardar esquema" }));
+  await waitFor(() => assert.deepEqual(requests, [{ request: { expected_revision: 7, segments: ["Sector", "Gaveta"] } }]));
+  await screen.findByRole("textbox", { name: "Gaveta" });
 });
 
 test("recovers from unavailable location loading and exposes retry feedback", async () => {

@@ -426,7 +426,7 @@ export function HistoryScreen({
   runEffect = useEffect,
   findFocusable = findFocusableById,
 }: HistoryScreenProps) {
-  const correctionInvokerRef = useRef<HTMLButtonElement>(null);
+  const correctionInvokerRef = useRef<HTMLButtonElement | null>(null);
   const correctionRefreshRequired = Boolean(persistedRequest && !(state.detail?.returns.some(record => record.request_id === persistedRequest) || state.detail?.cancellation?.request_id === persistedRequest));
   const [from, setFrom] = useState(localToday);
   const [to, setTo] = useState(localToday);

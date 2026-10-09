@@ -16,6 +16,10 @@ export type ActionProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant: ActionVariant;
   pending?: boolean;
   pendingLabel?: ReactNode;
+  "data-ui-catalog-lifecycle-action"?: "active" | "archived";
+  "data-ui-catalog-view-toggle"?: boolean;
+  "data-ui-sales-product-detail-trigger"?: boolean;
+  "data-ui-category-schema-discard"?: boolean;
 };
 
 export function Action({ variant, pending = false, pendingLabel = "Working…", disabled, children, ...button }: ActionProps) {
@@ -29,8 +33,13 @@ export function Action({ variant, pending = false, pendingLabel = "Working…", 
 }
 
 export type FieldKind = "text" | "search" | "date" | "select" | "checkbox" | "quantity" | "money" | "sku";
-type InputControl = ReactElement<InputHTMLAttributes<HTMLInputElement>, "input">;
-type SelectControl = ReactElement<SelectHTMLAttributes<HTMLSelectElement>, "select">;
+// createElement's native overloads widen the tag; validate it at the Field boundary.
+type InputControl = ReactElement<InputHTMLAttributes<HTMLInputElement>>;
+type SelectControl = ReactElement<SelectHTMLAttributes<HTMLSelectElement>>;
+
+function isInputControl(control: InputControl | SelectControl): control is InputControl {
+  return control.type === "input";
+}
 export type FieldProps = {
   kind: FieldKind;
   label: ReactNode;
@@ -49,11 +58,15 @@ export function Field({ kind, label, hint, error, control }: FieldProps) {
   const errorId = error ? `${id}-error` : undefined;
   const describedBy = [control.props["aria-describedby"], hintId, errorId].filter(Boolean).join(" ") || undefined;
   const association = { id, "aria-describedby": describedBy, "aria-invalid": error ? true : undefined };
-  const native = kind === "select"
-    ? cloneElement(control as SelectControl, association)
+  const native = !isInputControl(control)
+    ? cloneElement(control, association)
     : (() => {
-        const input = control as InputControl;
-        const props: InputHTMLAttributes<HTMLInputElement> & Record<`data-ui-${string}`, boolean | undefined> = {
+        const input = control;
+        const props: InputHTMLAttributes<HTMLInputElement> & {
+          "data-ui-quantity"?: boolean;
+          "data-ui-money"?: boolean;
+          "data-ui-sku"?: boolean;
+        } = {
           ...association,
           type: kind === "search" ? "search" : kind === "date" ? "date" : kind === "checkbox" ? "checkbox" : kind === "quantity" ? "number" : input.props.type,
           inputMode: kind === "quantity" ? "numeric" : kind === "money" ? "decimal" : input.props.inputMode,
@@ -72,7 +85,7 @@ export function Field({ kind, label, hint, error, control }: FieldProps) {
 }
 
 export type FeedbackKind = "initial" | "loading" | "empty" | "success" | "advisory" | "error" | "unavailable" | "stale";
-export function Feedback({ kind, children }: { kind: FeedbackKind; children: ReactNode }) {
+export function Feedback({ kind, children }: { kind: FeedbackKind; children?: ReactNode }) {
   const role = kind === "error" || kind === "unavailable" ? "alert" : kind === "initial" ? undefined : "status";
   return createElement("div", {
     role,

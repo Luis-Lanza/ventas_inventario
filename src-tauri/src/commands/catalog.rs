@@ -386,7 +386,7 @@ pub enum EditCatalogRequest {
         expected_revision: i64,
         sku: String,
         name: String,
-        purchase_price_centavos: i64,
+        purchase_price_centavos: Option<i64>,
         #[serde(alias = "list_price_centavos")]
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,

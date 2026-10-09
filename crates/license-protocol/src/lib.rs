@@ -12,13 +12,13 @@ use thiserror::Error;
 pub const MAX_ENVELOPE_BYTES: usize = 4096;
 /// Maximum decoded canonical payload size.
 pub const MAX_PAYLOAD_BYTES: usize = 1024;
-/// Product identity protected by protocol v1.
-pub const PRODUCT_ID: &str = "com.repuestosautos.app";
-/// Domain-separation prefix for signatures.
-pub const SIGNED_MESSAGE_PREFIX: &[u8] = b"repuestos-autos-license\0v1\0";
+/// Velay product identity protected by protocol v1.
+pub const PRODUCT_ID: &str = "com.velay.app";
+/// Velay domain-separation prefix; historical product signatures are not accepted.
+pub const SIGNED_MESSAGE_PREFIX: &[u8] = b"velay-license\0v1\0";
 const SIGNATURE_BYTES: usize = 64;
 const LICENSE_ID_MAX: usize = 64;
-const ENVELOPE_FORMAT: &str = "repuestos-autos-license";
+const ENVELOPE_FORMAT: &str = "velay-license";
 
 /// Stable, non-secret protocol failure codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]

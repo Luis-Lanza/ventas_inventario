@@ -11,7 +11,11 @@ const date = (seconds: number) => { const value = new Date(seconds * 1000); retu
 const backupState = (status: string) => status === "failure" || status === "unavailable" || status === "success";
 const restoreState = (status: string) => ["invalid", "expired", "unavailable", "failure", "recovery", "success"].includes(status);
 
-export function BackupScreen({ canRestore = true }: { canRestore?: boolean } = {}) {
+export interface BackupScreenProps {
+  canRestore?: boolean;
+}
+
+export function BackupScreen({ canRestore = true }: BackupScreenProps) {
   const [state, dispatch] = useReducer(createBackupFlow, initialBackupState);
   const [dialogOpen, setDialogOpen] = useState(false);
   const notifications = useActionNotifications();

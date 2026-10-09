@@ -6,8 +6,31 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import type { ReturnRequest, CancellationRequest } from "../../commands/post-sale.ts";
+import type { SalesHistoryDetail } from "../../commands/sales-history.ts";
+
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 import { SalesHistoryScreen } from "./history-screen.ts";
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+const capturedRequest = (payload: unknown) => {
+  assert.ok(isRecord(payload));
+  assert.ok(isRecord(payload.request));
+  return payload.request;
+};
+const capturedRequestId = (payload: unknown) => {
+  const request = capturedRequest(payload);
+  assert.ok(typeof request.request_id === "string");
+  return request.request_id;
+};
+const isReturnRequest = (value: unknown): value is ReturnRequest =>
+  isRecord(value) && typeof value.request_id === "string" && typeof value.sale_id === "number" &&
+  Array.isArray(value.lines) && value.lines.every((line: unknown) =>
+    isRecord(line) && typeof line.sale_line_id === "number" && typeof line.quantity === "number");
+const isCancellationRequest = (value: unknown): value is CancellationRequest =>
+  isRecord(value) && typeof value.request_id === "string" && typeof value.sale_id === "number" &&
+  typeof value.reason === "string";
 
 const summary = (sale_id: number) => ({
   sale_id,
@@ -56,7 +79,7 @@ test("accepted return notifies before failed refresh and cannot be submitted twi
   if (command === "sale_history_detail_command") return ++detailCalls === 1 ? { kind: "success", detail: detail(184) } : refresh.promise;
   if (command === "create_sale_return_command") {
    mutations++;
-   return { kind: "success", result: { request_id: payload?.request?.request_id, return_id: 9, sale_id: 184, status: "confirmed", occurred_at: "2026-08-15 09:00:00", lines: [{ sale_line_id: 184, product_id: 4, quantity: 1 }] } };
+   return { kind: "success", result: { request_id: capturedRequestId(payload), return_id: 9, sale_id: 184, status: "confirmed", occurred_at: "2026-08-15 09:00:00", lines: [{ sale_line_id: 184, product_id: 4, quantity: 1 }] } };
   }
   throw new Error(command);
  });
@@ -109,11 +132,12 @@ test("late correction success cannot replace a newer selected sale", async () =>
     if (command === "list_sales_history_command")
       return { kind: "success", sales: [summary(71), summary(72)], has_more: false };
     if (command === "sale_history_detail_command") {
-      const saleId = Number(payload?.saleId);
+      assert.ok(isRecord(payload));
+      const saleId = Number(payload.saleId);
       detailCalls.push(saleId);
       return { kind: "success", detail: detail(saleId) };
     }
-    if (command === "create_sale_return_command") { requestId = payload?.request?.request_id; return correction.promise; }
+    if (command === "create_sale_return_command") { requestId = capturedRequestId(payload); return correction.promise; }
     throw new Error(command);
   });
   render(createElement(ActionNotificationProvider, null, createElement(SalesHistoryScreen)));
@@ -161,7 +185,9 @@ test("runs modal return validation, lock, retry, and persisted success evidence"
     if (command === "list_sales_history_command") return { kind: "success", sales: [summary(184)], has_more: false };
     if (command === "sale_history_detail_command") return ++detailCalls === 1 ? { kind: "success", detail: sale } : refreshed[detailCalls - 2].promise;
     if (command === "create_sale_return_command") {
-      requests.push(payload?.request as typeof requests[number]);
+      const request = capturedRequest(payload);
+      assert.ok(isReturnRequest(request));
+      requests.push(request);
       return requests.length === 1 ? firstReturn.promise : {
         kind: "success", result: { request_id: requests[0].request_id, return_id: 9, sale_id: 184,
           status: "confirmed", occurred_at: "2026-08-15 09:00:00", lines: [{ sale_line_id: 41, product_id: 4, quantity: 1 }] },
@@ -241,7 +267,7 @@ test("recovers the return modal when persisted-detail reload fails", async () =>
           : { kind: "success", detail: detail(184) };
     }
     if (command === "create_sale_return_command") {
-      requestId = payload?.request?.request_id;
+      requestId = capturedRequestId(payload);
       return correction.promise;
     }
     throw new Error(command);
@@ -352,7 +378,7 @@ test("renders the bounded Spanish history list as scannable semantic data", asyn
 });
 
 test("renders persisted original detail as Spanish read-only semantic facts", async () => {
-  const persisted = {
+  const persisted: SalesHistoryDetail = {
     ...detail(184), confirmed_at: "2026-08-14 10:42:00", total_centavos: 35_000, status: "cancelled",
     lines: [{ ...detail(184).lines[0], sku: null, product_name: null, quantity: 2, unit_price_centavos: 8_550, line_total_centavos: 17_100 }],
     payments: [
@@ -426,7 +452,9 @@ test("stages cancellation preparation in a form modal, then uses the destructive
     if (command === "list_sales_history_command") return { kind: "success", sales: [summary(184)], has_more: false };
     if (command === "sale_history_detail_command") return ++detailCalls === 1 ? { kind: "success", detail: sale } : refreshed[detailCalls - 2].promise;
     if (command === "cancel_sale_command") {
-      requests.push(payload?.request as typeof requests[number]);
+      const request = capturedRequest(payload);
+      assert.ok(isCancellationRequest(request));
+      requests.push(request);
       return cancellation.promise;
     }
     throw new Error(command);
@@ -450,7 +478,10 @@ test("stages cancellation preparation in a form modal, then uses the destructive
   await user.click(within(dialog).getByRole("button", { name: "Volver" }));
   assert.equal(screen.queryByRole("dialog", { name: "Cancelar venta #184" }), null);
   await waitFor(() => assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Motivo de cancelación" })));
-  assert.equal(screen.getByRole("dialog", { name: "Preparar cancelación de venta" }).querySelector("#cancellation-reason")?.value, "Venta duplicada");
+  const reason = screen.getByRole("dialog", { name: "Preparar cancelación de venta" })
+    .querySelector<HTMLInputElement>("input#cancellation-reason");
+  assert.ok(reason);
+  assert.equal(reason.value, "Venta duplicada");
   await user.click(screen.getByRole("button", { name: "Continuar con la cancelación" }));
 
   const confirm = screen.getByRole("button", { name: "Cancelar venta" });
@@ -486,7 +517,7 @@ test("preserves inclusive date commands and shows bounded empty and error recove
   let attempt = 0;
   mockIPC((command, payload) => {
     if (command !== "list_sales_history_command") throw new Error(command);
-    requests.push(payload?.request);
+    requests.push(capturedRequest(payload));
     attempt += 1;
     if (attempt === 1) return { kind: "success", sales: [], has_more: false };
     return { kind: "error", code: "persistence_failure", message: "private sqlite path and stack" };

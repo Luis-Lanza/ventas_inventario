@@ -3,19 +3,41 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
 import { mockIPC as nativeMockIPC } from "@tauri-apps/api/mocks";
+import { invoke } from "@tauri-apps/api/core";
 
 let mockedCatalogAccessStatus: "setup_required" | "locked" | "unlocked" = "unlocked";
-const mockIPC: typeof nativeMockIPC = (handler) => nativeMockIPC((command, payload) => command === "catalog_access_status_command" ? { kind: "status", status: mockedCatalogAccessStatus } : handler(command, payload));
+function isRequestRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && !(value instanceof ArrayBuffer) && !ArrayBuffer.isView(value);
+}
+
+function requestRecord(payload: Record<string, unknown> | undefined): Record<string, unknown> {
+  const request = payload?.request;
+  if (!isRequestRecord(request)) throw new TypeError("Catalog mock request must be a record");
+  return request;
+}
+
+function mockIPC(handler: (command: string, payload: Record<string, unknown> | undefined) => unknown) {
+  const callback = (command: string, payload: unknown) => {
+    if (command === "catalog_access_status_command") return { kind: "status", status: mockedCatalogAccessStatus };
+    if (payload !== undefined && !isRequestRecord(payload)) throw new TypeError("Catalog mock payload must be a record or undefined");
+    return handler(command, payload);
+  };
+  nativeMockIPC(callback);
+  return callback;
+}
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import type { ProductBrowseResult } from "../../commands/catalog.ts";
 import { CatalogMaintenanceScreen } from "./catalog-maintenance-screen.ts";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 
 const activeCategory = { entity_id: 4, target: "category" as const, label: "Filtros", activity: "active" as const, revision: 2, active_product_count: 3 };
 const activeProduct = { entity_id: 1, target: "product" as const, label: "Filtro Premium · FIL-PRE-014", activity: "active" as const, revision: 7 };
 const browseProduct = { product_id: 1, category_id: 4, sku: "FIL-PRE-014", name: "Filtro Premium", category_name: "Filtros", available_quantity: 0, catalog_unit_price_centavos: 12550, list_price_centavos: 12550, minimum_sale_price_centavos: 10000, attribute_values: [], revision: 7 };
-const browse = (products = [browseProduct]) => ({ kind: "success", products, categories: [{ category_id: 4, name: "Filtros" }], page: 1, page_size: 20, total: products.length, total_pages: products.length ? 1 : 0 });
+type BrowseProductFixture = typeof browseProduct & { primary_location_code?: ProductBrowseResult["primary_location_code"] };
+const browse = (products: BrowseProductFixture[] = [browseProduct]) => ({ kind: "success", products, categories: [{ category_id: 4, name: "Filtros" }], page: 1, page_size: 20, total: products.length, total_pages: products.length ? 1 : 0 });
 const categoryDetail = { target: "category" as const, entity_id: 4, name: "Filtros", activity: "active" as const, revision: 2, attribute_definitions: [] };
 const productDetail = {
   target: "product" as const, entity_id: 1, category_id: 4, category_revision: 1, sku: "FIL-PRE-014", name: "Filtro Premium",
@@ -38,6 +60,213 @@ async function openCategoryEditor() {
   return screen.findByRole("button", { name: "Editar Filtros" });
 }
 
+test("Catalog mock rejects outer arrays before fixture dispatch", async () => {
+  let calls = 0;
+  const callback = mockIPC(() => { calls++; return { kind: "success" }; });
+  await assert.rejects(invoke("browse_products_command", []), TypeError);
+  for (const payload of [null, false, 0, "record", 1n, Symbol("payload"), [], new ArrayBuffer(4), new Uint8Array(4), new DataView(new ArrayBuffer(4))]) {
+    assert.throws(() => callback("browse_products_command", payload), TypeError);
+    assert.equal(calls, 0);
+  }
+  assert.equal(calls, 0);
+});
+
+test("Catalog mock rejects malformed requests inside the extracting branch", async () => {
+  let entries = 0;
+  let fieldReads = 0;
+  const callback = mockIPC((command, payload) => {
+    entries++;
+    if (command === "browse_products_command") {
+      const query = requestRecord(payload).query;
+      fieldReads++;
+      return query;
+    }
+    return { kind: "success" };
+  });
+  const invalidRequests = [[], undefined, null, false, 0, "request", 1n, Symbol("request"), new ArrayBuffer(4), new Uint8Array(4), new DataView(new ArrayBuffer(4))];
+  for (const request of invalidRequests) {
+    await assert.rejects(invoke("browse_products_command", { request }), TypeError);
+    assert.equal(fieldReads, 0);
+  }
+  assert.equal(entries, invalidRequests.length);
+  assert.throws(() => callback("browse_products_command", undefined), TypeError);
+  assert.equal(entries, invalidRequests.length + 1);
+  assert.equal(fieldReads, 0);
+});
+
+test("Catalog mock forwards record aliases, results and request-free commands", async () => {
+  const request = { query: "brake", extra: { attribute_values: [null, { value: "untouched" }] } };
+  const payload = { request, extra: { revision: "not a DTO" } };
+  const result = { kind: "success", extra: [1, 2] };
+  const pending = Promise.resolve(result);
+  const calls: { command: string; payload: unknown }[] = [];
+  let capturedRequest: unknown;
+  const callback = mockIPC((command, received) => {
+    calls.push({ command, payload: received });
+    if (command === "browse_products_command" || command === "edit_catalog_command") capturedRequest = requestRecord(received);
+    return command === "edit_catalog_command" ? pending : result;
+  });
+  assert.equal(callback("browse_products_command", payload), result);
+  assert.equal(calls[0].command, "browse_products_command");
+  assert.equal(calls[0].payload, payload);
+  assert.equal(capturedRequest, request);
+  assert.equal(callback("edit_catalog_command", payload), pending);
+  assert.equal(await pending, result);
+  assert.equal(calls[1].payload, payload);
+  assert.equal(capturedRequest, request);
+  assert.equal(await invoke("browse_products_command", payload), result);
+  assert.equal(calls[2].payload, payload);
+  assert.equal(capturedRequest, request);
+  assert.deepEqual(payload, { request: { query: "brake", extra: { attribute_values: [null, { value: "untouched" }] } }, extra: { revision: "not a DTO" } });
+  assert.equal(callback("browse_products_command", { request: {} }), result);
+  assert.deepEqual(capturedRequest, {});
+  for (const command of ["catalog_access_lock_command", "list_catalog_categories_command", "location_schema_command"]) {
+    assert.equal(callback(command, undefined), result);
+    assert.deepEqual(calls.at(-1), { command, payload: undefined });
+    const empty = {};
+    assert.equal(callback(command, empty), result);
+    assert.equal(calls.at(-1)?.payload, empty);
+    assert.equal(await invoke(command), result);
+    assert.deepEqual(calls.at(-1), { command, payload: {} });
+  }
+  // A branch that does not extract a request has no nested-envelope policy.
+  const unexamined = { request: [] };
+  assert.equal(callback("catalog_access_lock_command", unexamined), result);
+  assert.equal(calls.at(-1)?.payload, unexamined);
+});
+
+test("Catalog mock intercepts status before validation without fixture dispatch", () => {
+  let calls = 0;
+  const callback = mockIPC(() => { calls++; throw new Error("Status reached fixture"); });
+  try {
+    const statuses: ("setup_required" | "locked" | "unlocked")[] = ["setup_required", "locked", "unlocked"];
+    for (const status of statuses) {
+      mockedCatalogAccessStatus = status;
+      for (const payload of [undefined, {}, { request: [] }, null, false, 0, "status", [], new ArrayBuffer(4), new Uint8Array(4), new DataView(new ArrayBuffer(4))]) {
+        assert.deepEqual(callback("catalog_access_status_command", payload), { kind: "status", status });
+      }
+    }
+    assert.equal(calls, 0);
+  } finally {
+    mockedCatalogAccessStatus = "unlocked";
+  }
+});
+
+test("Catalog thumbnails retain browse revision and edits use freshly loaded native revision", async () => {
+  const thumbnails: unknown[] = [];
+  let edit: unknown;
+  mockIPC((command, payload) => {
+    if (command === "browse_products_command") return browse([{ ...browseProduct, revision: 11 }]);
+    if (command === "catalog_metadata_detail_command") return { ...productDetail, revision: 17 };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    if (command === "catalog_product_image_thumbnail_command") {
+      thumbnails.push(payload);
+      return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    }
+    if (command === "edit_catalog_command") { edit = payload; return { kind: "success", ...activeProduct, revision: 18 }; }
+    return baseIPC(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await waitFor(() => assert.ok(edit));
+  assert.equal((edit as { request: { expected_revision: number } }).request.expected_revision, 17);
+  assert.ok(thumbnails.some(payload => JSON.stringify(payload) === JSON.stringify({ request: { product_id: 1, expected_revision: 11 } })));
+  assert.ok(thumbnails.some(payload => JSON.stringify(payload) === JSON.stringify({ request: { product_id: 1, expected_revision: 17 } })));
+  assert.ok(thumbnails.every(payload => (payload as { request: { expected_revision: number } }).request.expected_revision !== 0));
+});
+
+test("Catalog controlled native readiness preserves browse and edit authority", async (t) => {
+  const started = performance.now();
+  const trace: { ms: number; event: string; command?: string; payload?: unknown; dom?: string }[] = [];
+  const record = (event: string, command?: string, payload?: unknown) => {
+    if (trace.length < 80) trace.push({ ms: Math.round((performance.now() - started) * 100) / 100, event, command, payload });
+  };
+  const checkpoint = (event: string) => {
+    record(event);
+    const last = trace.at(-1);
+    if (last) last.dom = JSON.stringify({ edit: screen.queryAllByRole("button", { name: "Editar" }).length, text: document.body.textContent?.replace(/\s+/g, " ").trim().slice(0, 260) });
+  };
+  const deferred = (command: string, response: unknown) => {
+    let resolve: (value: unknown) => void = () => { throw new Error("Deferred not initialized"); };
+    let released = false;
+    const promise = new Promise<unknown>((finish) => { resolve = finish; });
+    return { command, promise, release: () => { if (!released) { released = true; record("release", command); resolve(response); } } };
+  };
+  const access = deferred("catalog_access_status_command", { kind: "status", status: "unlocked" });
+  const categories = deferred("list_catalog_categories_command", { kind: "success", records: [activeCategory] });
+  const products = deferred("browse_products_command", browse([{ ...browseProduct, revision: 11 }]));
+  const thumbnail = deferred("catalog_product_image_thumbnail_command", { kind: "error", code: "image_unavailable", message: "Unavailable" });
+  const gates = [access, categories, products, thumbnail];
+  const calls: { command: string; payload: unknown; settled: boolean }[] = [];
+  const pending: Promise<unknown>[] = [];
+  nativeMockIPC((command, payload) => {
+    const call = { command, payload, settled: false };
+    calls.push(call); record("entry", command, payload);
+    const gate = gates.find((item) => item.command === command);
+    const response = gate ? gate.promise : command === "catalog_metadata_detail_command" ? { ...productDetail, revision: 17 }
+      : command === "list_product_locations_command" ? { kind: "locations_success", locations: [] }
+      : command === "location_schema_command" ? { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }] } }
+      : command === "edit_catalog_command" ? { kind: "success", ...activeProduct, revision: 18 } : undefined;
+    const result = Promise.resolve(response).then((value) => {
+      if (value === undefined) throw new Error(`Unexpected command: ${command}`);
+      call.settled = true; record("settlement", command); return value;
+    });
+    pending.push(result); return result;
+  });
+  const entered = (command: string) => calls.some((call) => call.command === command);
+  const settled = (command: string) => calls.some((call) => call.command === command && call.settled);
+  const noEdit = () => assert.equal(screen.queryByRole("button", { name: "Editar" }), null);
+  const classification = () => !settled(access.command) ? "access transport held/unsettled"
+    : !entered(categories.command) ? "access settled, no categories: effect"
+    : !settled(categories.command) ? "categories entered/unsettled: transport"
+    : !entered(products.command) ? "categories settled, no browse: continuation/generation"
+    : !settled(products.command) ? "browse entered/unsettled: transport"
+    : !screen.queryByRole("button", { name: "Editar" }) ? "browse settled, no product commit: generation/commit"
+    : "controlled stages ready; original deadline cause UNKNOWN/BLOCKER";
+  const view = render(createElement(CatalogMaintenanceScreen));
+  try {
+    await waitFor(() => assert.ok(entered(access.command)));
+    checkpoint("access held"); noEdit();
+    assert.equal(settled(access.command), false); assert.equal(entered(categories.command), false);
+    await act(async () => { access.release(); });
+    await waitFor(() => assert.ok(entered(categories.command)));
+    checkpoint("categories held"); noEdit();
+    assert.ok(settled(access.command)); assert.equal(settled(categories.command), false); assert.equal(entered(products.command), false);
+    assert.ok(screen.getByRole("searchbox", { name: "Buscar en el catálogo" }));
+    await act(async () => { categories.release(); });
+    await waitFor(() => assert.ok(entered(products.command)));
+    checkpoint("browse held"); noEdit();
+    assert.ok(settled(categories.command)); assert.equal(settled(products.command), false); assert.equal(entered(thumbnail.command), false);
+    assert.deepEqual(calls.slice(0, 3).map((call) => call.command), [access.command, categories.command, products.command]);
+    await act(async () => { products.release(); });
+    const editButton = await screen.findByRole("button", { name: "Editar" });
+    await waitFor(() => assert.ok(entered(thumbnail.command)));
+    checkpoint("browse committed; thumbnail held");
+    assert.ok(settled(products.command)); assert.equal(settled(thumbnail.command), false);
+    assert.ok(calls.some((call) => call.command === thumbnail.command && JSON.stringify(call.payload) === JSON.stringify({ request: { product_id: 1, expected_revision: 11 } })));
+    await userEvent.click(editButton);
+    const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
+    await waitFor(() => assert.ok(calls.some((call) => call.command === thumbnail.command && JSON.stringify(call.payload) === JSON.stringify({ request: { product_id: 1, expected_revision: 17 } }))));
+    checkpoint("fresh detail committed; thumbnails still held");
+    assert.ok(settled("catalog_metadata_detail_command")); assert.ok(settled("list_product_locations_command"));
+    assert.equal(settled(thumbnail.command), false);
+    await act(async () => { thumbnail.release(); });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+    await waitFor(() => assert.ok(settled("edit_catalog_command")));
+    const save = calls.find((call) => call.command === "edit_catalog_command");
+    assert.deepEqual(save?.payload, { request: { target: "product", entity_id: 1, expected_revision: 17, expected_category_revision: productDetail.category_revision, sku: productDetail.sku, name: productDetail.name, purchase_price_centavos: productDetail.purchase_price_centavos, sale_price_centavos: productDetail.sale_price_centavos, minimum_sale_price_centavos: productDetail.minimum_sale_price_centavos, low_stock_threshold: 1, attribute_values: [{ definition_id: 10, value: "Bosch" }] } });
+    checkpoint("save settled");
+    t.diagnostic(JSON.stringify({ classification: classification(), trace }));
+  } catch (error) {
+    checkpoint("failure"); t.diagnostic(JSON.stringify({ classification: classification(), trace })); throw error;
+  } finally {
+    view.unmount();
+    await act(async () => { for (const gate of gates) gate.release(); await Promise.allSettled(pending); });
+  }
+});
+
 test("publishes lock and unlock completions, retaining credential validation inline", async () => {
   let code = "access_unavailable";
   mockIPC((command) => command === "catalog_access_lock_command" ? { kind: "success" } : command === "catalog_access_unlock_command" ? code === "success" ? { kind: "success" } : { kind: "error", code, message: "private" } : baseIPC(command));
@@ -56,7 +285,7 @@ test("publishes lock and unlock completions, retaining credential validation inl
   code = "success";
   await userEvent.type(screen.getByLabelText("Contraseña"), "password1");
   await userEvent.click(screen.getByRole("button", { name: "Desbloquear catálogo" }));
-  await screen.findByRole("heading", { name: "Catálogo", exact: true });
+  await screen.findByRole("heading", { name: "Catálogo" });
   assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 2);
 });
 
@@ -88,7 +317,7 @@ test("publishes image cancellation, ordinary failure and replacement without mig
     return baseIPC(command);
   });
   render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar", exact: true }));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
   assert.ok(await within(dialog).findByText("No se pudo cargar la vista previa."));
   assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
@@ -133,9 +362,14 @@ test("suppresses duplicate and unmounted access completions while the provider s
   const view = render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
   await screen.findByLabelText("Contraseña");
   await userEvent.type(screen.getByLabelText("Contraseña"), "password1");
-  const form = screen.getByRole("button", { name: "Desbloquear catálogo" }).closest("form")!;
+  const submit = screen.getByRole("button", { name: "Desbloquear catálogo" });
+  assert.equal(submit.getAttribute("data-ui-action"), "primary");
+  assert.equal(screen.getByRole("button", { name: "Usar código de recuperación" }).getAttribute("data-ui-action"), "tertiary");
+  const form = submit.closest("form")!;
   act(() => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
   assert.equal(calls, 1);
+  assert.equal(submit.getAttribute("data-ui-action"), "primary");
+  assert.equal((submit as HTMLButtonElement).disabled, true);
   view.rerender(createElement(ActionNotificationProvider));
   await act(async () => { finish({ kind: "success" }); });
   assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
@@ -158,15 +392,18 @@ for (const mode of ["setup", "recovery"] as const) test(`publishes ${mode} hando
     }
     await userEvent.type(await screen.findByLabelText("Nueva contraseña"), "device-password");
     await userEvent.type(screen.getByLabelText("Confirmar contraseña"), "device-password");
-    await userEvent.click(screen.getByRole("button", { name: mode === "setup" ? "Configurar catálogo" : "Restablecer contraseña" }));
+    const submit = screen.getByRole("button", { name: mode === "setup" ? "Configurar catálogo" : "Restablecer contraseña" });
+    assert.equal(submit.getAttribute("data-ui-action"), "primary");
+    await userEvent.click(submit);
     assert.ok(await screen.findByText("A".repeat(48)));
     assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 0);
+    assert.equal(screen.getByRole("button", { name: "Continuar al catálogo" }).getAttribute("data-ui-action"), "primary");
     assert.equal((screen.getByRole("button", { name: "Continuar al catálogo" }) as HTMLButtonElement).disabled, true);
     await userEvent.click(screen.getByRole("button", { name: "Cerrar notificación: Información" }));
     assert.ok(screen.getByText("A".repeat(48)));
     await userEvent.click(screen.getByRole("checkbox", { name: "Confirmo que guardé el código de recuperación" }));
     await userEvent.click(screen.getByRole("button", { name: "Continuar al catálogo" }));
-    await screen.findByRole("heading", { name: "Catálogo", exact: true });
+    await screen.findByRole("heading", { name: "Catálogo" });
     assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1);
   } finally { mockedCatalogAccessStatus = "unlocked"; }
 });
@@ -205,6 +442,8 @@ test("keeps partial category-schema persistence accurate and reload-gated after 
   render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
   await userEvent.click(await openCategoryEditor());
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
+  assert.ok(within(dialog).getByRole("group", { name: "Definición de atributos de la categoría" }));
+  assert.equal(within(dialog).queryByRole("group", { name: "Valores de atributos del producto" }), null);
   await userEvent.type(within(dialog).getByRole("textbox", { name: "Nombre de la categoría" }), " nuevos");
   await userEvent.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
   await userEvent.type(within(dialog).getByRole("textbox", { name: "Nombre del campo" }), "Marca");
@@ -232,7 +471,7 @@ test("publishes product edits and partial assignment without hiding stale and va
     return baseIPC(command);
   });
   render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar", exact: true }));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
   await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
   await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
@@ -276,7 +515,7 @@ test("suppresses duplicate and unmounted image removal, and blocks dialog dismis
     return baseIPC(command);
   });
   const view = render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar", exact: true }));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
   const remove = await within(dialog).findByRole("button", { name: "Quitar imagen" });
   act(() => { remove.click(); remove.click(); });
@@ -305,22 +544,22 @@ test("owns product reactivate and confirmed archive outcomes without redundant m
     if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
     if (command === "maintain_catalog_command") {
       if (fail) return { kind: "error", code: "persistence_failure", message: "private" };
-      activity = payload?.request?.intent === "archive" ? "archived" : "active";
+      activity = requestRecord(payload).intent === "archive" ? "archived" : "active";
       return { kind: "success", ...activeProduct, activity, revision: ++revision };
     }
     return baseIPC(command);
   });
   render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar", exact: true }));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
-  await userEvent.click(within(dialog).getByRole("button", { name: "Reactivar", exact: true }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Reactivar" }));
   await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
   assert.equal(dialog.querySelector('[data-ui-catalog-lifecycle] [data-ui-feedback="error"]'), null);
   fail = false;
-  await userEvent.click(within(dialog).getByRole("button", { name: "Reactivar", exact: true }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Reactivar" }));
   await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
-  await waitFor(() => assert.equal((within(dialog).getByRole("button", { name: "Archivar", exact: true }) as HTMLButtonElement).disabled, false));
-  await userEvent.click(within(dialog).getByRole("button", { name: "Archivar", exact: true }));
+  await waitFor(() => assert.equal((within(dialog).getByRole("button", { name: "Archivar" }) as HTMLButtonElement).disabled, false));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Archivar" }));
   await userEvent.click(screen.getByRole("button", { name: "Confirmar archivo" }));
   await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 2));
   assert.equal(dialog.querySelector('[data-ui-catalog-lifecycle] [data-ui-feedback="success"]'), null);
@@ -373,8 +612,8 @@ test("shows authoritative category count, state, searchable rows, archive confir
   mockIPC((command, payload) => {
     if (command === "list_catalog_categories_command") return { kind: "success", records: categories };
     if (command === "browse_products_command") return browse();
-    if (command === "maintain_catalog_command") { requests.push(payload?.request as Record<string, unknown>); const request = requests.at(-1)!; const updated = { ...(request.entity_id === 4 ? activeCategory : archived), activity: request.intent === "archive" ? "archived" as const : "active" as const, revision: Number(request.expected_revision) + 1 }; categories = categories.map((category) => category.entity_id === request.entity_id ? { ...category, ...updated } : category); return { kind: "success", ...updated }; }
-    if (command === "catalog_metadata_detail_command") return { ...categoryDetail, entity_id: payload?.request?.entity_id ?? 4, name: payload?.request?.entity_id === 5 ? "Pastillas" : "Filtros" };
+    if (command === "maintain_catalog_command") { requests.push(requestRecord(payload)); const request = requests.at(-1)!; const updated = { ...(request.entity_id === 4 ? activeCategory : archived), activity: request.intent === "archive" ? "archived" as const : "active" as const, revision: Number(request.expected_revision) + 1 }; categories = categories.map((category) => category.entity_id === request.entity_id ? { ...category, ...updated } : category); return { kind: "success", ...updated }; }
+    if (command === "catalog_metadata_detail_command") return { ...categoryDetail, entity_id: requestRecord(payload).entity_id ?? 4, name: requestRecord(payload).entity_id === 5 ? "Pastillas" : "Filtros" };
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
@@ -448,7 +687,7 @@ test("persists Catalog view mode across remounts without resubmitting browse sta
   let browseCalls = 0;
   mockIPC((command, payload) => {
     if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
-    if (command === "browse_products_command") { browseCalls += 1; return { ...browse([browseProduct, brakeProduct]), total_pages: 2, page: payload?.request?.page ?? 1 }; }
+    if (command === "browse_products_command") { browseCalls += 1; return { ...browse([browseProduct, brakeProduct]), total_pages: 2, page: requestRecord(payload).page ?? 1 }; }
     throw new Error(`Unexpected command: ${command}`);
   });
   try {
@@ -536,7 +775,7 @@ test("applies a submitted multi-character catalog query", async () => {
   mockIPC((command, payload) => {
     if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
     if (command === "browse_products_command") {
-      const query = payload?.request?.query;
+      const query = requestRecord(payload).query;
       queries.push(query);
       return query === "brake" ? browse([brakeProduct]) : browse([]);
     }
@@ -556,7 +795,7 @@ test("does not let delayed initial browse replace a newer submitted search", asy
   mockIPC((command, payload) => {
     if (command === "list_catalog_categories_command") return new Promise((resolve) => { resolveCategories = resolve; });
     if (command === "browse_products_command") {
-      const query = payload?.request?.query;
+      const query = requestRecord(payload).query;
       queries.push(query);
       return query === "brake" ? browse([brakeProduct]) : browse([]);
     }
@@ -595,7 +834,7 @@ test("adds category fields and retires existing fields only after confirmation",
   let schemaRequest: Record<string, unknown> | undefined;
   mockIPC((command, payload) => {
     if (command === "catalog_metadata_detail_command") return detail;
-    if (command === "edit_category_schema_command") { schemaRequest = payload?.request as Record<string, unknown>; return { kind: "success", entity_id: 4, target: "category", label: "", activity: "active", revision: 3 }; }
+    if (command === "edit_category_schema_command") { schemaRequest = requestRecord(payload); return { kind: "success", entity_id: 4, target: "category", label: "", activity: "active", revision: 3 }; }
     return baseIPC(command);
   });
   render(createElement(CatalogMaintenanceScreen));
@@ -711,7 +950,7 @@ test("loads product detail before editing and confirms archive with adjacent fee
     if (command === "list_catalog_categories_command") { listCalls += 1; return { kind: "success", records: [activeCategory] }; }
     if (command === "browse_products_command") { browseCalls += 1; return browse(); }
     if (command === "catalog_metadata_detail_command") return productDetail;
-    if (command === "maintain_catalog_command") { maintainRequest = payload?.request as Record<string, unknown>; return { kind: "success", ...activeProduct, activity: "archived", revision: 8 }; }
+    if (command === "maintain_catalog_command") { maintainRequest = requestRecord(payload); return { kind: "success", ...activeProduct, activity: "archived", revision: 8 }; }
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
@@ -749,7 +988,7 @@ test("keeps the newest selected detail when requests resolve in reverse order", 
     if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory, secondCategory] };
     if (command === "browse_products_command") return browse();
     if (command === "catalog_metadata_detail_command") {
-      return payload?.request?.entity_id === activeCategory.entity_id
+      return requestRecord(payload).entity_id === activeCategory.entity_id
         ? new Promise((resolve) => { resolveFirst = resolve; })
         : new Promise((resolve) => { resolveSecond = resolve; });
     }
@@ -921,7 +1160,7 @@ test("rehydrates authoritative detail before unlocking stale lifecycle recovery"
     }
     if (command === "maintain_catalog_command") {
       maintainCalls += 1;
-      maintainRequests.push(payload?.request as Record<string, unknown>);
+      maintainRequests.push(requestRecord(payload));
       return maintainCalls === 1 ? { kind: "error", code: "stale_catalog_record" } : { kind: "success", ...activeCategory, activity: "active", revision: 5 };
     }
     throw new Error(command);
@@ -958,7 +1197,7 @@ test("rehydrates authoritative detail before unlocking stale edit recovery", asy
     if (command === "catalog_metadata_detail_command") return detailCalls++ === 0 ? categoryDetail : recoveryDetail;
     if (command === "edit_catalog_command") {
       editCalls += 1;
-      editRequests.push(payload?.request as Record<string, unknown>);
+      editRequests.push(requestRecord(payload));
       return editCalls === 1 ? { kind: "error", code: "stale_catalog_record" } : { kind: "success", ...activeCategory, label: "Filtros autoritativos", revision: 5 };
     }
     throw new Error(command);
@@ -990,7 +1229,7 @@ test("reactivates an archived record without a confirmation step", async () => {
     if (command === "list_catalog_categories_command") return { kind: "success", records: [archived] };
     if (command === "browse_products_command") return browse();
     if (command === "catalog_metadata_detail_command") return detail;
-    if (command === "maintain_catalog_command") { maintainRequest = payload?.request as Record<string, unknown>; return { kind: "success", ...archived, activity: "active", revision: 10 }; }
+    if (command === "maintain_catalog_command") { maintainRequest = requestRecord(payload); return { kind: "success", ...archived, activity: "active", revision: 10 }; }
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
@@ -1047,6 +1286,40 @@ test("locks modal controls and Escape while lifecycle is pending", async () => {
   assert.ok(screen.getByRole("dialog", { name: "Archivar Filtros" }));
   assert.equal((within(confirmation).getByRole("button", { name: "Archivando…" }) as HTMLButtonElement).disabled, true);
   resolveMaintain({ kind: "success", ...activeCategory, activity: "archived", revision: 3 });
+});
+
+test("ordinary mounted edits preserve unknown cost and supplied invalid cost refuses saving with focus", async () => {
+  const requests: Record<string, unknown>[] = [];
+  mockIPC((command, payload) => {
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
+    if (command === "browse_products_command") return browse();
+    if (command === "catalog_metadata_detail_command") return { ...productDetail, purchase_price_centavos: null, revision: requests.length ? 8 : 7 };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    if (command === "edit_catalog_command") { requests.push(requestRecord(payload)); return { kind: "success", ...activeProduct, revision: 8 }; }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
+  const dialog = await screen.findByRole("dialog", { name: /Editar Filtro Premium/ });
+  const cost = within(dialog).getByRole("textbox", { name: "Precio actual de compra (Bs)" }) as HTMLInputElement;
+  assert.equal(cost.value, "");
+  for (const invalid of ["0", "-1", "invalid", "1.001", "0.001", "NaN", "Infinity", "9007199254740992"]) {
+    await userEvent.clear(cost);
+    await userEvent.type(cost, invalid);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+    assert.equal(requests.length, 0);
+    assert.equal(document.activeElement, cost);
+    assert.equal(cost.getAttribute("aria-invalid"), "true");
+  }
+  await userEvent.clear(cost);
+  const name = within(dialog).getByRole("textbox", { name: "Nombre del producto" });
+  await userEvent.clear(name);
+  await userEvent.type(name, "Renamed");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await waitFor(() => assert.equal(requests.length, 1));
+  assert.equal(requests[0].purchase_price_centavos, null);
+  assert.equal(requests[0].name, "Renamed");
+  assert.equal(requests[0].expected_revision, 7);
 });
 
 test("selects and revision-checks an optional generated primary location in product editing", async () => {
@@ -1117,7 +1390,7 @@ test("loads the saved low-stock threshold, validates it accessibly, and saves a 
     if (command === "browse_products_command") return browse();
     if (command === "catalog_metadata_detail_command") return { ...productDetail, low_stock_threshold: threshold };
     if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
-    if (command === "edit_catalog_command") { editRequest = payload?.request as Record<string, unknown>; threshold = Number(editRequest.low_stock_threshold); return { kind: "success", ...activeProduct, revision: 8 }; }
+    if (command === "edit_catalog_command") { editRequest = requestRecord(payload); threshold = Number(editRequest.low_stock_threshold); return { kind: "success", ...activeProduct, revision: 8 }; }
     throw new Error(`Unexpected command: ${command}`);
   });
   render(createElement(CatalogMaintenanceScreen));
@@ -1149,13 +1422,15 @@ test("keeps historical retired values out of product edit controls while preserv
     if (command === "browse_products_command") return browse();
     if (command === "catalog_metadata_detail_command") return productDetail;
     if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
-    if (command === "edit_catalog_command") { editRequest = payload?.request as Record<string, unknown>; return { kind: "success", ...activeProduct, revision: 8 }; }
+    if (command === "edit_catalog_command") { editRequest = requestRecord(payload); return { kind: "success", ...activeProduct, revision: 8 }; }
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
   await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
   const dialog = await screen.findByRole("dialog", { name: /Editar Filtro Premium/ });
-  assert.ok(within(dialog).getByRole("textbox", { name: "Marca (obligatorio)" }));
+  const values = within(dialog).getByRole("group", { name: "Valores de atributos del producto" });
+  assert.ok(within(values).getByRole("textbox", { name: "Marca (obligatorio)" }));
+  assert.equal(within(dialog).queryByRole("group", { name: "Definición de atributos de la categoría" }), null);
   assert.equal(within(dialog).queryByRole("textbox", { name: "Código histórico (obligatorio)" }), null);
   assert.equal(productDetail.attribute_values.find((value) => value.definition_id === 11)?.value, "LEGACY-11");
   await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
@@ -1284,7 +1559,7 @@ test("removes an image once and locks image actions while the revision-checked r
     if (command === "browse_products_command") return browse([{ ...browseProduct, revision: imageRemoved ? 8 : 7 }]);
     if (command === "catalog_metadata_detail_command") { detailCalls += 1; return { ...productDetail, revision: imageRemoved ? 8 : 7 }; }
     if (command === "catalog_product_image_thumbnail_command") return imageRemoved ? { kind: "error", code: "image_unavailable", message: "This product image is unavailable." } : { kind: "success", product_id: 1, revision: 7, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" };
-    if (command === "remove_product_image_command") { removeCalls += 1; request = payload?.request; return new Promise((resolve) => { resolveRemove = resolve; }); }
+    if (command === "remove_product_image_command") { removeCalls += 1; request = requestRecord(payload); return new Promise((resolve) => { resolveRemove = resolve; }); }
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
@@ -1363,10 +1638,14 @@ test("serializes password changes, preserves secrets on failure, and clears them
   await userEvent.type(next, "replacement-secret");
   await userEvent.type(confirm, "replacement-secret");
   const submit = screen.getByRole("button", { name: "Guardar contraseña" });
+  assert.equal(submit.getAttribute("data-ui-action"), "secondary");
+  assert.ok(submit.closest("details[data-ui-catalog-password-change]"));
   await userEvent.click(submit);
   await userEvent.click(submit);
   assert.equal(calls, 1);
   assert.equal(current.disabled, true);
+  assert.equal(submit.getAttribute("data-ui-action"), "secondary");
+  assert.equal((submit as HTMLButtonElement).disabled, true);
   await act(async () => { resolveChange({ kind: "error", code: "invalid_credentials", message: "private detail" }); });
   assert.equal(current.value, "current-secret");
   assert.equal(next.value, "replacement-secret");

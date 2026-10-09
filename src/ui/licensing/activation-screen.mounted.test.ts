@@ -54,7 +54,7 @@ test("activation screen exposes an accessible installation code and recovery act
   assert.ok(screen.getByRole("button", { name: "Importar archivo de licencia" }));
   await user.click(screen.getByRole("button", { name: "Continuar en modo de recuperación" }));
   assert.equal(recovery, 1);
-  await waitFor(() => assert.ok(screen.getByRole("heading", { name: "Activá Repuestos Autos" })));
+  await waitFor(() => assert.ok(screen.getByRole("heading", { name: "Activá Velay" })));
   assert.doesNotMatch(document.body.textContent ?? "", /expir|suscrip|renov|servidor|C:\\|signature/i);
 });
 

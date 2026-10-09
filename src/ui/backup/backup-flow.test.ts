@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { BackupError } from "../../commands/backup.ts";
 import { backupFeedback, canConfirmRestore, createBackupFlow, createBackupInteraction, initialBackupState, restoreErrorStatus } from "./backup-flow.ts";
 
 test("keeps picker cancellation harmless and renders prepared restore confirmation", () => {
@@ -53,7 +54,7 @@ test("passes only the opaque picker token into backup creation", async () => {
 });
 
 test("preserves license denial through restore preparation and confirmation feedback", async () => {
-  const denied = { kind: "error" as const, code: "license_required", message: "native detail" };
+  const denied: BackupError = { kind: "error", code: "license_required", message: "native detail" };
   const actions: Array<{ type: string; status?: string; message?: string }> = [];
   const interaction = createBackupInteraction({
     chooseBackupDestination: async () => ({ kind: "cancelled" }),

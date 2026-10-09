@@ -154,6 +154,8 @@ fn exports_every_matching_event_from_historical_snapshots_in_order_with_spanish_
     assert!(document.pages.len() >= 2);
     let pages = document.extract_text();
     let full = pages.concat().join(" ");
+    assert!(full.contains("Velay"));
+    assert!(!full.contains("Repuestos Autos"));
     for heading in [
         "Informe de ganancia bruta",
         "Período:",
@@ -207,6 +209,7 @@ fn exports_every_matching_event_from_historical_snapshots_in_order_with_spanish_
     }
     for (index, page) in pages.iter().enumerate() {
         let text = page.join(" ");
+        assert!(text.contains("Velay"), "page {index} omits branding");
         for heading in [
             "Fecha y hora",
             "Operación",

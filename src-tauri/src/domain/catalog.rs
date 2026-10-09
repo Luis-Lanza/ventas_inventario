@@ -281,7 +281,7 @@ pub fn normalize_identity(value: &str) -> String {
 pub fn validate_maintenance_product(
     sku: &str,
     name: &str,
-    purchase_price_centavos: i64,
+    purchase_price_centavos: Option<i64>,
     sale_price_centavos: i64,
     minimum_sale_price_centavos: i64,
     low_stock_threshold: i64,
@@ -424,18 +424,18 @@ pub fn validate_product(
     if minimum_sale_price_centavos > sale_price_centavos {
         return Err(CatalogValidationError::MinimumSalePriceExceedsSalePrice);
     }
-    if opening_quantity <= 0 {
+    if opening_quantity < 0 {
         return Err(CatalogValidationError::InvalidOpeningQuantity);
     }
     validate_attribute_values(definitions, values)
 }
 
 pub fn validate_current_prices(
-    purchase_price_centavos: i64,
+    purchase_price_centavos: Option<i64>,
     sale_price_centavos: i64,
     minimum_sale_price_centavos: i64,
 ) -> Result<(), CatalogValidationError> {
-    if purchase_price_centavos <= 0 || purchase_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
+    if purchase_price_centavos.is_some_and(|cost| cost <= 0 || cost > MAX_CATALOG_PRICE_CENTAVOS) {
         return Err(CatalogValidationError::InvalidPurchasePrice);
     }
     if sale_price_centavos <= 0 || sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {

@@ -7,6 +7,7 @@ pub mod application;
 pub mod commands;
 pub mod domain;
 pub mod infrastructure;
+pub mod identity;
 
 use std::sync::Mutex;
 
@@ -48,6 +49,9 @@ impl DatabaseState {
     }
 
     pub fn recover_on_startup(config: DatabaseConfig, store: &BackupStore) -> Self {
+        if infrastructure::sqlite::has_foreign_family(config.path()) {
+            return Self::unavailable(config);
+        }
         let recovery_evidence = has_recovery_evidence(config.path(), store);
         match store.read_restore_state() {
             Ok(None) if recovery_evidence => {
@@ -79,6 +83,9 @@ impl DatabaseState {
             }
             Ok(_) if has_ambiguous_recovery_artifacts(config.path()) => Self::unavailable(config),
             Ok(marker) => {
+                if has_foreign_retained_recovery_evidence(config.path()) {
+                    return Self::unavailable(config);
+                }
                 let canonical_was_valid = is_valid_database(config.path());
                 match open_validated_recovery_database(&config, store, marker) {
                     Ok(connection) => {
@@ -150,6 +157,11 @@ impl DatabaseState {
         let mut state = self.0.lock().map_err(|_| "persistence_failure")?;
         if state.status != DatabaseStatus::Ready {
             return Err("database_unavailable".into());
+        }
+        if infrastructure::sqlite::has_foreign_family(stage)
+            || !retained_recovery_evidence_is_valid(state.config.path())
+        {
+            return Err("restore_failed".into());
         }
         let protective = state
             .config
@@ -307,6 +319,16 @@ fn recovery_sidecar_entries(root: &std::path::Path) -> Result<Vec<std::path::Pat
         }
     }
     Ok(sidecars)
+}
+
+fn has_foreign_retained_recovery_evidence(canonical: &std::path::Path) -> bool {
+    let Some(root) = canonical.parent() else { return true };
+    // Classify family before readiness or durable cleanup, even when canonical
+    // storage is valid. Do not require full validity here: damaged Velay evidence
+    // must still allow recovery from the other validated fallback.
+    ["restore-rollback.sqlite3", "pre-restore.sqlite3"]
+        .iter()
+        .any(|name| infrastructure::sqlite::has_foreign_family(&root.join(name)))
 }
 
 fn retained_recovery_evidence_is_valid(canonical: &std::path::Path) -> bool {
@@ -484,6 +506,7 @@ mod database_state_tests {
             connection.execute_batch(migration).unwrap();
         }
         connection.pragma_update(None, "user_version", 23).unwrap();
+        connection.pragma_update(None, "application_id", identity::SQLITE_APPLICATION_ID).unwrap();
         connection.execute_batch(
             "INSERT INTO categories (id, name) VALUES (41, 'Synthetic category');
              INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos)
@@ -567,7 +590,7 @@ mod database_state_tests {
 
     #[test]
     fn schema_upgrade_startup_rejects_invalid_or_ambiguous_evidence_without_writes() {
-        for case in ["corrupt", "future_snapshot", "unknown_snapshot", "invalid_schema", "foreign_key", "ambiguous", "invalid_marker", "future_canonical", "missing_canonical"] {
+        for case in ["corrupt", "foreign_family", "unmarked_family", "foreign_canonical", "unmarked_canonical", "future_snapshot", "unknown_snapshot", "invalid_schema", "foreign_key", "ambiguous", "invalid_marker", "future_canonical", "missing_canonical"] {
             let directory = std::env::temp_dir().join(format!("r-a-negative-{case}-{}", uuid::Uuid::new_v4()));
             schema_upgrade_evidence(&directory);
             let config = infrastructure::sqlite::production_database_config(&directory);
@@ -577,6 +600,10 @@ mod database_state_tests {
             let rollback = directory.join("restore-rollback.sqlite3");
             match case {
                 "corrupt" => fs::write(&rollback, b"not a SQLite database").unwrap(),
+                "foreign_family" | "unmarked_family" | "foreign_canonical" | "unmarked_canonical" => {
+                    let path = if case.ends_with("canonical") { config.path() } else { rollback.as_path() };
+                    rusqlite::Connection::open(path).unwrap().pragma_update(None, "application_id", if case.starts_with("foreign") { 1234 } else { 0 }).unwrap();
+                }
                 "future_snapshot" | "unknown_snapshot" => {
                     let connection = rusqlite::Connection::open(&rollback).unwrap();
                     connection.pragma_update(None, "user_version", if case == "future_snapshot" { 25 } else { 0 }).unwrap();
@@ -615,6 +642,112 @@ mod database_state_tests {
         }
     }
 
+    #[test]
+    fn active_marker_rejects_foreign_retained_evidence_with_valid_canonical_without_writes() {
+        for (marker, marker_bytes) in [
+            (RestoreState::Prepared, br#"{"state":"prepared"}"#.as_slice()),
+            (RestoreState::LiveMoved, br#"{"state":"live_moved"}"#.as_slice()),
+            (RestoreState::CandidateInstalled, br#"{"state":"candidate_installed"}"#.as_slice()),
+        ] {
+            for family in [0, 1234] {
+                for foreign_file in ["restore-rollback.sqlite3", "pre-restore.sqlite3"] {
+                    let directory = std::env::temp_dir().join(format!(
+                        "velay-active-foreign-evidence-{}", uuid::Uuid::new_v4()
+                    ));
+                    let config = infrastructure::sqlite::production_database_config(&directory);
+                    let initialized = DatabaseState::open(config.clone()).unwrap();
+                    initialized.with_read(|connection| {
+                        for name in ["restore-rollback.sqlite3", "pre-restore.sqlite3"] {
+                            create_snapshot(connection, &directory.join(name))
+                                .map_err(|_| "snapshot_failed".to_string())?;
+                        }
+                        Ok(())
+                    }).unwrap();
+                    drop(initialized);
+                    rusqlite::Connection::open(directory.join(foreign_file)).unwrap()
+                        .pragma_update(None, "application_id", family).unwrap();
+                    fs::write(directory.join("restore-state.json"), marker_bytes).unwrap();
+                    assert!(is_valid_database(config.path()));
+                    let before: Vec<_> = fs::read_dir(&directory).unwrap().map(|entry| {
+                        let path = entry.unwrap().path();
+                        let bytes = fs::read(&path).unwrap();
+                        (path, bytes)
+                    }).collect();
+                    let store = BackupStore::new(&directory);
+
+                    let recovered = DatabaseState::recover_on_startup(config, &store);
+
+                    assert_eq!(recovered.with_read(|_| Ok(())), Err("database_unavailable".into()),
+                        "{marker:?}, family {family}, {foreign_file}");
+                    assert_eq!(store.read_restore_state().unwrap(), Some(marker));
+                    assert_eq!(fs::read_dir(&directory).unwrap().count(), before.len());
+                    for (path, bytes) in before {
+                        assert_eq!(fs::read(path).unwrap(), bytes,
+                            "{marker:?}, family {family}, {foreign_file}: all bytes retained");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn foreign_canonical_is_not_overwritten_even_with_valid_recovery_sources() {
+        for family in [0, 1234] {
+            let directory = std::env::temp_dir().join(format!("velay-foreign-canonical-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&directory).unwrap();
+            let config = infrastructure::sqlite::production_database_config(&directory);
+            for name in [identity::DATABASE_FILENAME, "pre-restore.sqlite3", "restore-rollback.sqlite3"] {
+                schema_upgrade_fixture(&directory.join(name));
+            }
+            rusqlite::Connection::open(config.path()).unwrap().pragma_update(None, "application_id", family).unwrap();
+            fs::write(directory.join("restore-state.json"), br#"{"state":"live_moved"}"#).unwrap();
+            let before: Vec<_> = fs::read_dir(&directory).unwrap().map(|entry| {
+                let path = entry.unwrap().path();
+                let bytes = fs::read(&path).unwrap();
+                (path, bytes)
+            }).collect();
+            let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+            assert_eq!(recovered.with_read(|_| Ok(())), Err("database_unavailable".into()));
+            assert_eq!(fs::read_dir(&directory).unwrap().count(), before.len());
+            for (path, bytes) in before {
+                assert_eq!(fs::read(path).unwrap(), bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn foreign_retained_fallbacks_are_never_migrated_or_promoted() {
+        for family in [0, 1234] {
+            for marker in [RestoreState::Prepared, RestoreState::LiveMoved, RestoreState::CandidateInstalled] {
+                let directory = std::env::temp_dir().join(format!("velay-foreign-evidence-{}", uuid::Uuid::new_v4()));
+                fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+                let config = infrastructure::sqlite::production_database_config(&directory);
+                let mut evidence = Vec::new();
+                for name in ["pre-restore.sqlite3", "restore-rollback.sqlite3"] {
+                    let path = directory.join(name);
+                    schema_upgrade_fixture(&path);
+                    rusqlite::Connection::open(&path).unwrap().pragma_update(None, "application_id", family).unwrap();
+                    evidence.push((path.clone(), fs::read(path).unwrap()));
+                }
+                let store = BackupStore::new(&directory);
+                let bytes = match marker {
+                    RestoreState::Prepared => br#"{"state":"prepared"}"#.as_slice(),
+                    RestoreState::LiveMoved => br#"{"state":"live_moved"}"#.as_slice(),
+                    RestoreState::CandidateInstalled => br#"{"state":"candidate_installed"}"#.as_slice(),
+                };
+                fs::write(directory.join("restore-state.json"), bytes).unwrap();
+                let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
+                assert_eq!(recovered.with_read(|_| Ok(())), Err("database_unavailable".into()));
+                assert!(!config.path().exists(), "no empty bootstrap or foreign promotion");
+                assert_eq!(store.read_restore_state().unwrap(), Some(marker));
+                assert_eq!(fs::read_dir(directory.join("backup-restore/staging")).unwrap().count(), 0);
+                for (path, bytes) in evidence {
+                    assert_eq!(fs::read(path).unwrap(), bytes);
+                }
+            }
+        }
+    }
+
     fn schema_upgrade_missing_balances_fixture(
         missing_file: &str,
         current_canonical: bool,
@@ -639,7 +772,7 @@ mod database_state_tests {
 
     #[test]
     fn schema_upgrade_startup_rejects_missing_balances_in_historical_canonical() {
-        let (directory, config, before) = schema_upgrade_missing_balances_fixture("repuestos-autos.sqlite3", false);
+        let (directory, config, before) = schema_upgrade_missing_balances_fixture(identity::DATABASE_FILENAME, false);
 
         let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
 
@@ -973,8 +1106,7 @@ fn catalog_access_authorized(license: &commands::license::LicenseCommandState, a
     catalog_authorization_failure(license, access).is_none()
 }
 
-#[cfg(feature = "desktop")]
-fn catalog_authorization_failure(license: &commands::license::LicenseCommandState, access: &application::catalog::access::CatalogAccessSession) -> Option<(&'static str, &'static str)> {
+pub(crate) fn catalog_authorization_failure(license: &commands::license::LicenseCommandState, access: &application::catalog::access::CatalogAccessSession) -> Option<(&'static str, &'static str)> {
     if license.authorize_business_operation().is_err() { Some(("license_required", "A valid license is required to access the catalog.")) }
     else if !access.is_authorized() { Some(("catalog_access_required", "Desbloqueá el catálogo para continuar.")) }
     else { None }
@@ -1874,8 +2006,8 @@ fn onboarding_list_product_locations_command(state: tauri::State<AppState>, lice
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn onboarding_assign_product_primary_location_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, request: commands::catalog::AssignProductLocationRequest) -> commands::catalog::ProductLocationResponse {
-    if license.authorize_business_operation().is_err() { return license_required_location_response(); }
+fn onboarding_assign_product_primary_location_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, access: tauri::State<application::catalog::access::CatalogAccessSession>, request: commands::catalog::AssignProductLocationRequest) -> commands::catalog::ProductLocationResponse {
+    if let Some((code, message)) = catalog_authorization_failure(&license, &access) { return commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code, message }); }
     state.with_write(|connection| Ok(commands::catalog::assign_product_primary_location(connection, request)))
         .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
 }
@@ -1931,7 +2063,7 @@ fn delete_product_location_command(state: tauri::State<AppState>, license: tauri
 #[cfg(feature = "desktop")]
 #[tauri::command]
 fn assign_product_primary_location_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, access: tauri::State<application::catalog::access::CatalogAccessSession>, request: commands::catalog::AssignProductLocationRequest) -> commands::catalog::ProductLocationResponse {
-    if !catalog_access_authorized(&license, &access) { return license_required_location_response(); }
+    if let Some((code, message)) = catalog_authorization_failure(&license, &access) { return commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code, message }); }
     state.with_write(|connection| Ok(commands::catalog::assign_product_primary_location(connection, request)))
         .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
 }
@@ -1950,10 +2082,11 @@ fn list_categories_command(
 fn create_category_command(
     state: tauri::State<AppState>,
     license: tauri::State<commands::license::LicenseCommandState>,
+    access: tauri::State<application::catalog::access::CatalogAccessSession>,
     request: application::catalog::CreateCategoryInput,
 ) -> Result<commands::onboarding::CreateCategoryResponse, String> {
-    if license.authorize_business_operation().is_err() { return Ok(commands::onboarding::CreateCategoryResponse::Error(commands::onboarding::OnboardingError { code: "license_required", message: "A valid license is required to change the catalog.", field_error: None })); }
-    state.with_write(|connection| commands::onboarding::create_category(connection, request))
+    if let Some((code, message)) = catalog_authorization_failure(&license, &access) { return Ok(commands::onboarding::CreateCategoryResponse::Error(commands::onboarding::OnboardingError { code, message, field_error: None })); }
+    state.with_write(|connection| commands::onboarding::create_category_authorized(connection, &license, &access, request))
 }
 
 #[cfg(feature = "desktop")]
@@ -1961,10 +2094,11 @@ fn create_category_command(
 fn create_product_command(
     state: tauri::State<AppState>,
     license: tauri::State<commands::license::LicenseCommandState>,
+    access: tauri::State<application::catalog::access::CatalogAccessSession>,
     request: application::catalog::CreateProductInput,
 ) -> Result<commands::onboarding::CreateProductResponse, String> {
-    if license.authorize_business_operation().is_err() { return Ok(commands::onboarding::CreateProductResponse::Error(commands::onboarding::OnboardingError { code: "license_required", message: "A valid license is required to change the catalog.", field_error: None })); }
-    state.with_write(|connection| commands::onboarding::create_product(connection, request))
+    if let Some((code, message)) = catalog_authorization_failure(&license, &access) { return Ok(commands::onboarding::CreateProductResponse::Error(commands::onboarding::OnboardingError { code, message, field_error: None })); }
+    state.with_write(|connection| commands::onboarding::create_product_authorized(connection, &license, &access, request))
 }
 
 #[cfg(test)]
@@ -2286,7 +2420,34 @@ mod command_surface_tests {
     }
 
     #[test]
-    fn inventory_and_onboarding_operations_work_while_catalog_is_locked_with_safe_inventory_projection() {
+    fn creation_and_location_writes_recheck_the_shared_session_after_relock() {
+        let (app, window) = test_window();
+        let access = app.state::<application::catalog::access::CatalogAccessSession>();
+        let writes = [
+            ("create_category_command", serde_json::json!({"name":"Owner category","fields":[{"label":"Color","field_type":"text","required":false,"options":[]}]})),
+            ("create_product_command", serde_json::json!({"sku":"OWNER-1","name":"Owner product","category_id":1,"purchase_price_centavos":100,"sale_price_centavos":200,"minimum_sale_price_centavos":100,"opening_quantity":1,"attribute_values":[]})),
+            ("onboarding_assign_product_primary_location_command", serde_json::json!({"product_id":1,"expected_revision":0,"location_id":null})),
+            ("assign_product_primary_location_command", serde_json::json!({"product_id":1,"expected_revision":1,"location_id":null})),
+        ];
+        let values = || app.state::<AppState>().with_read(|connection| {
+            let mut products = connection.prepare("SELECT id, sku, name, revision, primary_location_id FROM products ORDER BY id").unwrap();
+            let product_rows = products.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, Option<i64>>(4)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+            let categories = commands::onboarding::list_categories(connection).unwrap();
+            Ok((snapshot(connection), product_rows, serde_json::to_value(categories).unwrap()))
+        }).unwrap();
+        for authorized in [false, true, false] {
+            access.set_test_authorized(authorized);
+            for (command, payload) in &writes {
+                let before = values();
+                let response = get_ipc_response(&window, request_with(command, payload.clone())).unwrap().deserialize::<serde_json::Value>().unwrap();
+                if authorized { assert!(response["kind"] == "success" || response["kind"] == "assignment_success", "{command}: {response}"); }
+                else { assert_eq!(response["code"], "catalog_access_required", "{command}"); assert_eq!(values(), before, "{command} changed persisted values"); }
+            }
+        }
+    }
+
+    #[test]
+    fn inventory_and_onboarding_reads_work_while_catalog_is_locked_with_safe_inventory_projection() {
         let (app, window) = test_window();
         app.state::<application::catalog::access::CatalogAccessSession>().set_test_authorized(false);
         app.state::<AppState>().with_write(|connection| {
@@ -2301,13 +2462,14 @@ mod command_surface_tests {
             assert!(!browse.to_string().contains(forbidden), "unexpected Inventory field {forbidden}: {browse}");
         }
         assert!(get_ipc_response(&window, request("list_categories_command")).is_ok());
-        assert!(get_ipc_response(&window, request_with("create_category_command", serde_json::json!({"name":"Locked onboarding","fields":[]}))).is_ok());
+        let category = get_ipc_response(&window, request_with("create_category_command", serde_json::json!({"name":"Locked onboarding","fields":[]}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(category["code"], "catalog_access_required");
         let product = get_ipc_response(&window, request_with("create_product_command", serde_json::json!({"sku":"LOCKED-1","name":"Locked onboarding product","category_id":1,"purchase_price_centavos":100,"sale_price_centavos":200,"minimum_sale_price_centavos":100,"opening_quantity":1,"attribute_values":[]}))).unwrap().deserialize::<serde_json::Value>().unwrap();
-        assert_eq!(product["kind"], "success");
+        assert_eq!(product["code"], "catalog_access_required");
         assert!(get_ipc_response(&window, request("onboarding_location_schema_command")).is_ok());
         assert!(get_ipc_response(&window, request("onboarding_list_product_locations_command")).is_ok());
-        let assignment = get_ipc_response(&window, request_with("onboarding_assign_product_primary_location_command", serde_json::json!({"product_id":product["product_id"],"expected_revision":0,"location_id":null}))).unwrap().deserialize::<serde_json::Value>().unwrap();
-        assert_eq!(assignment["kind"], "assignment_success");
+        let assignment = get_ipc_response(&window, request_with("onboarding_assign_product_primary_location_command", serde_json::json!({"product_id":1,"expected_revision":9,"location_id":null}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(assignment["code"], "catalog_access_required");
         let detail = get_ipc_response(&window, request_with("catalog_metadata_detail_command", serde_json::json!({"target":"product","entity_id":1}))).unwrap().deserialize::<serde_json::Value>().unwrap();
         assert_eq!(detail["code"], "catalog_access_required");
         let maintain = get_ipc_response(&window, request_with("maintain_catalog_command", serde_json::json!({"target":"product","entity_id":1,"intent":"archive","expected_revision":9}))).unwrap().deserialize::<serde_json::Value>().unwrap();

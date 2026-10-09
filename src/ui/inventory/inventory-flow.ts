@@ -3,7 +3,7 @@ import { parseBsToCentavos } from "../onboarding/onboarding-form.ts";
 
 const CONFIRMATION = { IDLE: "idle", PENDING: "pending", ERROR: "error", CONFIRMED: "confirmed" } as const;
 const OPERATION = { STOCK_ENTRY: "stock_entry", PHYSICAL_COUNT: "physical_count" } as const;
-export interface InventoryProduct { product_id: number; name: string; available_quantity: number; sale_price_centavos?: number; minimum_sale_price_centavos?: number; }
+export interface InventoryProduct { product_id: number; name: string; sku?: string; primary_location_code?: string | null; available_quantity: number; sale_price_centavos?: number; minimum_sale_price_centavos?: number; }
 export interface InventoryState { product: InventoryProduct | null; operation: (typeof OPERATION)[keyof typeof OPERATION]; entry_quantity: string; physical_count: string; purchase_price: string; sale_price: string; minimum_sale_price: string; note: string; reason: string; request_id: string | null; confirmation: (typeof CONFIRMATION)[keyof typeof CONFIRMATION]; result: PersistedInventoryOperation | null; feedback: string | null; advisory_notice: string | null; alerts: InventoryAlert[]; }
 export const initialInventoryState: InventoryState = { product: null, operation: OPERATION.STOCK_ENTRY, entry_quantity: "", physical_count: "", purchase_price: "", sale_price: "", minimum_sale_price: "", note: "", reason: "", request_id: null, confirmation: CONFIRMATION.IDLE, result: null, feedback: null, advisory_notice: null, alerts: [] };
 export type InventoryAction =

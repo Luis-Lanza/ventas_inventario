@@ -1,47 +1,47 @@
-import { createElement, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
+import { createElement, type FormEvent, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { browseSalesProducts, catalogProductImageCommands, type SalesBrowseProduct } from "../../commands/catalog.ts";
-import { confirmSale, type ConfirmSaleRequest } from "../../commands/confirm-sale.ts";
+import { confirmSale, type ConfirmSaleRequest, type ConfirmSaleResponse } from "../../commands/confirm-sale.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { CheckoutDialog } from "../visual-system/checkout-dialog.ts";
-import { createSaleFlow, draftLineSubtotalCentavos, draftTotalCentavos, draftTotalUnits, effectiveDraftUnitPriceCentavos, finalPriceCentavos, formatBs, initialSaleState, parseOptionalBs, type DraftLine } from "./sale-flow.ts";
+import { draftLineSubtotalCentavos, draftTotalCentavos, draftTotalUnits, effectiveDraftUnitPriceCentavos, formatBs } from "./sale-flow.ts";
+import { createSaleSession, type SaleSession, type SaleSessionEdit } from "./sale-session.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, readSalesViewMode, SalesProductDetail, writeSalesViewMode, type CatalogViewMode, type ProductBrowserState } from "../catalog/product-browser.ts";
-import { PersistedSaleSummaryView, projectPersistedSaleSummary, type PersistedSummaryDetails } from "./persisted-summary.ts";
+import { PersistedSaleSummaryView, projectPersistedSaleSummary } from "./persisted-summary.ts";
 
-const INVALID_BS = "Ingresá un monto válido en Bs, con hasta dos decimales.";
-const INVALID_FINAL_PRICE = "Ingresá un precio de venta válido en Bs, con hasta dos decimales.";
-const POSITIVE_FINAL_PRICE = "El precio de venta debe ser mayor que cero.";
-const failureByCode: Record<string, string> = {
-  invalid_request: "Revisá los datos de la venta e intentá nuevamente.", invalid_quantity: "Revisá que las cantidades sean números enteros mayores que cero.", invalid_payment: "Revisá los montos de pago e intentá nuevamente.", inactive_product: "Uno de los productos ya no está activo.", missing_product: "Uno de los productos ya no está disponible.", insufficient_stock: "No hay stock suficiente para completar la venta.", request_conflict: "El ID de solicitud ya fue usado con datos de venta diferentes. Revisá la venta antes de intentar nuevamente.", minimum_price_violation: "El precio de venta está por debajo del mínimo actual.", invalid_final_price: POSITIVE_FINAL_PRICE, persistence_failure: "No se pudo confirmar la venta. Intentá nuevamente.",
-};
-const requestId = () => crypto.randomUUID();
 const thumbnailCacheKey = (productId: number) => String(productId);
-function finalPriceError(line: DraftLine): string | undefined {
-  let price: number | null;
-  try { price = parseOptionalBs(line.final_price_input); } catch { return INVALID_FINAL_PRICE; }
-  if (price === null) return INVALID_FINAL_PRICE;
-  if (price <= 0) return POSITIVE_FINAL_PRICE;
-  return price < line.minimum_price_centavos ? `El precio de venta no puede ser menor que el precio mínimo de ${formatBs(line.minimum_price_centavos)}.` : undefined;
+export interface SaleScreenProps {
+  session?: SaleSession;
+  onInventoryAlertsRefresh?: () => void;
 }
 
-export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}) {
+export function SaleScreen(props: SaleScreenProps) {
   const notifications = useActionNotifications();
-  const [routineOutcome, setRoutineOutcome] = useState(false);
-  const [state, dispatch] = useReducer(createSaleFlow, initialSaleState);
-  const [browser, browserDispatch] = useReducer(createProductBrowserFlow, initialProductBrowserState);
+  const [session] = useState(() => props.session ?? createSaleSession(() => crypto.randomUUID()));
+  const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
+  const { routineOutcome, paymentErrors, checkoutOpen } = state;
+  const setCheckoutOpen = (open: boolean) => session.edit({ type: "checkout_changed", open });
+  const persistedDetails = useMemo(() => state.persisted_summary ? projectPersistedSaleSummary({
+    ...state.persisted_summary,
+    lines: state.persisted_summary.lines.map((line) => ({ ...line })),
+    payments: state.persisted_summary.payments.map((payment) => ({ ...payment })),
+  }) : null, [state.persisted_summary]);
+  useEffect(() => props.session ? undefined : session.attachOwner(), [session, props.session]);
+  const [browser, browserDispatch] = useReducer(createProductBrowserFlow<SalesBrowseProduct>, initialProductBrowserState);
   const [salesViewMode, setSalesViewMode] = useState<CatalogViewMode>(readSalesViewMode);
   const [, setThumbnailCacheVersion] = useState(0);
   const thumbnailCache = useRef(new Map<string, string>());
-  const [paymentErrors, setPaymentErrors] = useState<Partial<Record<"amount_tendered_centavos" | "qr_applied_centavos", string>>>({});
-  const [persistedDetails, setPersistedDetails] = useState<PersistedSummaryDetails | null>(null);
-  const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkoutDetail, setCheckoutDetail] = useState<SalesBrowseProduct | null>(null);
   const checkoutDetailTriggerRef = useRef<HTMLElement | null>(null);
   const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null), checkoutInitialFocusRef = useRef<HTMLInputElement>(null), checkoutTriggerRef = useRef<HTMLButtonElement>(null), headingRef = useRef<HTMLHeadingElement>(null);
-  const searchSequence = useRef(0), confirmationSequence = useRef(0), browseThumbnailAttempt = useRef(0), browserRef = useRef(browser), confirming = useRef(false), mounted = useRef(true), focusSearchOnDraftMount = useRef(false);
+  const searchSequence = useRef(0), browseThumbnailAttempt = useRef(0), browserRef = useRef(browser), mounted = useRef(true), focusSearchOnDraftMount = useRef(false);
+  const locked = () => session.getSnapshot().confirmation === "pending";
   browserRef.current = browser;
-  useEffect(() => () => { mounted.current = false; searchSequence.current += 1; confirmationSequence.current += 1; browseThumbnailAttempt.current += 1; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; searchSequence.current += 1; browseThumbnailAttempt.current += 1; };
+  }, []);
   const browseThumbnails: Record<number, string> = {};
   for (const product of browser.result?.products ?? []) {
     const thumbnail = thumbnailCache.current.get(thumbnailCacheKey(product.product_id));
@@ -80,7 +80,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     focusSearchOnDraftMount.current = false;
     searchInput.focus();
   }, [persistedDetails]);
-  const draftDispatch = (action: Parameters<typeof dispatch>[0]) => { if (!confirming.current) dispatch(action); };
+  const draftDispatch = (action: SaleSessionEdit) => session.edit(action);
 
   async function browsePage(query: string, category_id: number | null, page: number) {
     const attempt = Math.max(++searchSequence.current, browser.request_id + 1);
@@ -91,81 +91,48 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
       if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
     } catch { if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local." }); }
   }
-  const initialBrowseStarted = useRef(false);
-  useEffect(() => {
-    if (initialBrowseStarted.current) return;
-    initialBrowseStarted.current = true;
-    void browsePage("", null, 1);
-  }, []);
+  useEffect(() => { void browsePage("", null, 1); }, []);
   async function search(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (confirming.current) return;
+    event.preventDefault(); if (locked()) return;
     await browsePage(browser.query, browser.category_id, 1);
   }
   async function changePage(page: number) {
-    if (page < 1 || confirming.current) return;
+    if (page < 1 || locked()) return;
     await browsePage(browser.query, browser.category_id, page);
   }
 
   async function confirm() {
-    if (confirming.current || state.lines.length === 0) return;
-    let firstInvalidPrice: number | null = null;
-    for (const line of state.lines) { if (finalPriceError(line)) { firstInvalidPrice ??= line.product_id; } }
-    if (firstInvalidPrice !== null) {
-      dispatch({ type: "line_final_price_changed", product_id: firstInvalidPrice, value: state.lines.find((line) => line.product_id === firstInvalidPrice)!.final_price_input });
-      // The reducer keeps the controlled value and validates it; focus runs after this render.
+    const attempt = session.beginConfirmation();
+    if (attempt.kind === "blocked") return;
+    if (attempt.kind === "validation") {
+      if (attempt.focus.kind === "payment") (attempt.focus.field === "amount_tendered_centavos" ? cashRef : qrRef).current?.focus();
       return;
     }
-    const errors: typeof paymentErrors = {};
-    let cash: number | null = null, qr: number | null = null;
-    try { cash = parseOptionalBs(state.payment.amount_tendered_centavos); } catch { errors.amount_tendered_centavos = INVALID_BS; }
-    try { qr = parseOptionalBs(state.payment.qr_applied_centavos); } catch { errors.qr_applied_centavos = INVALID_BS; }
-    setPaymentErrors(errors);
-    if (Object.keys(errors).length) { (errors.amount_tendered_centavos ? cashRef : qrRef).current?.focus(); return; }
-
-    confirming.current = true;
-    setRoutineOutcome(false);
-    const attempt = ++confirmationSequence.current;
-    const currentRequestId = state.request_id ?? requestId();
-    dispatch({ type: "confirmation_started", request_id: currentRequestId });
+    // The command owns mutable transport objects; preserve every frozen envelope value.
     const request: ConfirmSaleRequest = {
-      request_id: currentRequestId,
-      lines: state.lines.map((line) => ({ product_id: line.product_id, quantity: line.quantity, captured_unit_price_centavos: line.captured_unit_price_centavos, final_unit_price_centavos: finalPriceCentavos(line)! })),
-      payment: { amount_tendered_centavos: cash, qr_applied_centavos: qr },
+      request_id: attempt.request.request_id,
+      lines: attempt.request.lines.map((line) => ({ ...line })),
+      payment: { ...attempt.request.payment },
     };
-    try {
-      const response = await confirmSale(request);
-      if (!mounted.current || attempt !== confirmationSequence.current) return;
-      if (response.kind === "success") { notifications?.publish({ severity: "success", message: "Venta confirmada." }); setPersistedDetails(projectPersistedSaleSummary(response)); dispatch({ type: "confirmation_succeeded", summary: response }); props.onInventoryAlertsRefresh?.(); }
-      else if (response.kind === "minimum_price_violation") dispatch({ type: "minimum_price_violation", ...response });
-      else if (response.kind === "stale_catalog_record") dispatch({ type: "confirmation_failed", message: "El catálogo cambió. Revisá el precio de venta e intentá nuevamente." });
-      else if (response.code === "invalid_final_price") dispatch({ type: "final_price_validation_failed", message: response.message });
-      else {
-        const message = failureByCode[response.code] ?? "No se pudo confirmar la venta. Intentá nuevamente.";
-        if (response.code === "persistence_failure") { setRoutineOutcome(true); notifications?.publish({ severity: "error", message }); }
-        dispatch({ type: "confirmation_failed", message });
-      }
-    } catch { if (mounted.current && attempt === confirmationSequence.current) {
-      const message = "No se pudo confirmar la venta. Intentá nuevamente.";
-      setRoutineOutcome(true); notifications?.publish({ severity: "error", message });
-      dispatch({ type: "confirmation_failed", message });
-    } }
-    finally { if (attempt === confirmationSequence.current) confirming.current = false; }
+    let response: ConfirmSaleResponse | null = null;
+    try { response = await confirmSale(request); } catch { /* Settle adapter exceptions as recoverable failures. */ }
+    // Only the session's live owner and original token can accept delivery, even while Sales is absent.
+    const effect = session.settle(attempt.token, response);
+    if (effect?.kind === "success" || effect?.kind === "routine_error") notifications?.publish(effect.notice);
+    if (effect?.kind === "success") props.onInventoryAlertsRefresh?.();
   }
 
   const discardDraft = () => {
-    if (confirming.current) return;
-    confirmationSequence.current += 1;
-    draftDispatch({ type: "discard" });
-    setCheckoutOpen(false);
+    if (!draftDispatch({ type: "discard" })) return;
+    setCheckoutDetail(null);
     browserDispatch({ type: "browse_started", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: ++searchSequence.current });
-    setPaymentErrors({});
   };
-  if (state.persisted_summary && persistedDetails) return createElement(PersistedSaleSummaryView, { details: persistedDetails, headingRef, onNewSale: () => { focusSearchOnDraftMount.current = true; setCheckoutOpen(false); setPersistedDetails(null); void browsePage("", null, 1); setPaymentErrors({}); dispatch({ type: "discard" }); } });
+  if (state.persisted_summary && persistedDetails) return createElement(PersistedSaleSummaryView, { details: persistedDetails, headingRef, onNewSale: () => { if (!draftDispatch({ type: "new_sale" })) return; focusSearchOnDraftMount.current = true; setCheckoutDetail(null); void browsePage("", null, 1); } });
   const total = formatBs(draftTotalCentavos(state.lines));
   const totalUnits = draftTotalUnits(state.lines);
   const lineCount = `${state.lines.length} ${state.lines.length === 1 ? "línea" : "líneas"}`;
   const pending = state.confirmation === "pending";
-  const addProduct = (product: ProductBrowseResult) => draftDispatch({ type: "add_product", product });
+  const addProduct = (product: SalesBrowseProduct) => draftDispatch({ type: "add_product", product });
   const cartItems = state.lines.map((line, index) => createElement("li", { key: line.product_id, "data-ui-sale-cart-row": true, "data-ui-sales-checkout-item": true },
     createElement("div", { "data-ui-sale-cart-primary": true },
       createElement("div", { "data-ui-sale-product": true },
@@ -182,7 +149,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
       createElement("span", { "data-ui-sales-stock-snapshot": true }, `Stock: ${line.product_snapshot.available_quantity}`),
       createElement("span", { "data-ui-sales-stock-snapshot-note": true }, "Dato de la búsqueda; la disponibilidad se valida al confirmar."),
       createElement("div", { "data-ui-sales-cart-actions": true },
-        createElement(Action, { variant: "tertiary", disabled: pending, onClick: (event: { currentTarget: HTMLElement }) => { checkoutDetailTriggerRef.current = event.currentTarget; setCheckoutDetail(line.product_snapshot); } }, "Ver detalles"),
+        createElement(Action, { variant: "tertiary", disabled: pending, onClick: (event: { currentTarget: HTMLElement }) => { checkoutDetailTriggerRef.current = event.currentTarget; setCheckoutDetail({ ...line.product_snapshot, attribute_values: line.product_snapshot.attribute_values.map((attribute) => ({ ...attribute })) }); } }, "Ver detalles"),
         createElement(Action, { variant: "tertiary", "aria-label": `Quitar ${line.product_name}`, disabled: pending, onClick: () => draftDispatch({ type: "remove_product", product_id: line.product_id }) }, "Quitar"))),
     createElement("div", { "data-ui-sale-cart-controls": true },
       createElement(Field, { kind: "quantity", label: `Cantidad de ${line.product_name}`, error: state.feedback === "Ingresá una cantidad entera mayor que cero." ? state.feedback : undefined, control: createElement("input", { min: 1, value: line.quantity, disabled: pending, onChange: (event) => draftDispatch({ type: "line_quantity_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
@@ -202,8 +169,8 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
       createElement("p", { "data-ui-checkout-total": true, "data-ui-type": "total" }, `Total actual: ${total}`),
       createElement("section", { "aria-labelledby": "checkout-payment-heading" },
         createElement("h3", { id: "checkout-payment-heading" }, "Pago"),
-        createElement(Field, { kind: "money", label: "Efectivo recibido", error: paymentErrors.amount_tendered_centavos, control: createElement("input", { ref: cashRef, value: state.payment.amount_tendered_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, amount_tendered_centavos: undefined })); dispatch({ type: "payment_changed", field: "amount_tendered_centavos", value: event.target.value }); } }) } as never),
-        createElement(Field, { kind: "money", label: "Pago QR", error: paymentErrors.qr_applied_centavos, control: createElement("input", { ref: qrRef, value: state.payment.qr_applied_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, qr_applied_centavos: undefined })); dispatch({ type: "payment_changed", field: "qr_applied_centavos", value: event.target.value }); } }) } as never)),
+        createElement(Field, { kind: "money", label: "Efectivo recibido", error: paymentErrors.amount_tendered_centavos, control: createElement("input", { ref: cashRef, value: state.payment.amount_tendered_centavos, disabled: pending, onChange: (event) => draftDispatch({ type: "payment_changed", field: "amount_tendered_centavos", value: event.target.value }) }) } as never),
+        createElement(Field, { kind: "money", label: "Pago QR", error: paymentErrors.qr_applied_centavos, control: createElement("input", { ref: qrRef, value: state.payment.qr_applied_centavos, disabled: pending, onChange: (event) => draftDispatch({ type: "payment_changed", field: "qr_applied_centavos", value: event.target.value }) }) } as never)),
       state.feedback && !(notifications && routineOutcome) && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
       createElement("div", { "data-ui-sale-actions": true },
         createElement(Action, { variant: "tertiary", disabled: pending, onClick: discardDraft }, "Descartar borrador")),
@@ -218,11 +185,11 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
   return createElement("main", { ref: draftRef, "aria-labelledby": "sale-heading", "aria-busy": pending || undefined, "data-ui-sale": true },
     createElement("header", { "data-ui-sale-header": true },
       createElement("h1", { id: "sale-heading" }, "Ventas"),
-      createElement("p", null, "Búsqueda y despacho inmediato de repuestos en mostrador")),
+      createElement("p", null, "Búsqueda y venta de productos en mostrador")),
     createElement("div", { "data-ui-sale-layout": true },
-      createElement(Panel, { label: "Catálogo de repuestos" } as never,
-        createElement("p", { "data-ui-panel-subtitle": true }, "Búsqueda y despacho inmediato de repuestos en mostrador"),
-        createElement(ProductBrowser, { state: browser, presentation: "sales", salesViewMode, onSalesViewModeChange: (mode) => { setSalesViewMode(mode); writeSalesViewMode(mode); }, thumbnails: browseThumbnails, loadSalesOriginal: catalogProductImageCommands.salesOriginal, loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: (product) => { if (!("revision" in product)) addProduct(product); }, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
+      createElement(Panel, { label: "Catálogo de productos" } as never,
+        createElement("p", { "data-ui-panel-subtitle": true }, "Búsqueda y venta de productos en mostrador"),
+        createElement(ProductBrowser<SalesBrowseProduct>, { state: browser, presentation: "sales", salesViewMode, onSalesViewModeChange: (mode) => { setSalesViewMode(mode); writeSalesViewMode(mode); }, thumbnails: browseThumbnails, loadSalesOriginal: catalogProductImageCommands.salesOriginal, loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: addProduct, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
       createElement(Panel, { label: "Resumen de venta" } as never,
         createElement("div", { "data-ui-sale-summary": true },
           createElement("div", { "data-ui-sale-summary-heading": true },
@@ -238,5 +205,5 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
             createElement("p", { "data-ui-money": true }, `Subtotal: ${total}`),
             createElement("p", { "data-ui-type": "total" }, `Total: ${total}`)),
           createElement("button", { ref: checkoutTriggerRef, type: "button", "data-ui-action": "primary", "aria-controls": "checkout-dialog", "aria-expanded": checkoutOpen, disabled: pending || state.lines.length === 0, onClick: () => setCheckoutOpen(true) } , "Revisar y cobrar")))),
-    createElement(CheckoutDialog, { open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending, confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => { if (!checkoutDetail && !pending && !confirming.current) setCheckoutOpen(false); }, onConfirm: confirm, children: checkoutContent }));
+    createElement(CheckoutDialog, { open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending, confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => { if (!checkoutDetail && !pending && !locked()) setCheckoutOpen(false); }, onConfirm: confirm, children: checkoutContent }));
 }

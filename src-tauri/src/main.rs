@@ -3,7 +3,7 @@
 #[cfg(feature = "desktop")]
 fn main() {
     if let Err(error) = repuestos_autos::run() {
-        eprintln!("failed to run Repuestos Autos: {error}");
+        eprintln!("failed to run Velay: {error}");
         std::process::exit(1);
     }
 }

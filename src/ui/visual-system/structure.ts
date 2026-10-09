@@ -1,6 +1,6 @@
 import { createElement, useId, type ReactNode } from "react";
 
-export function Panel({ label, children }: { label: ReactNode; children: ReactNode }) {
+export function Panel({ label, children }: { label: ReactNode; children?: ReactNode }) {
   const headingId = `panel-${useId().replace(/:/g, "")}`;
   return createElement("section", { "aria-labelledby": headingId, "data-ui-panel": true },
     createElement("h2", { id: headingId }, label),

@@ -68,7 +68,7 @@ pub trait CatalogMetadataRepository {
         revision: i64,
         sku: &str,
         name: &str,
-        purchase_price_centavos: i64,
+        purchase_price_centavos: Option<i64>,
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
         low_stock_threshold: i64,

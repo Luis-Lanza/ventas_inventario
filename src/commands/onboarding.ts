@@ -43,7 +43,7 @@ export interface CreateProductInput {
   sku: string;
   name: string;
   category_id: number;
-  purchase_price_centavos: number;
+  purchase_price_centavos: number | null;
   sale_price_centavos: number;
   minimum_sale_price_centavos: number;
   low_stock_threshold?: number;
@@ -57,7 +57,7 @@ export interface CreatedProduct {
   name: string;
   category_id: number;
   category_name: string;
-  purchase_price_centavos: number;
+  purchase_price_centavos: number | null;
   sale_price_centavos: number;
   minimum_sale_price_centavos: number;
   low_stock_threshold: number;
@@ -103,17 +103,20 @@ const category = (value: unknown): Category | null => record(value) && safeInteg
 const createdProduct = (value: unknown): CreatedProduct | null => {
   if (!record(value)) return null;
   const sale = positiveSafeInteger(value.sale_price_centavos) ? value.sale_price_centavos : value.list_price_centavos;
-  return positiveSafeInteger(value.product_id) && typeof value.sku === "string" && typeof value.name === "string" && positiveSafeInteger(value.category_id) && typeof value.category_name === "string" && positiveSafeInteger(value.purchase_price_centavos) && positiveSafeInteger(sale) && positiveSafeInteger(value.minimum_sale_price_centavos) && value.minimum_sale_price_centavos <= sale && (value.low_stock_threshold === undefined || positiveSafeInteger(value.low_stock_threshold)) && safeInteger(value.available_quantity) && value.available_quantity > 0 && typeof value.active === "boolean"
+  return positiveSafeInteger(value.product_id) && typeof value.sku === "string" && typeof value.name === "string" && positiveSafeInteger(value.category_id) && typeof value.category_name === "string" && (value.purchase_price_centavos === null || positiveSafeInteger(value.purchase_price_centavos)) && positiveSafeInteger(sale) && positiveSafeInteger(value.minimum_sale_price_centavos) && value.minimum_sale_price_centavos <= sale && (value.low_stock_threshold === undefined || positiveSafeInteger(value.low_stock_threshold)) && safeInteger(value.available_quantity) && value.available_quantity >= 0 && typeof value.active === "boolean"
     ? { product_id: value.product_id, sku: value.sku, name: value.name, category_id: value.category_id, category_name: value.category_name, purchase_price_centavos: value.purchase_price_centavos, sale_price_centavos: sale, minimum_sale_price_centavos: value.minimum_sale_price_centavos, low_stock_threshold: value.low_stock_threshold === undefined ? 1 : value.low_stock_threshold, available_quantity: value.available_quantity, active: value.active }
     : null;
 };
 const generic = (message: string): OnboardingError => ({ kind: "error", code: "persistence_failure", message });
+const authorizationCodes = ["license_required", "catalog_access_required"];
 const errorMessages: Record<string, string> = {
+  license_required: "Se requiere una licencia válida para modificar el catálogo.",
+  catalog_access_required: "Desbloqueá el catálogo para continuar.",
   invalid_category: "Category name is required.", invalid_field_definition: "Category field definitions are invalid.", duplicate_category: "Category name already exists.",
-  invalid_product: "SKU and product name are required.", missing_category: "The selected category was not found.", duplicate_sku: "SKU already exists.", invalid_purchase_price: "Purchase price must be a positive whole number of centavos.", invalid_sale_price: "Sale price must be a positive whole number of centavos.", invalid_minimum_sale_price: "Minimum sale price must be a positive whole number of centavos.", minimum_sale_price_exceeds_sale_price: "Minimum sale price cannot exceed sale price.", invalid_opening_quantity: "Opening stock must be a positive whole number.", missing_required_field: "A required category field is missing.", invalid_attribute_value: "A category field value is invalid.", persistence_failure: "The operation could not be persisted.",
+  invalid_product: "SKU and product name are required.", missing_category: "The selected category was not found.", duplicate_sku: "SKU already exists.", invalid_purchase_price: "Purchase price must be a positive whole number of centavos.", invalid_sale_price: "Sale price must be a positive whole number of centavos.", invalid_minimum_sale_price: "Minimum sale price must be a positive whole number of centavos.", minimum_sale_price_exceeds_sale_price: "Minimum sale price cannot exceed sale price.", invalid_opening_quantity: "Opening stock must be a nonnegative whole number.", missing_required_field: "A required category field is missing.", invalid_attribute_value: "A category field value is invalid.", persistence_failure: "The operation could not be persisted.",
 };
 const fieldError = (value: unknown): OnboardingFieldError | undefined => record(value) && positiveSafeInteger(value.definition_id) && (value.reason === "invalid_number" || value.reason === "invalid_option" || value.reason === "invalid_value") ? { definition_id: value.definition_id, reason: value.reason } : undefined;
-const boundedError = (value: unknown, codes: string[], fallback: string): OnboardingError => record(value) && typeof value.code === "string" && typeof value.message === "string" && codes.includes(value.code) ? { kind: "error", code: value.code, message: value.code === "persistence_failure" ? fallback : errorMessages[value.code], ...(value.code === "invalid_attribute_value" && fieldError(value.field_error) ? { field_error: fieldError(value.field_error) } : {}) } : generic(fallback);
+const boundedError = (value: unknown, codes: string[], fallback: string): OnboardingError => record(value) && typeof value.code === "string" && typeof value.message === "string" && [...codes, ...authorizationCodes].includes(value.code) ? { kind: "error", code: value.code, message: value.code === "persistence_failure" ? fallback : errorMessages[value.code], ...(value.code === "invalid_attribute_value" && fieldError(value.field_error) ? { field_error: fieldError(value.field_error) } : {}) } : generic(fallback);
 const listResponse = (value: unknown): ListCategoriesResponse => record(value) && value.kind === "success" && decodedArray(value.categories, category) !== null ? { kind: "success", categories: decodedArray(value.categories, category) as Category[] } : record(value) && value.kind === "error" ? boundedError(value, ["persistence_failure"], "Categories could not be loaded.") : generic("Categories could not be loaded.");
 const categoryResponse = (value: unknown, codes: string[], fallback: string): CreateCategoryResponse => record(value) && value.kind === "success" && category(value) ? { kind: "success", ...(category(value) as Category) } : record(value) && value.kind === "error" ? boundedError(value, codes, fallback) : generic(fallback);
 const productResponse = (value: unknown): CreateProductResponse => record(value) && value.kind === "success" && createdProduct(value) ? { kind: "success", ...(createdProduct(value) as CreatedProduct) } : record(value) && value.kind === "error" ? boundedError(value, ["invalid_product", "missing_category", "duplicate_sku", "invalid_purchase_price", "invalid_sale_price", "invalid_minimum_sale_price", "minimum_sale_price_exceeds_sale_price", "invalid_opening_quantity", "missing_required_field", "invalid_attribute_value", "persistence_failure"], "The product could not be persisted.") : generic("The product could not be persisted.");

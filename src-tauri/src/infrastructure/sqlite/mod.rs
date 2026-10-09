@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, Result};
 
+use crate::identity::{APPLICATION_ID, DATABASE_FILENAME, SQLITE_APPLICATION_ID};
+
 pub mod backup;
 pub mod catalog_repository;
 pub mod dashboard_repository;
@@ -55,7 +57,7 @@ impl DatabaseConfig {
 
 pub fn production_database_config(app_data_directory: impl AsRef<Path>) -> DatabaseConfig {
     DatabaseConfig {
-        path: app_data_directory.as_ref().join("repuestos-autos.sqlite3"),
+        path: app_data_directory.as_ref().join(DATABASE_FILENAME),
     }
 }
 
@@ -75,7 +77,7 @@ pub fn default_application_database_config() -> std::result::Result<DatabaseConf
     }
     .ok_or_else(|| "cannot resolve the application data directory".to_string())?;
     Ok(production_database_config(
-        data_root.join("com.repuestosautos.app"),
+        data_root.join(APPLICATION_ID),
     ))
 }
 
@@ -83,7 +85,9 @@ pub fn open_existing_database(config: &DatabaseConfig) -> std::result::Result<Co
     if !config.path().is_file() {
         return Err("database file does not exist".into());
     }
-    let connection = Connection::open(config.path()).map_err(|_| "cannot open database")?;
+    validate_existing_family(config.path()).map_err(|_| "database family is invalid")?;
+    let connection = Connection::open_with_flags(config.path(), rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
+        .map_err(|_| "cannot open database")?;
     connection
         .execute_batch("PRAGMA foreign_keys = ON;")
         .map_err(|_| "cannot enable foreign keys")?;
@@ -112,6 +116,7 @@ fn validate_recovery_operational_schema(connection: &Connection) -> Result<()> {
 
 /// Open only the selected, prevalidated canonical file; never create missing storage.
 pub(crate) fn open_recovery_database(config: &DatabaseConfig) -> Result<Connection> {
+    validate_existing_family(config.path())?;
     let mut connection = Connection::open_with_flags(
         config.path(), rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
     )?;
@@ -128,15 +133,30 @@ pub fn open_database(
     if let Some(parent) = config.path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut connection = Connection::open(config.path())?;
+    // Exclusive creation distinguishes genuinely new storage from even an empty
+    // pre-existing SQLite file. Existing files are classified read-only first.
+    let fresh = match std::fs::OpenOptions::new().write(true).create_new(true).open(config.path()) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            validate_existing_family(config.path())?;
+            false
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let mut connection = Connection::open_with_flags(config.path(), rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    if fresh {
+        initialize_fresh_database(&mut connection)?;
+    }
     migrate_if_needed(&mut connection)?;
+    validate_restored_database(&connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(connection)
 }
 
 pub fn open_seeded_catalog() -> Result<Connection> {
     let mut connection = Connection::open_in_memory()?;
     connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    initialize_fresh_database(&mut connection)?;
     migrate_if_needed(&mut connection)?;
     // Disposable test/application fixtures opt into demo-like records explicitly;
     // production databases remain empty after migration.
@@ -154,20 +174,43 @@ pub fn open_seeded_catalog() -> Result<Connection> {
     Ok(connection)
 }
 
+pub(super) fn validate_family(connection: &Connection) -> Result<()> {
+    let family = connection.query_row("PRAGMA application_id", [], |row| row.get::<_, i64>(0))?;
+    if family != SQLITE_APPLICATION_ID {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
+}
+
+/// A readable SQLite header with a different family is not damaged Velay
+/// storage and must never be overwritten during recovery. Unreadable/corrupt
+/// candidates remain eligible for the existing validated fallback protocol.
+pub(crate) fn has_foreign_family(path: &Path) -> bool {
+    Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .and_then(|connection| connection.query_row("PRAGMA application_id", [], |row| row.get::<_, i64>(0)))
+        .is_ok_and(|family| family != SQLITE_APPLICATION_ID)
+}
+
+fn validate_existing_family(path: &Path) -> Result<()> {
+    let connection = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    validate_family(&connection)
+}
+
+fn initialize_fresh_database(connection: &mut Connection) -> Result<()> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(include_str!("migrations/0001_confirm_sale.sql"))?;
+    transaction.pragma_update(None, "application_id", SQLITE_APPLICATION_ID)?;
+    transaction.pragma_update(None, "user_version", 1)?;
+    transaction.commit()
+}
+
 fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
+    validate_family(connection)?;
     let mut version =
         connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
 
-    if version > CURRENT_SCHEMA_VERSION {
+    if !(1..=CURRENT_SCHEMA_VERSION).contains(&version) {
         return Err(rusqlite::Error::InvalidQuery);
-    }
-
-    if version == 0 {
-        let transaction = connection.transaction()?;
-        transaction.execute_batch(include_str!("migrations/0001_confirm_sale.sql"))?;
-        transaction.pragma_update(None, "user_version", 1)?;
-        transaction.commit()?;
-        version = 1;
     }
 
     if version == 1 {

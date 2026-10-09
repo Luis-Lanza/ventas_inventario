@@ -32,6 +32,24 @@ fn request(request_id: &str, tendered: Option<i64>, qr_applied: Option<i64>) -> 
 }
 
 #[test]
+fn onboarding_callable_seam_checks_license_before_locked_catalog_and_preserves_reads() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let root = std::env::temp_dir().join(format!("command-seam-access-{}", uuid::Uuid::new_v4()));
+    let license = repuestos_autos::commands::license::LicenseCommandState::new(repuestos_autos::application::license::LicenseService::new(
+        repuestos_autos::infrastructure::windows_machine_identity::SystemMachineIdentity,
+        repuestos_autos::application::license::FileLicenseStorage::new(&root),
+    ));
+    let access = repuestos_autos::application::catalog::access::CatalogAccessSession::open(repuestos_autos::infrastructure::filesystem::catalog_access::CatalogAccessStore::new(&root));
+    let before = list_categories_command(&connection).unwrap();
+    let response = repuestos_autos::commands::onboarding::create_category_authorized(&mut connection, &license, &access, CreateCategoryInput { name: "Refused".into(), fields: vec![] }).unwrap();
+    assert_eq!(serde_json::to_value(response).unwrap()["code"], "license_required");
+    assert_eq!(list_categories_command(&connection).unwrap(), before);
+    assert!(browse_sale_products(&connection, BrowseProductsRequest {
+        query: None, category_id: None, stock_state: "all".into(), activity: "active".into(), page: 1, page_size: 20,
+    }).is_ok());
+}
+
+#[test]
 fn browse_command_serializes_the_complete_ordered_attribute_projection_without_drift() {
     let connection = open_seeded_catalog().unwrap();
     connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (7, 1, 'Material', 'text', 0)", []).unwrap();
@@ -255,7 +273,7 @@ fn onboarding_commands_return_persisted_results_and_stable_errors() {
             sku: "BRG-1".into(),
             name: "Wheel bearing".into(),
             category_id: category.category_id,
-            purchase_price_centavos: 3_000,
+            purchase_price_centavos: Some(3_000),
             sale_price_centavos: 5_000,
             minimum_sale_price_centavos: 4_000,
             low_stock_threshold: None,
@@ -321,7 +339,7 @@ fn onboarded_product_searches_and_sells_at_its_backend_sale_price() {
             sku: "BRG-50".into(),
             name: "Wheel bearing".into(),
             category_id: category.category_id,
-            purchase_price_centavos: 3_000,
+            purchase_price_centavos: Some(3_000),
             sale_price_centavos: 5_000,
             minimum_sale_price_centavos: 4_000,
             low_stock_threshold: None,
@@ -370,7 +388,7 @@ fn onboarded_product_searches_and_sells_at_its_backend_sale_price() {
         panic!("expected the onboarded sale request to persist");
     };
     assert_eq!(summary.lines[0].unit_price_centavos, 5_000);
-    assert_eq!(product.purchase_price_centavos, 3_000);
+    assert_eq!(product.purchase_price_centavos, Some(3_000));
     assert_eq!(product.sale_price_centavos, 5_000);
     assert_eq!(product.minimum_sale_price_centavos, 4_000);
 }

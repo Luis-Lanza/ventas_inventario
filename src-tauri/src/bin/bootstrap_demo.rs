@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use repuestos_autos::application::catalog::{
     bootstrap_demo_catalog, BootstrapDemoError, BootstrapDemoOutcome,
 };
+use repuestos_autos::identity::{APPLICATION_ID, DATABASE_FILENAME};
 use repuestos_autos::infrastructure::sqlite::{
     database_config, default_application_database_config, open_existing_database,
 };
@@ -72,6 +73,6 @@ Options:
   -h, --help         Show this help
 
 Without --database, the application data path is used (Windows:
-%APPDATA%\com.repuestosautos.app\repuestos-autos.sqlite3)."#
+%APPDATA%\{APPLICATION_ID}\{DATABASE_FILENAME})."#
     );
 }

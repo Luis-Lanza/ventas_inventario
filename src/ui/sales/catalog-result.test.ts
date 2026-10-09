@@ -10,6 +10,7 @@ const brakePad: ProductSearchResult = {
   name: "Pastilla de freno",
   category_name: "Frenos",
   available_quantity: 4,
+  purchase_price_centavos: null,
   catalog_unit_price_centavos: 2_509,
   sale_price_centavos: 2_509,
   list_price_centavos: 2_509,

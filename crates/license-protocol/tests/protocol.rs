@@ -25,6 +25,23 @@ fn verify(bytes: &[u8], hash: &str, key: &VerifyingKey) -> Result<license_protoc
     license_protocol::verify_envelope(bytes, hash, &[key.clone()])
 }
 
+// Historical Repuestos Autos vector, signed with the deterministic 0x42 test key.
+const HISTORICAL_ENVELOPE: &str = "{\"format\":\"repuestos-autos-license\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJsaWNlbnNlX2lkIjoibGljZW5zZS0wMSIsImtleV9pZCI6IjMwOTdlMmRlZTJjYjRhMzRiNTM4NDBjZGI3MDVhZWQ3MTA2N2MzNmY2OGRiMGUwZjU1OWMzZjNmYTA0MzMxNWYiLCJwcm9kdWN0X2lkIjoiY29tLnJlcHVlc3Rvc2F1dG9zLmFwcCIsIm1hY2hpbmVfaGFzaCI6IjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJpc3N1ZWRfYXQiOiIyMDI2LTA5LTI5VDEyOjM0OjU2WiJ9\",\"signature\":\"DE2OAn-0ig6EcL4tCNhWK_tgbQogfhB38Q7wg3EYdTokZ_gKxOOwoAa1R8u8u7br4BT2e-hwz5b6FElBaPMMBg\"}";
+
+#[test]
+fn velay_product_identity_is_exact() {
+    assert_eq!(PRODUCT_ID, "com.velay.app");
+}
+
+#[test]
+fn historical_repuestos_autos_envelope_is_rejected() {
+    let key = SigningKey::from_bytes(&[0x42_u8; 32]);
+    assert_eq!(
+        verify(HISTORICAL_ENVELOPE.as_bytes(), MACHINE, &key.verifying_key()).unwrap_err(),
+        ProtocolError::MalformedEnvelope
+    );
+}
+
 #[test]
 fn canonical_payload_has_fixed_ascii_bytes_and_field_order() {
     let (payload, _) = fixture();
@@ -46,16 +63,26 @@ fn deterministic_signed_envelope_verifies() {
         issued_at: "2026-09-29T12:34:56Z".into(),
     };
     const EXPECTED_KEY_ID: &str = "3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f";
-    const EXPECTED_CANONICAL: &str = "{\"version\":1,\"license_id\":\"license-01\",\"key_id\":\"3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f\",\"product_id\":\"com.repuestosautos.app\",\"machine_hash\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"issued_at\":\"2026-09-29T12:34:56Z\"}";
-    const EXPECTED_SIGNATURE: &str = "DE2OAn-0ig6EcL4tCNhWK_tgbQogfhB38Q7wg3EYdTokZ_gKxOOwoAa1R8u8u7br4BT2e-hwz5b6FElBaPMMBg";
-    const EXPECTED_ENVELOPE: &str = "{\"format\":\"repuestos-autos-license\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJsaWNlbnNlX2lkIjoibGljZW5zZS0wMSIsImtleV9pZCI6IjMwOTdlMmRlZTJjYjRhMzRiNTM4NDBjZGI3MDVhZWQ3MTA2N2MzNmY2OGRiMGUwZjU1OWMzZjNmYTA0MzMxNWYiLCJwcm9kdWN0X2lkIjoiY29tLnJlcHVlc3Rvc2F1dG9zLmFwcCIsIm1hY2hpbmVfaGFzaCI6IjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJpc3N1ZWRfYXQiOiIyMDI2LTA5LTI5VDEyOjM0OjU2WiJ9\",\"signature\":\"DE2OAn-0ig6EcL4tCNhWK_tgbQogfhB38Q7wg3EYdTokZ_gKxOOwoAa1R8u8u7br4BT2e-hwz5b6FElBaPMMBg\"}";
+    const EXPECTED_CANONICAL: &str = "{\"version\":1,\"license_id\":\"license-01\",\"key_id\":\"3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f\",\"product_id\":\"com.velay.app\",\"machine_hash\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"issued_at\":\"2026-09-29T12:34:56Z\"}";
+    const EXPECTED_SIGNATURE: &str = "q1XqHbpnMqaDEeEPPOB32FX6FFK-wDxM8eGRKCQwKsqiLiI_dg2CZ9R0LtTbJOj73pN-JKZMJr96ZQ_Pmu98Ag";
+    // Cross-check the vector against the explicit Velay contract, not shared constants.
+    let mut expected_message = b"velay-license\0v1\0".to_vec();
+    expected_message.extend_from_slice(EXPECTED_CANONICAL.as_bytes());
+    assert_eq!(base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        key.sign(&expected_message).to_bytes(),
+    ), EXPECTED_SIGNATURE);
+    let expected_payload = base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD, EXPECTED_CANONICAL,
+    );
+    let expected_envelope = format!("{{\"format\":\"velay-license\",\"payload\":\"{expected_payload}\",\"signature\":\"{EXPECTED_SIGNATURE}\"}}");
 
     assert_eq!(key_id(&key.verifying_key()), EXPECTED_KEY_ID);
     assert_eq!(canonical_payload(&payload).unwrap(), EXPECTED_CANONICAL.as_bytes());
     let envelope = sign_payload(payload, &key).unwrap();
     let decoded: LicenseEnvelope = serde_json::from_slice(&envelope).unwrap();
     assert_eq!(decoded.signature, EXPECTED_SIGNATURE);
-    assert_eq!(envelope, EXPECTED_ENVELOPE.as_bytes());
+    assert_eq!(envelope, expected_envelope.as_bytes());
     let verified = verify(&envelope, MACHINE, &key.verifying_key()).unwrap();
     assert_eq!(verified.payload.license_id, "license-01");
 }
@@ -164,7 +191,7 @@ fn wrong_product_and_machine_are_rejected() {
     message.extend_from_slice(&payload_bytes);
     let signature = key.sign(&message);
     let envelope = LicenseEnvelope {
-        format: "repuestos-autos-license".into(),
+        format: "velay-license".into(),
         payload: base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload_bytes),
         signature: base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, signature.to_bytes()),
     };
@@ -177,6 +204,41 @@ fn wrong_product_and_machine_are_rejected() {
     let envelope = sign_payload(payload, &key).unwrap();
     let another_machine = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     assert_eq!(verify(&envelope, another_machine, &key.verifying_key()).unwrap_err(), ProtocolError::MachineMismatch);
+}
+
+#[test]
+fn historical_signature_domain_is_rejected_even_with_velay_payload_and_format() {
+    let (payload, key) = fixture();
+    let payload_bytes = canonical_payload(&payload).unwrap();
+    let mut message = b"repuestos-autos-license\0v1\0".to_vec();
+    message.extend_from_slice(&payload_bytes);
+    let envelope = LicenseEnvelope {
+        format: "velay-license".into(),
+        payload: base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload_bytes),
+        signature: base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key.sign(&message).to_bytes()),
+    };
+    assert_eq!(
+        verify(&serde_json::to_vec(&envelope).unwrap(), MACHINE, &key.verifying_key()).unwrap_err(),
+        ProtocolError::InvalidSignature
+    );
+}
+
+#[test]
+fn historical_product_is_rejected_even_with_velay_signature_and_format() {
+    let (mut payload, key) = fixture();
+    payload.product_id = "com.repuestosautos.app".into();
+    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+    let mut message = b"velay-license\0v1\0".to_vec();
+    message.extend_from_slice(&payload_bytes);
+    let envelope = LicenseEnvelope {
+        format: "velay-license".into(),
+        payload: base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload_bytes),
+        signature: base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key.sign(&message).to_bytes()),
+    };
+    assert_eq!(
+        verify(&serde_json::to_vec(&envelope).unwrap(), MACHINE, &key.verifying_key()).unwrap_err(),
+        ProtocolError::WrongProduct
+    );
 }
 
 #[test]
@@ -206,17 +268,17 @@ fn duplicate_unknown_reordered_and_whitespace_payloads_are_rejected() {
         json.replacen(",\"license_id\":", ", \"license_id\":", 1),
     ] {
         let bad_payload = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bad.as_bytes());
-        let tampered = format!("{{\"format\":\"repuestos-autos-license\",\"payload\":\"{bad_payload}\",\"signature\":\"{signature}\"}}");
+        let tampered = format!("{{\"format\":\"velay-license\",\"payload\":\"{bad_payload}\",\"signature\":\"{signature}\"}}");
         assert!(verify(tampered.as_bytes(), MACHINE, &key.verifying_key()).is_err());
     }
 
-    let duplicate_envelope = String::from_utf8(envelope.clone()).unwrap().replacen("{\"format\":", "{\"format\":\"repuestos-autos-license\",\"format\":", 1);
+    let duplicate_envelope = String::from_utf8(envelope.clone()).unwrap().replacen("{\"format\":", "{\"format\":\"velay-license\",\"format\":", 1);
     assert_eq!(verify(duplicate_envelope.as_bytes(), MACHINE, &key.verifying_key()).unwrap_err(), ProtocolError::MalformedEnvelope);
     let unknown_envelope = String::from_utf8(envelope.clone()).unwrap().replacen("{\"format\":", "{\"extra\":0,\"format\":", 1);
     assert_eq!(verify(unknown_envelope.as_bytes(), MACHINE, &key.verifying_key()).unwrap_err(), ProtocolError::MalformedEnvelope);
     let original: serde_json::Value = serde_json::from_slice(&envelope).unwrap();
     let reordered_envelope = format!(
-        "{{\"payload\":\"{}\",\"format\":\"repuestos-autos-license\",\"signature\":\"{}\"}}",
+        "{{\"payload\":\"{}\",\"format\":\"velay-license\",\"signature\":\"{}\"}}",
         original["payload"].as_str().unwrap(),
         original["signature"].as_str().unwrap()
     );
@@ -247,5 +309,5 @@ fn installation_digest_and_issued_at_are_strictly_validated() {
 
 #[test]
 fn signed_message_prefix_is_exact() {
-    assert_eq!(SIGNED_MESSAGE_PREFIX, b"repuestos-autos-license\0v1\0");
+    assert_eq!(SIGNED_MESSAGE_PREFIX, b"velay-license\0v1\0");
 }

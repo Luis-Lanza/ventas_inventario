@@ -31,7 +31,12 @@ fn embedded_production_public_key_matches_its_key_id() {
 fn normalizes_guid_and_matches_domain_separated_hash_vector() {
     let canonical = "550e8400-e29b-41d4-a716-446655440000";
     assert_eq!(normalize_machine_guid(GUID).as_deref(), Some(canonical));
-    assert_eq!(derive_machine_hash(canonical), "bea70f837f88f40ba27fb9174da639aaac1576743bc153cfd656679b2f6093ef");
+    const EXPECTED_HASH: &str = "8076023f5ed1dd8c2f0abf86f9141cabf38d6e0f06a4ac98e69be038f5385f54";
+    // Independent bytes lock both the product and binding domain into this vector.
+    let explicit_hash = Sha256::digest(b"velay-machine-binding\0v1\0com.velay.app550e8400-e29b-41d4-a716-446655440000");
+    let explicit_hex: String = explicit_hash.iter().map(|byte| format!("{byte:02x}")).collect();
+    assert_eq!(explicit_hex, EXPECTED_HASH);
+    assert_eq!(derive_machine_hash(canonical), EXPECTED_HASH);
     for invalid in ["550e8400e29b41d4a716446655440000", "{550e8400-e29b-41d4-a716-446655440000}", "550e8400-e29b-41d4-a716-44665544000Z"] { assert!(normalize_machine_guid(invalid).is_none()); }
 }
 
@@ -66,7 +71,7 @@ struct Envelope<'a> { format: &'static str, payload: String, signature: String, 
 fn signed_arbitrary(payload: &[u8], key: &SigningKey) -> Vec<u8> {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     let mut message = SIGNED_MESSAGE_PREFIX.to_vec(); message.extend_from_slice(payload);
-    serde_json::to_vec(&Envelope { format: "repuestos-autos-license", payload: URL_SAFE_NO_PAD.encode(payload), signature: URL_SAFE_NO_PAD.encode(key.sign(&message).to_bytes()), _life: std::marker::PhantomData }).unwrap()
+    serde_json::to_vec(&Envelope { format: "velay-license", payload: URL_SAFE_NO_PAD.encode(payload), signature: URL_SAFE_NO_PAD.encode(key.sign(&message).to_bytes()), _life: std::marker::PhantomData }).unwrap()
 }
 
 #[test]
@@ -82,6 +87,22 @@ fn rejects_wrong_product_and_preserves_existing_license_on_failed_import() {
     assert_eq!(service.import(&wrong_product), LicenseState::LicenseWrongProduct);
     assert_eq!(service.import(b"not a license"), LicenseState::LicenseFileInvalid);
     assert_eq!(storage.read().unwrap().unwrap(), prior);
+    assert_eq!(service.status(), LicenseState::Active);
+}
+
+#[test]
+fn historical_repuestos_autos_import_preserves_velay_activation() {
+    let key = keys(0x42);
+    let storage = MemoryStorage::default();
+    let service = service(storage.clone(), &key);
+    assert_eq!(PRODUCT_ID, "com.velay.app");
+    let valid = license(&service.installation_code().unwrap(), &key);
+    assert_eq!(service.import(&valid), LicenseState::Active);
+    // Exact historical protocol vector, not a Velay envelope with a renamed format.
+    let historical = b"{\"format\":\"repuestos-autos-license\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJsaWNlbnNlX2lkIjoibGljZW5zZS0wMSIsImtleV9pZCI6IjMwOTdlMmRlZTJjYjRhMzRiNTM4NDBjZGI3MDVhZWQ3MTA2N2MzNmY2OGRiMGUwZjU1OWMzZjNmYTA0MzMxNWYiLCJwcm9kdWN0X2lkIjoiY29tLnJlcHVlc3Rvc2F1dG9zLmFwcCIsIm1hY2hpbmVfaGFzaCI6IjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJpc3N1ZWRfYXQiOiIyMDI2LTA5LTI5VDEyOjM0OjU2WiJ9\",\"signature\":\"DE2OAn-0ig6EcL4tCNhWK_tgbQogfhB38Q7wg3EYdTokZ_gKxOOwoAa1R8u8u7br4BT2e-hwz5b6FElBaPMMBg\"}";
+    assert_eq!(service.import(historical), LicenseState::LicenseFileInvalid);
+    assert_eq!(storage.read().unwrap().unwrap(), valid);
+    assert_eq!(service.status(), LicenseState::Active);
 }
 
 #[test]

@@ -80,9 +80,10 @@ fn temporary_directory(name: &str) -> PathBuf {
 }
 fn create_legacy_database(directory: &Path) -> PathBuf {
     std::fs::create_dir_all(directory).unwrap();
-    let path = directory.join("repuestos-autos.sqlite3");
+    let path = directory.join(repuestos_autos::identity::DATABASE_FILENAME);
     let connection = Connection::open(&path).unwrap();
     connection.execute_batch(LEGACY_FIXTURE).unwrap();
+    connection.pragma_update(None, "application_id", repuestos_autos::identity::SQLITE_APPLICATION_ID).unwrap();
     path
 }
 
@@ -91,6 +92,7 @@ fn create_v22_demo_database(directory: &Path) -> (PathBuf, repuestos_autos::infr
     let config = production_database_config(directory);
     let path = config.path().to_path_buf();
     let connection = Connection::open(&path).unwrap();
+    connection.pragma_update(None, "application_id", repuestos_autos::identity::SQLITE_APPLICATION_ID).unwrap();
     for (version, migration) in [
         (1, VERSION_ONE_MIGRATION),
         (2, VERSION_TWO_MIGRATION),
@@ -274,7 +276,7 @@ fn fresh_v24_accepts_repeated_names_but_keeps_nonempty_name_policy() {
     connection.execute("INSERT INTO categories (id, name) VALUES (1, 'Customer category')", []).unwrap();
     for (sku, name, valid) in [("A", "Bujía", true), ("B", "Bujía", true), ("C", "   ", false), ("D", "", false)] {
         let result = CreateProductUseCase::new(&mut connection, SqliteCatalogRepository).execute(CreateProductInput {
-            sku: sku.into(), name: name.into(), category_id: 1, purchase_price_centavos: 100,
+            sku: sku.into(), name: name.into(), category_id: 1, purchase_price_centavos: Some(100),
             sale_price_centavos: 200, minimum_sale_price_centavos: 150, low_stock_threshold: None,
             opening_quantity: 1, attribute_values: vec![],
         });
@@ -1216,7 +1218,7 @@ fn v18_adds_nullable_purchase_prices_and_preserves_unknown_history_on_v17_upgrad
 fn fresh_v18_schema_has_nullable_price_columns_and_rejects_malformed_costs() {
     let directory = temporary_directory("migration-v18-fresh-schema");
     let connection = open_database(&production_database_config(&directory)).unwrap();
-    assert_eq!(user_version(&directory.join("repuestos-autos.sqlite3")), CURRENT_SCHEMA_VERSION);
+    assert_eq!(user_version(&directory.join(repuestos_autos::identity::DATABASE_FILENAME)), CURRENT_SCHEMA_VERSION);
     connection.execute("INSERT INTO categories (name) VALUES ('Fresh category')", []).unwrap();
     connection.execute(
         "INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (1, 'FRESH-001', 'Fresh product', 1, 100, 100)",

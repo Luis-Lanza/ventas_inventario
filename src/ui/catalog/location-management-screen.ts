@@ -1,4 +1,4 @@
-import { createElement, useEffect, useReducer, useRef, useState } from "react";
+import { createElement, useEffect, useReducer, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { productLocationCommands, type ProductLocationRecord } from "../../commands/catalog.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
@@ -16,7 +16,7 @@ export function LocationManagementScreen() {
   const [values, setValues] = useState<string[]>([]);
   const [schemaErrors, setSchemaErrors] = useState<Record<string, string>>({});
   const [valueErrors, setValueErrors] = useState<Record<string, string>>({});
-  const [template, setTemplate] = useState(LOCATION_TEMPLATES[0].name);
+  const [template, setTemplate] = useState<typeof LOCATION_TEMPLATES[number]["name"] | "Personalizado">(LOCATION_TEMPLATES[0].name);
   const [includeInactive, setIncludeInactive] = useState(true);
   const [confirm, setConfirm] = useState<{ location: ProductLocationRecord; operation: "deactivate" | "delete" } | null>(null);
   const [pending, setPending] = useState(false);
@@ -106,8 +106,9 @@ export function LocationManagementScreen() {
 
   const selectTemplate = (name: string) => {
     const selected = LOCATION_TEMPLATES.find((item) => item.name === name);
-    setTemplate(name);
-    if (selected) { setSegments([...selected.segments]); setValues(selected.segments.map(() => "")); setSchemaErrors({}); }
+    if (!selected) return;
+    setTemplate(selected.name);
+    setSegments([...selected.segments]); setValues(selected.segments.map(() => "")); setSchemaErrors({});
   };
   const addSegment = () => { if (segments.length < 8) { setSegments((current) => [...current, `Segmento ${current.length + 1}`]); setValues((current) => [...current, ""]); } };
   const moveSegment = (index: number, delta: number) => {
@@ -137,9 +138,9 @@ export function LocationManagementScreen() {
       createElement("section", { "aria-labelledby": "location-schema-heading", "data-ui-location-schema": true },
         createElement("h3", { id: "location-schema-heading" }, "Esquema de ubicaciones"),
         schemaFrozen ? createElement(Feedback, { kind: "advisory" }, "El esquema queda protegido porque ya existe una ubicación física. Podés seguir creando ubicaciones y administrar su estado.") : null,
-        createElement(Field, { kind: "select", label: "Plantilla", control: createElement("select", { value: template, disabled: schemaFrozen || pending, onChange: (event) => selectTemplate(event.currentTarget.value) }, [...(template === "Personalizado" ? [{ name: "Personalizado", segments: [] as string[] }] : []), ...LOCATION_TEMPLATES].map((item) => createElement("option", { key: item.name, value: item.name }, item.name))) }),
+        createElement(Field, { kind: "select", label: "Plantilla", control: createElement("select", { value: template, disabled: schemaFrozen || pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => selectTemplate(event.currentTarget.value) }, [...(template === "Personalizado" ? [{ name: "Personalizado", segments: [] as string[] }] : []), ...LOCATION_TEMPLATES].map((item) => createElement("option", { key: item.name, value: item.name }, item.name))) }),
         createElement("ol", { "aria-label": "Segmentos ordenados", "data-ui-location-segments": true }, segments.map((segment, index) => createElement("li", { key: index, "data-ui-location-segment": true },
-          createElement(Field, { kind: "text", label: `Segmento ${index + 1}`, error: schemaErrors[`segment-${index}`], control: createElement("input", { value: segment, maxLength: 40, disabled: schemaFrozen || pending, onChange: (event) => { const value = event.currentTarget.value; setSegments((current) => current.map((label, position) => position === index ? value : label)); } }) }),
+          createElement(Field, { kind: "text", label: `Segmento ${index + 1}`, error: schemaErrors[`segment-${index}`], control: createElement("input", { value: segment, maxLength: 40, disabled: schemaFrozen || pending, onChange: (event: ChangeEvent<HTMLInputElement>) => { const value = event.currentTarget.value; setSegments((current) => current.map((label, position) => position === index ? value : label)); } }) }),
           createElement(Action, { variant: "tertiary", disabled: schemaFrozen || pending || index === 0, "aria-label": `Subir segmento ${index + 1}`, onClick: () => moveSegment(index, -1) }, "Subir"),
           createElement(Action, { variant: "tertiary", disabled: schemaFrozen || pending || index === segments.length - 1, "aria-label": `Bajar segmento ${index + 1}`, onClick: () => moveSegment(index, 1) }, "Bajar"),
           createElement(Action, { variant: "tertiary", disabled: schemaFrozen || pending || segments.length <= 1, "aria-label": `Quitar segmento ${index + 1}`, onClick: () => { setSegments((current) => current.filter((_, position) => position !== index)); setValues((current) => current.filter((_, position) => position !== index)); } }, "Quitar")))),
@@ -148,8 +149,8 @@ export function LocationManagementScreen() {
         createElement("p", { "data-ui-location-preview": true, "aria-live": "polite" }, "Vista previa del código: ", createElement("code", null, generateLocationCode(segments.map((_, index) => values[index] ?? "")) || "Completá los valores"))),
       createElement("section", { "aria-labelledby": "location-create-heading", "data-ui-location-create": true },
         createElement("h3", { id: "location-create-heading" }, "Nueva ubicación física"),
-        createElement("form", { onSubmit: (event) => { event.preventDefault(); createLocation(); } },
-          state.schema.segments.map((segment, index) => createElement(Field, { key: segment.id, kind: "text", label: segment.label, error: valueErrors[`value-${index}`], control: createElement("input", { value: values[index] ?? "", maxLength: 40, disabled: pending, onChange: (event) => { const nextValue = event.currentTarget.value; setValues((current) => current.map((value, position) => position === index ? nextValue : value)); } }) })),
+        createElement("form", { onSubmit: (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); createLocation(); } },
+          state.schema.segments.map((segment, index) => createElement(Field, { key: segment.id, kind: "text", label: segment.label, error: valueErrors[`value-${index}`], control: createElement("input", { value: values[index] ?? "", maxLength: 40, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => { const nextValue = event.currentTarget.value; setValues((current) => current.map((value, position) => position === index ? nextValue : value)); } }) })),
           valueErrors.values ? createElement(Feedback, { kind: "error" }, valueErrors.values) : null,
           createElement("p", null, "Código generado: ", createElement("code", null, generateLocationCode(values.slice(0, state.schema.segments.length)) || "Completá los valores")),
           createElement(Action, { variant: "primary", type: "submit", disabled: pending }, "Crear ubicación"))),

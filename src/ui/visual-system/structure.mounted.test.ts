@@ -46,6 +46,13 @@ test("Panel names its region with its internal heading", () => {
   assert.equal(within(region).getByText("Contenido del caller").textContent, "Contenido del caller");
 });
 
+test("Panel accepts props children as well as React positional children", () => {
+  render(createElement(Panel, {
+    label: "Props content", children: createElement("p", null, "Explicit child"),
+  }));
+  assert.equal(within(screen.getByRole("region", { name: "Props content" })).getByText("Explicit child").textContent, "Explicit child");
+});
+
 test("AlignedData preserves native semantics, caller values, order, and column presentation intent", () => {
   render(createElement(AlignedData, { caption: "Artículos originales", columns, rows: [values] }));
 

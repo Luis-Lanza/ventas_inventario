@@ -87,7 +87,7 @@ test("the live loop excludes hidden ancestors, aria-hidden, inert, CSS-hidden, n
     createElement("button", { hidden: true }, "hidden"),
     createElement("div", { hidden: true }, createElement("button", null, "hidden ancestor")),
     createElement("div", { "aria-hidden": "true" }, createElement("button", null, "aria hidden")),
-    createElement("div", { ref: (node) => { node?.setAttribute("inert", ""); } }, createElement("button", null, "inert")),
+    createElement("div", { ref: (node: HTMLDivElement | null) => { node?.setAttribute("inert", ""); } }, createElement("button", null, "inert")),
     createElement("button", { className: "fixture-none" }, "display none"),
     createElement("button", { className: "fixture-invisible" }, "visibility hidden"),
     createElement("button", { tabIndex: -1 }, "negative"),

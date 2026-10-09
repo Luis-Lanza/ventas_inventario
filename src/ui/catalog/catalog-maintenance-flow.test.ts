@@ -5,9 +5,39 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { createCatalogEditRequest, createCategorySchemaEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState } from "./catalog-maintenance-flow.ts";
 import { CatalogMaintenanceRecovery, CatalogMetadataEditor, CatalogSuccessNotice, loadCatalogDetail, reloadCatalogRecords } from "./catalog-maintenance-screen.ts";
-import { createCatalogMaintenanceCommands } from "../../commands/catalog.ts";
+import { createCatalogMaintenanceCommands, type ProductMetadataDetail } from "../../commands/catalog.ts";
+import type { CatalogEditForm, CatalogMaintenanceAction } from "./catalog-maintenance-flow.ts";
 
 const archived = { entity_id: 1, target: "product" as const, label: "Filter", activity: "archived" as const, revision: 2 };
+
+test("unknown cost stays blank and submits explicit null on an ordinary edit", () => {
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 0, sku: "FLT", name: "Filter", purchase_price_centavos: null, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, low_stock_threshold: 1, primary_location_id: null, activity: "active" as const, revision: 0, attribute_definitions: [], attribute_values: [] };
+  const form = { ...formForCatalogDetail(detail), name: "Renamed", purchase_price_centavos: "  " };
+  assert.equal(formForCatalogDetail(detail).purchase_price_centavos, "");
+  assert.deepEqual(fieldErrorsForCatalogEdit(detail, form), {});
+  const request = createCatalogEditRequest(detail, form);
+  assert.ok(request?.target === "product");
+  assert.equal(request.purchase_price_centavos, null);
+  for (const cost of ["0", "-1", "invalid", "0.001", "NaN", "Infinity", "9007199254740992"]) {
+    assert.equal(createCatalogEditRequest(detail, { ...form, purchase_price_centavos: cost }), null);
+    assert.ok(fieldErrorsForCatalogEdit(detail, { ...form, purchase_price_centavos: cost }).purchase_price_centavos);
+  }
+});
+
+test("catalog editing already accepts positive centavos and retains minimum validation", () => {
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 0, sku: "FLT", name: "Filter", purchase_price_centavos: null, sale_price_centavos: 50, minimum_sale_price_centavos: 1, low_stock_threshold: 1, primary_location_id: null, activity: "active" as const, revision: 0, attribute_definitions: [], attribute_values: [] };
+  const form = formForCatalogDetail(detail);
+  for (const [value, expected] of [["0.50", 50], ["0.01", 1], ["0,50", 50], ["0,01", 1]] as const) {
+    const supplied = { ...form, purchase_price_centavos: value, sale_price_centavos: value, minimum_sale_price_centavos: value };
+    assert.deepEqual(fieldErrorsForCatalogEdit(detail, supplied), {});
+    const request = createCatalogEditRequest(detail, supplied);
+    assert.ok(request?.target === "product");
+    assert.deepEqual([request.purchase_price_centavos, request.sale_price_centavos, request.minimum_sale_price_centavos], [expected, expected, expected]);
+  }
+  const inverted = { ...form, sale_price_centavos: "0.01", minimum_sale_price_centavos: "0.50" };
+  assert.equal(createCatalogEditRequest(detail, inverted), null);
+  assert.ok(fieldErrorsForCatalogEdit(detail, inverted).minimum_sale_price_centavos);
+});
 
 test("SKU conflicts give a specific correction without replacing generic validation", () => {
   const state = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "edit_failed", code: "duplicate_sku" });
@@ -54,8 +84,8 @@ test("surfaces loading, unavailable, validation, conflict, failure, recovery, an
 });
 
 test("loads editable metadata, validates typed values, and reloads stable conflicts", () => {
-  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 7, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, primary_location_id: 9, activity: "archived" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option" as const, required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] };
-  const loading = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "detail_started" });
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 7, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, low_stock_threshold: 1, primary_location_id: 9, activity: "archived" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option" as const, required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] };
+  const loading = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "detail_started", record: archived });
   const ready = createCatalogMaintenanceFlow(loading, { type: "detail_loaded", detail });
   const pending = createCatalogMaintenanceFlow(ready, { type: "edit_started" });
   const conflict = createCatalogMaintenanceFlow(pending, { type: "edit_failed", code: "stale_catalog_record" });
@@ -65,7 +95,7 @@ test("loads editable metadata, validates typed values, and reloads stable confli
   const reactivated = createCatalogMaintenanceFlow({ ...ready, records: [archived], selected: archived }, { type: "mutation_succeeded", record: { ...archived, activity: "active", revision: 3 } });
   assert.deepEqual(formForCatalogDetail(detail), { sku: "FLT", name: "Filter", purchase_price_centavos: "20,00", sale_price_centavos: "30,00", minimum_sale_price_centavos: "25,00", low_stock_threshold: "1", primary_location_id: 9, attribute_values: { 4: "Paper" } });
   assert.equal(createCatalogEditRequest(detail, { sku: "FLT", name: "Filter", purchase_price_centavos: "20,00", sale_price_centavos: "inválido", minimum_sale_price_centavos: "25,00", attribute_values: { 4: "Paper" } }), null);
-  assert.deepEqual(Object.keys(fieldErrorsForCatalogEdit(detail, { sku: "FLT", name: "Filter", purchase_price_centavos: "", sale_price_centavos: "30,00", minimum_sale_price_centavos: "31,00", attribute_values: { 4: "Paper" } })).sort(), ["minimum_sale_price_centavos", "purchase_price_centavos"]);
+  assert.deepEqual(Object.keys(fieldErrorsForCatalogEdit(detail, { sku: "FLT", name: "Filter", purchase_price_centavos: "", sale_price_centavos: "30,00", minimum_sale_price_centavos: "31,00", attribute_values: { 4: "Paper" } })).sort(), ["minimum_sale_price_centavos"]);
   const legacyDetail = { ...detail, sale_price_centavos: undefined, list_price_centavos: 3000, purchase_price_centavos: null } as unknown as typeof detail;
   assert.deepEqual(formForCatalogDetail(legacyDetail).sale_price_centavos, "30,00");
   assert.deepEqual(formForCatalogDetail(legacyDetail).purchase_price_centavos, "");
@@ -101,17 +131,19 @@ test("loads editable metadata, validates typed values, and reloads stable confli
 });
 
 test("excludes retired required attributes from product edit inputs, validation, and requests", () => {
-  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 8, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "active" as const, revision: 3, attribute_definitions: [
+  const detail: ProductMetadataDetail = { target: "product", entity_id: 1, category_id: 2, category_revision: 8, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, low_stock_threshold: 1, primary_location_id: null, activity: "active", revision: 3, attribute_definitions: [
     { definition_id: 4, label: "Material", field_type: "text" as const, required: true, options: [], active: true },
     { definition_id: 9, label: "Legacy serial", field_type: "text" as const, required: true, options: [], active: false },
   ], attribute_values: [{ definition_id: 4, value: "Steel" }, { definition_id: 9, value: "Historic-9" }] };
-  const form = formForCatalogDetail(detail);
+  const form: CatalogEditForm = formForCatalogDetail(detail);
+  const attributeValues: CatalogEditForm["attribute_values"] = form.attribute_values;
   assert.deepEqual(form.attribute_values, { 4: "Steel" });
   assert.deepEqual(fieldErrorsForCatalogEdit(detail, form), {});
-  form.attribute_values[9] = "must not be sent";
+  attributeValues[9] = "must not be sent";
   const request = createCatalogEditRequest(detail, form);
-  assert.deepEqual(request?.attribute_values, [{ definition_id: 4, value: "Steel" }]);
-  assert.equal(request?.attribute_values.some((value) => value.definition_id === 9), false);
+  assert.ok(request?.target === "product");
+  assert.deepEqual(request.attribute_values, [{ definition_id: 4, value: "Steel" }]);
+  assert.equal(request.attribute_values.some((value) => value.definition_id === 9), false);
 });
 
 test("prepares active category schema drafts while excluding retired definitions", () => {
@@ -135,7 +167,7 @@ test("keeps selected detail identity through failure and retries the same reques
   const detail = { target: "category" as const, entity_id: 2, name: "Filters", activity: "active" as const, revision: 1, attribute_definitions: [] };
   const commands = createCatalogMaintenanceCommands(async (command) => { calls.push(command); return command === "list_catalog_maintenance_command" ? { kind: "success", records: [] } : calls.filter((item) => item === "catalog_metadata_detail_command").length === 1 ? { kind: "error", code: "catalog_unavailable" } : detail; });
   let state = initialCatalogMaintenanceState;
-  const dispatch = (action: never) => { state = createCatalogMaintenanceFlow(state, action); };
+  const dispatch = (action: CatalogMaintenanceAction) => { state = createCatalogMaintenanceFlow(state, action); };
   let form = null;
   const selected = { entity_id: 2, target: "category" as const, label: "Filters", activity: "active" as const, revision: 1 };
   await loadCatalogDetail(commands, dispatch, (next) => { form = next; }, selected);
@@ -147,8 +179,8 @@ test("keeps selected detail identity through failure and retries the same reques
 });
 
 test("keeps success announced during refresh and scopes validation to invalid fields", () => {
-  const detail = { target: "product" as const, entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "active" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "text" as const, required: true, options: [] }, { definition_id: 5, label: "Length", field_type: "number" as const, required: false, options: [] }, { definition_id: 6, label: "Grade", field_type: "option" as const, required: false, options: ["A"] }], attribute_values: [] };
-  const invalid = fieldErrorsForCatalogEdit(detail, { sku: "", name: "", purchase_price_centavos: "", sale_price_centavos: "inválido", minimum_sale_price_centavos: "25,00", low_stock_threshold: "0", attribute_values: { 4: "", 5: "not-a-number", 6: "B" } });
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 0, low_stock_threshold: 1, primary_location_id: null, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "active" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "text" as const, required: true, options: [] }, { definition_id: 5, label: "Length", field_type: "number" as const, required: false, options: [] }, { definition_id: 6, label: "Grade", field_type: "option" as const, required: false, options: ["A"] }], attribute_values: [] };
+  const invalid = fieldErrorsForCatalogEdit(detail, { sku: "", name: "", purchase_price_centavos: "invalid", sale_price_centavos: "inválido", minimum_sale_price_centavos: "25,00", low_stock_threshold: "0", attribute_values: { 4: "", 5: "not-a-number", 6: "B" } });
   const saved = createCatalogMaintenanceFlow({ ...initialCatalogMaintenanceState, detail }, { type: "edit_succeeded", record: { entity_id: 1, target: "product", label: "Filter", activity: "active", revision: 3 } });
   const loading = createCatalogMaintenanceFlow(saved, { type: "load_started" });
   const listed = createCatalogMaintenanceFlow(loading, { type: "loaded", records: [] });

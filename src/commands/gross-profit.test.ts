@@ -18,5 +18,7 @@ test("strict decoder rejects unknown fields, unsafe amounts, missing activity, a
   assert.equal(decodeGrossProfit({ kind: "success", report: { amount_centavos: 1, missing_cost_line_count: 0, activity_count: 1 }, path: "secret" }).kind, "error");
   assert.equal(decodeGrossProfit({ kind: "success", report: { amount_centavos: 0, missing_cost_line_count: 0 } }).kind, "error");
   assert.equal(decodeGrossProfit({ kind: "success", report: { amount_centavos: 0, missing_cost_line_count: 0, activity_count: -1 } }).kind, "error");
-  assert.equal(decodeGrossProfit({ kind: "error", code: "internal", message: "secret" }).code, "persistence_failure");
+  const error = decodeGrossProfit({ kind: "error", code: "internal", message: "secret" });
+  assert.ok(error.kind === "error");
+  assert.equal(error.code, "persistence_failure");
 });

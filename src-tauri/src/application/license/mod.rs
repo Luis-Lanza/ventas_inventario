@@ -112,7 +112,8 @@ pub fn normalize_machine_guid(value: &str) -> Option<String> {
 
 pub fn derive_machine_hash(canonical_guid: &str) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"repuestos-autos-machine-binding\0v1\0");
+    // Separate Velay installation codes from the historical product, even on the same PC.
+    digest.update(b"velay-machine-binding\0v1\0");
     digest.update(PRODUCT_ID.as_bytes());
     digest.update(canonical_guid.as_bytes());
     digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect()

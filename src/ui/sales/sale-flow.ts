@@ -27,19 +27,19 @@ export type DraftLine = {
 };
 const UNSAFE_DRAFT_TOTAL = "Draft money must remain within the safe integer range.";
 function checkedDraftCentavos(value: number): number { if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(UNSAFE_DRAFT_TOTAL); return value; }
-export function finalPriceCentavos(line: DraftLine): number | null { try { return parseOptionalBs(line.final_price_input); } catch { return null; } }
-export function effectiveDraftUnitPriceCentavos(line: DraftLine): number {
+export function finalPriceCentavos(line: Pick<DraftLine, "final_price_input">): number | null { try { return parseOptionalBs(line.final_price_input); } catch { return null; } }
+export function effectiveDraftUnitPriceCentavos(line: Pick<DraftLine, "final_price_input" | "captured_unit_price_centavos">): number {
   const explicit = finalPriceCentavos(line);
   return checkedDraftCentavos(explicit ?? line.captured_unit_price_centavos);
 }
-export function draftLineSubtotalCentavos(line: DraftLine): number {
+export function draftLineSubtotalCentavos(line: Pick<DraftLine, "quantity" | "final_price_input" | "captured_unit_price_centavos">): number {
   if (!Number.isSafeInteger(line.quantity) || line.quantity < 1) throw new RangeError(UNSAFE_DRAFT_TOTAL);
   const subtotal = BigInt(effectiveDraftUnitPriceCentavos(line)) * BigInt(line.quantity);
   if (subtotal > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError(UNSAFE_DRAFT_TOTAL);
   return Number(subtotal);
 }
-export function draftTotalCentavos(lines: readonly DraftLine[]): number { let total = 0n; for (const line of lines) { total += BigInt(draftLineSubtotalCentavos(line)); if (total > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError(UNSAFE_DRAFT_TOTAL); } return Number(total); }
-export function draftTotalUnits(lines: readonly DraftLine[]): number {
+export function draftTotalCentavos(lines: readonly Pick<DraftLine, "quantity" | "final_price_input" | "captured_unit_price_centavos">[]): number { let total = 0n; for (const line of lines) { total += BigInt(draftLineSubtotalCentavos(line)); if (total > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError(UNSAFE_DRAFT_TOTAL); } return Number(total); }
+export function draftTotalUnits(lines: readonly Pick<DraftLine, "quantity">[]): number {
   let total = 0;
   for (const line of lines) {
     if (!Number.isSafeInteger(line.quantity) || line.quantity < 0) throw new RangeError(UNSAFE_DRAFT_TOTAL);

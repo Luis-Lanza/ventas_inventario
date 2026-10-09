@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import type { CatalogProductBrowseResult } from "../../commands/catalog.ts";
 import { ProductBrowser, initialProductBrowserState, type CatalogViewMode } from "../catalog/product-browser.ts";
 
 async function mountBaseStyles(width?: number) {
@@ -80,10 +81,11 @@ test("Catalog table columns shrink and wrap while the results region retains opt
 });
 
 function catalogBrowser(mode: CatalogViewMode) {
+  const product: CatalogProductBrowseResult = { product_id: 1, revision: 1, category_id: 1, sku: "FIL-001", name: "Filtro", category_name: "Filtros", available_quantity: 2, purchase_price_centavos: null, sale_price_centavos: 12550, list_price_centavos: 12550, catalog_unit_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_code: null, attribute_values: [] };
   return createElement(ProductBrowser, {
     presentation: "catalog", catalogViewMode: mode,
     state: { ...initialProductBrowserState, status: "results", result: {
-      products: [{ product_id: 1, revision: 1, category_id: 1, sku: "FIL-001", name: "Filtro", category_name: "Filtros", available_quantity: 2, purchase_price_centavos: null, sale_price_centavos: 12550, list_price_centavos: 12550, catalog_unit_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_code: null, attribute_values: [] }],
+      products: [product],
       categories: [], page: 1, page_size: 20, total: 1, total_pages: 1,
     } },
     onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: () => {}, onPageChange: () => {},

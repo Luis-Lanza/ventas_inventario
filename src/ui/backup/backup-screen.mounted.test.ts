@@ -1,12 +1,67 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 import { BackupScreen } from "./backup-screen.ts";
+
+function callerContractDiagnostics(source: string) {
+  const config = ts.readConfigFile("tsconfig.json", ts.sys.readFile);
+  assert.equal(config.error, undefined);
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd());
+  assert.equal(parsed.errors.length, 0);
+  assert.equal(parsed.options.strict, true);
+  const path = fileURLToPath(new URL("caller-contract-fixture.ts", import.meta.url));
+  const options = { ...parsed.options, noEmit: true };
+  const host = ts.createCompilerHost(options);
+  const read = host.readFile.bind(host), exists = host.fileExists.bind(host);
+  host.readFile = file => file === path ? source : read(file);
+  host.fileExists = file => file === path || exists(file);
+  return ts.getPreEmitDiagnostics(ts.createProgram([path], options, host));
+}
+
+const callerImports = `
+import { createElement, useRef } from "react";
+import { BackupScreen, type BackupScreenProps } from "./backup-screen.ts";
+import { SaleScreen, type SaleScreenProps } from "../sales/sale-screen.ts";
+import { DashboardScreen } from "../dashboard/dashboard-screen.ts";
+import { SalesHistoryScreen } from "../sales/history-screen.ts";
+import type { SaleSession } from "../sales/sale-session.ts";
+declare const session: SaleSession;
+`;
+
+test("strict React callers accept optional Backup and Sale props and nullable mutable invokers", () => {
+  const diagnostics = callerContractDiagnostics(callerImports + `
+const backup: BackupScreenProps = { canRestore: false };
+const sale: SaleScreenProps = { session, onInventoryAlertsRefresh: () => {} };
+createElement(BackupScreen, backup);
+createElement(BackupScreen);
+createElement(SaleScreen, sale);
+createElement(SaleScreen);
+createElement(DashboardScreen, { onOpenInventoryAlerts: () => {} });
+createElement(SalesHistoryScreen);
+const invoker = useRef<HTMLButtonElement | null>(null);
+invoker.current = document.createElement("button");
+invoker.current = null;
+`);
+  assert.equal(diagnostics.length, 0, ts.formatDiagnosticsWithColorAndContext(diagnostics, {
+    getCanonicalFileName: path => path, getCurrentDirectory: ts.sys.getCurrentDirectory, getNewLine: () => "\n",
+  }));
+});
+
+test("strict screen props reject invented restoration and session values", () => {
+  const diagnostics = callerContractDiagnostics(callerImports + `
+const backup: BackupScreenProps = { canRestore: "false" };
+const sale: SaleScreenProps = { session: false };
+`);
+  assert.deepEqual(diagnostics.map(diagnostic => diagnostic.code), [2322, 2322]);
+  assert.ok(diagnostics.every(diagnostic => diagnostic.file?.fileName.endsWith("caller-contract-fixture.ts")));
+});
 
 const prepared = { kind: "prepared", token: "restore-token", size_bytes: 2048, schema_version: 6 };
 const created = { kind: "created", file_name: "backup-20250814.sqlite3", created_at_unix_seconds: 1_755_172_920, size_bytes: 4096, schema_version: 6, durability_warning: false, cleanup_warning: false };

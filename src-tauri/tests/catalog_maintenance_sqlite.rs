@@ -52,11 +52,36 @@ fn count(connection: &rusqlite::Connection, table: &str) -> i64 {
 }
 
 #[test]
+fn cost_transitions_preserve_historical_snapshots_and_invalid_costs_are_atomic() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute("INSERT INTO sales (request_id, status, total_centavos, confirmed_at) VALUES ('edit-cost-history', 'confirmed', 5000, CURRENT_TIMESTAMP)", []).unwrap();
+    let sale_id = connection.last_insert_rowid();
+    connection.execute("INSERT INTO sale_lines (sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos, unit_cost_snapshot_centavos) VALUES (?1, 1, 1, 2500, 2500, 2500, NULL), (?1, 1, 1, 2500, 2500, 2500, 1250)", [sale_id]).unwrap();
+    for (revision, cost) in [None, Some(2000), None, Some(1500)].into_iter().enumerate() {
+        let edited = EditCatalogUseCase::new(&mut connection, SqliteCatalogRepository)
+            .execute(EditCatalogInput::product(1, revision as i64, "FLT-001", "Renamed", cost, 2500, 2500, 0, vec![])).unwrap();
+        assert_eq!(edited.revision, revision as i64 + 1);
+        assert_eq!(connection.query_row("SELECT purchase_price_centavos FROM products WHERE id = 1", [], |row| row.get::<_, Option<i64>>(0)).unwrap(), cost);
+    }
+    let snapshots = connection.prepare("SELECT unit_cost_snapshot_centavos FROM sale_lines WHERE sale_id = ?1 ORDER BY id").unwrap()
+        .query_map([sale_id], |row| row.get::<_, Option<i64>>(0)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+    assert_eq!(snapshots, vec![None, Some(1250)]);
+    let before_search: String = connection.query_row("SELECT content FROM catalog_product_search WHERE rowid = 1", [], |row| row.get(0)).unwrap();
+    for cost in [0, -1, 9_007_199_254_740_992] {
+        assert_eq!(EditCatalogUseCase::new(&mut connection, SqliteCatalogRepository)
+            .execute(EditCatalogInput::product(1, 4, "CHANGED", "Invalid", Some(cost), 3000, 2500, 0, vec![])), Err(MaintainCatalogError::InvalidPricing));
+        assert_eq!(connection.query_row("SELECT sku, name, purchase_price_centavos, revision FROM products WHERE id = 1", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?, row.get::<_, i64>(3)?))).unwrap(), ("FLT-001".into(), "Renamed".into(), Some(1500), 4));
+        assert_eq!(count(&connection, "catalog_audit"), 4);
+        assert_eq!(connection.query_row("SELECT content FROM catalog_product_search WHERE rowid = 1", [], |row| row.get::<_, String>(0)).unwrap(), before_search);
+    }
+}
+
+#[test]
 fn product_names_may_repeat_on_edit() {
     let mut connection = open_seeded_catalog().unwrap();
     connection.execute_batch("INSERT INTO products (id, sku, name, category_id, list_price_centavos, minimum_unit_price_centavos, active) VALUES (91, 'OTHER', 'Shared name', 2, 2500, 2500, 1);").unwrap();
     let result = EditCatalogUseCase::new(&mut connection, SqliteCatalogRepository)
-        .execute(EditCatalogInput::product(1, 0, "FLT-001", "Shared name", 2000, 2500, 2500, 0, vec![]));
+        .execute(EditCatalogInput::product(1, 0, "FLT-001", "Shared name", Some(2000), 2500, 2500, 0, vec![]));
     assert_eq!(result.unwrap().revision, 1);
     assert_eq!(count(&connection, "catalog_audit"), 1);
 }
@@ -215,7 +240,7 @@ fn metadata_edits_guard_revisions_replace_values_refresh_search_and_audit_togeth
             0,
             "NUE-001",
             "Nuevo filtro",
-            2_000,
+            Some(2_000),
             4_000,
             3_000,
             0,
@@ -308,7 +333,7 @@ fn failed_metadata_audit_rolls_back_the_guarded_write_and_fts_document() {
     connection.execute_batch("CREATE TRIGGER reject_metadata_audit BEFORE INSERT ON catalog_audit BEGIN SELECT RAISE(ABORT, 'forced'); END;").unwrap();
     assert_eq!(
         EditCatalogUseCase::new(&mut connection, SqliteCatalogRepository).execute(
-            EditCatalogInput::product(1, 0, "NUE-002", "Other", 2_000, 4_000, 3_000, 0, vec![])
+            EditCatalogInput::product(1, 0, "NUE-002", "Other", Some(2_000), 4_000, 3_000, 0, vec![])
         ),
         Err(MaintainCatalogError::PersistenceFailure)
     );
@@ -522,7 +547,7 @@ fn product_edit_preserves_retired_values_and_detail_exposes_them() {
             0,
             "FLT-001",
             "Oil filter",
-            2_000,
+            Some(2_000),
             2_500,
             2_500,
             0,
@@ -622,7 +647,7 @@ fn current_schema_migrates_and_validates_field_lifecycle_metadata() {
     std::fs::create_dir_all(&directory).unwrap();
     let config = production_database_config(&directory);
     drop(open_database(&config).unwrap());
-    let malformed = rusqlite::Connection::open(directory.join("repuestos-autos.sqlite3")).unwrap();
+    let malformed = rusqlite::Connection::open(config.path()).unwrap();
     malformed
         .execute_batch(
             "DROP INDEX attribute_definitions_category_active_idx;
@@ -633,7 +658,7 @@ fn current_schema_migrates_and_validates_field_lifecycle_metadata() {
     drop(malformed);
     assert!(open_database(&config).is_err());
 
-    let malformed = rusqlite::Connection::open(directory.join("repuestos-autos.sqlite3")).unwrap();
+    let malformed = rusqlite::Connection::open(config.path()).unwrap();
     malformed.execute_batch(
         "DROP INDEX attribute_definitions_category_active_idx;
          CREATE INDEX attribute_definitions_category_active_idx
@@ -645,7 +670,7 @@ fn current_schema_migrates_and_validates_field_lifecycle_metadata() {
     drop(malformed);
     assert!(open_database(&config).is_err());
 
-    let malformed = rusqlite::Connection::open(directory.join("repuestos-autos.sqlite3")).unwrap();
+    let malformed = rusqlite::Connection::open(config.path()).unwrap();
     malformed.execute_batch(
         "DROP INDEX attribute_definitions_category_active_idx;
          CREATE INDEX attribute_definitions_category_active_idx
@@ -657,7 +682,7 @@ fn current_schema_migrates_and_validates_field_lifecycle_metadata() {
     drop(malformed);
     assert!(open_database(&config).is_err());
 
-    let malformed = rusqlite::Connection::open(directory.join("repuestos-autos.sqlite3")).unwrap();
+    let malformed = rusqlite::Connection::open(config.path()).unwrap();
     malformed
         .execute_batch(
             "DROP INDEX attribute_definitions_category_active_idx;
@@ -689,6 +714,7 @@ fn version_nineteen_migration_preserves_definition_options_values_and_foreign_ke
     std::fs::create_dir_all(&directory).unwrap();
     let legacy = rusqlite::Connection::open(config.path()).unwrap();
     legacy.execute_batch(VERSION_ONE_FIXTURE).unwrap();
+    legacy.pragma_update(None, "application_id", repuestos_autos::identity::SQLITE_APPLICATION_ID).unwrap();
     legacy.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
     for (index, migration) in MIGRATIONS_THROUGH_VERSION_EIGHTEEN.iter().enumerate() {
         legacy.execute_batch(migration).unwrap();

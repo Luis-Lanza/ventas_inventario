@@ -286,7 +286,7 @@ fn render_gross_profit_pdf(
     let mut output = Vec::with_capacity(count);
     for (page_index, page_rows) in pages.iter().enumerate() {
         let mut ops = Vec::new();
-        text(&mut ops, "Repuestos Autos", 15.0, 8.0, 199.0);
+        text(&mut ops, "Velay", 15.0, 8.0, 199.0);
         text(
             &mut ops,
             "Informe de ganancia bruta por operaciones",

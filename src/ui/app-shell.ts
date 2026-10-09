@@ -25,7 +25,7 @@ const items = [
 export function AppShell({ screen, onNavigate, onInventoryAlerts, inventoryCue, children, recoveryMode = false }: AppShellProps) {
   return createElement("div", { "data-ui-app-shell": true },
     createElement("aside", { "data-ui-shell-sidebar": true },
-      createElement("div", { "data-ui-shell-identity": true }, "Repuestos Autos"),
+      createElement("div", { "data-ui-shell-identity": true }, "Velay"),
       createElement("nav", { "aria-label": "Navegación principal", "data-ui-shell-navigation": true },
         items.filter(([, destination]) => !recoveryMode || destination === "dashboard" || destination === "sales_history" || destination === "reports" || destination === "backup").map(([label, destination, action]) => createElement("button", {
           key: destination,

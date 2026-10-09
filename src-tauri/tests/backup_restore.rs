@@ -68,6 +68,41 @@ const MIGRATIONS: [&str; 23] = [
     include_str!("../src/infrastructure/sqlite/migrations/0024_allow_repeated_product_names.sql"),
 ];
 
+#[test]
+fn snapshots_and_staging_reject_foreign_current_schema_without_writes() {
+    for family in [0, 1234] {
+        let root = temporary_directory("foreign-family");
+        fs::create_dir_all(&root).unwrap();
+        let live = production_database_config(&root);
+        let state = DatabaseState::open(live.clone()).unwrap();
+        let selected = root.join("selected.sqlite3");
+        state.with_read(|connection| {
+            create_snapshot(connection, &selected).map_err(|_| "snapshot_failed".into())
+        }).unwrap();
+        Connection::open(&selected).unwrap().pragma_update(None, "application_id", family).unwrap();
+        let selected_before = fs::read(&selected).unwrap();
+        let live_before = fs::read(live.path()).unwrap();
+        let stage = root.join("stage.sqlite3");
+        assert_eq!(stage_and_validate(&selected, &stage), Err(BackupValidationError::InvalidBackup));
+        assert!(!stage.exists(), "foreign source must be rejected before staging writes");
+        let foreign = Connection::open(&selected).unwrap();
+        assert!(repuestos_autos::infrastructure::sqlite::validate_restored_database(&foreign).is_err());
+        let snapshot = root.join("snapshot.sqlite3");
+        assert!(create_snapshot(&foreign, &snapshot).is_err());
+        assert!(!snapshot.exists());
+        state.with_read(|connection| {
+            assert!(create_snapshot(connection, &selected).is_err(), "never overwrite foreign destination");
+            Ok(())
+        }).unwrap();
+        assert_eq!(state.install_validated_stage(&selected, &BackupStore::new(&root)), Err("restore_failed".into()));
+        for name in ["pre-restore.sqlite3", "restore-rollback.sqlite3", "restore-state.json"] {
+            assert!(!root.join(name).exists(), "reject before protective backup or disruption");
+        }
+        assert_eq!(fs::read(&selected).unwrap(), selected_before);
+        assert_eq!(fs::read(live.path()).unwrap(), live_before);
+    }
+}
+
 fn temporary_directory(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("r-a-{name}-{}", uuid::Uuid::new_v4()))
 }
@@ -75,6 +110,7 @@ fn temporary_directory(name: &str) -> PathBuf {
 fn versioned_database(path: &Path, version: i64) {
     let connection = Connection::open(path).unwrap();
     connection.execute_batch(LEGACY).unwrap();
+    connection.pragma_update(None, "application_id", repuestos_autos::identity::SQLITE_APPLICATION_ID).unwrap();
     for (index, migration) in MIGRATIONS.iter().enumerate().take((version - 1) as usize) {
         connection.execute_batch(migration).unwrap();
         connection
@@ -170,7 +206,6 @@ fn lifecycle_database(path: &Path) {
         .unwrap();
 }
 
-#[cfg(windows)]
 fn rows(connection: &Connection, query: &str) -> Vec<Vec<String>> {
     let mut statement = connection.prepare(query).unwrap();
     statement
@@ -187,7 +222,6 @@ fn rows(connection: &Connection, query: &str) -> Vec<Vec<String>> {
         .unwrap()
 }
 
-#[cfg(windows)]
 fn lifecycle_facts(path: &Path) -> Vec<Vec<Vec<String>>> {
     let connection = Connection::open(path).unwrap();
     [
@@ -653,7 +687,7 @@ fn rejects_invalid_and_unsupported_candidates_without_source_mutation() {
     Connection::open(&zero).unwrap();
     assert_eq!(
         stage_and_validate(&zero, &directory.join("zero-stage.sqlite3")).unwrap_err(),
-        BackupValidationError::UnsupportedSchema
+        BackupValidationError::InvalidBackup
     );
 
     let future = directory.join("future.sqlite3");
@@ -935,6 +969,14 @@ fn backup_stage_and_restore_retain_product_image_records() {
     assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
     let metadata = stage_and_validate(&snapshot, &stage).unwrap();
     assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    for path in [&source, &snapshot, &stage] {
+        assert_eq!(Connection::open(path).unwrap().query_row("PRAGMA application_id", [], |row| row.get::<_, i64>(0)).unwrap(), i64::from(u32::from_be_bytes(*b"VLAY")));
+    }
+    assert_eq!(lifecycle_facts(&source), lifecycle_facts(&stage));
+    let restored = Connection::open(&stage).unwrap();
+    for query in ["SELECT * FROM categories ORDER BY id", "SELECT * FROM products ORDER BY id"] {
+        assert_eq!(rows(&live, query), rows(&restored, query));
+    }
     assert_eq!(
         Connection::open(&stage).unwrap().query_row(
             "SELECT mime_type, image_bytes, thumbnail_mime_type, thumbnail_bytes
@@ -1131,7 +1173,7 @@ fn unsupported_recovery_retains_the_validated_source_and_stale_temporary() {
     let directory = temporary_directory("unsupported-durable-recovery");
     fs::create_dir_all(&directory).unwrap();
     let source = directory.join("restore-rollback.sqlite3");
-    let canonical = directory.join("repuestos-autos.sqlite3");
+    let canonical = directory.join(repuestos_autos::identity::DATABASE_FILENAME);
     let temporary = directory.join("restore-recovery.sqlite3.part");
     database_with_category(&source, "rollback-data");
     fs::write(&temporary, b"stale recovery temporary").unwrap();

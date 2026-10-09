@@ -1,14 +1,102 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { createElement } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import type { ProductBrowseResult, SalesProductOriginalResponse } from "../../commands/catalog.ts";
+import { createBrowseProductsCommand, createInventoryBrowseProductsCommand, type ProductBrowseResult, type SalesProductOriginalResponse } from "../../commands/catalog.ts";
 import { SalesProductDetail, ProductBrowser, createProductBrowserFlow, initialProductBrowserState, readCatalogViewMode, readSalesViewMode, writeCatalogViewMode, writeSalesViewMode } from "./product-browser.ts";
 
 const page = { products: [{ product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 4, catalog_unit_price_centavos: 2500, sale_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, purchase_price_centavos: null, primary_location_code: null, revision: 1, attribute_values: [] } satisfies ProductBrowseResult], categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+
+function browserContractDiagnostics(source: string) {
+  const config = ts.readConfigFile("tsconfig.json", ts.sys.readFile);
+  assert.equal(config.error, undefined);
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd());
+  assert.equal(parsed.errors.length, 0);
+  const path = fileURLToPath(new URL("browser-contract-fixture.ts", import.meta.url));
+  const options = { ...parsed.options, noEmit: true };
+  const host = ts.createCompilerHost(options);
+  const read = host.readFile.bind(host), exists = host.fileExists.bind(host);
+  host.readFile = (file) => file === path ? source : read(file);
+  host.fileExists = (file) => file === path || exists(file);
+  return ts.getPreEmitDiagnostics(ts.createProgram([path], options, host));
+}
+
+const browserContractImports = `
+import { createElement } from "react";
+import type { CatalogProductBrowseResult, ProductBrowsePage, SalesBrowsePage, SalesBrowseProduct, InventoryBrowsePage, InventoryBrowseProduct } from "../../commands/catalog.ts";
+import { ProductBrowser, createProductBrowserFlow, initialProductBrowserState, type ProductBrowserProps, type ProductBrowserState } from "./product-browser.ts";
+declare const catalog: ProductBrowsePage;
+declare const sales: SalesBrowsePage;
+declare const inventory: InventoryBrowsePage;
+`;
+
+test("strict browser contracts retain each real projection and callback authority", () => {
+  const diagnostics = browserContractDiagnostics(browserContractImports + `
+const common = { onQueryChange: (value: string) => {}, onCategoryChange: (value: number | null) => {}, onSubmit: () => {}, onPageChange: (page: number) => {} };
+const catalogState = createProductBrowserFlow<CatalogProductBrowseResult>(initialProductBrowserState, { type: "browse_succeeded", request_id: 0, result: catalog });
+const salesState: ProductBrowserState<SalesBrowseProduct> = { ...initialProductBrowserState, result: sales };
+const inventoryState: ProductBrowserState<InventoryBrowseProduct> = { ...initialProductBrowserState, result: inventory };
+const catalogProps: ProductBrowserProps<CatalogProductBrowseResult> = { ...common, state: catalogState, onSelect: product => { const revision: number = product.revision; } };
+createElement(ProductBrowser<CatalogProductBrowseResult>, catalogProps);
+createElement(ProductBrowser<SalesBrowseProduct>, { ...common, state: salesState, onSelect: product => { const cost: number | null = product.purchase_price_centavos; const attributes = product.attribute_values; } });
+createElement(ProductBrowser<InventoryBrowseProduct>, { ...common, state: inventoryState, onSelect: product => { const location: string | null = product.primary_location_code; } });
+`);
+  assert.equal(diagnostics.length, 0, ts.formatDiagnosticsWithColorAndContext(diagnostics, {
+    getCanonicalFileName: path => path, getCurrentDirectory: ts.sys.getCurrentDirectory, getNewLine: () => "\n",
+  }));
+});
+
+test("strict browser contracts reject Inventory and Sales as Catalog authority", () => {
+  const diagnostics = browserContractDiagnostics(browserContractImports + `
+inventory.products[0].revision;
+inventory.products[0].purchase_price_centavos;
+inventory.products[0].attribute_values;
+sales.products[0].revision;
+const catalogState: ProductBrowserState<CatalogProductBrowseResult> = { ...initialProductBrowserState, result: inventory };
+`);
+  assert.deepEqual(diagnostics.map(diagnostic => diagnostic.code), [2339, 2551, 2339, 2339, 2322]);
+  assert.ok(diagnostics.every(diagnostic => diagnostic.file?.fileName.endsWith("browser-contract-fixture.ts")));
+});
+
+test("minimal native Inventory facts survive browser selection without invented rich detail", async () => {
+  const nativeProduct = { product_id: 7, category_id: 2, sku: "GEN-7", name: "Cuaderno", category_name: "Papelería", available_quantity: 0, sale_price_centavos: 50, minimum_sale_price_centavos: 1, primary_location_code: "A-2" };
+  const decoded = await createInventoryBrowseProductsCommand(async (command) => {
+    assert.equal(command, "browse_inventory_products_command");
+    return { products: [nativeProduct], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 };
+  })();
+  let selected: unknown;
+  render(createElement(ProductBrowser, {
+    state: { ...initialProductBrowserState, status: "results", result: decoded },
+    presentation: "sales", allowUnavailableSelection: true,
+    onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event) => event.preventDefault(), onPageChange: () => {},
+    onSelect: (product) => { selected = product; },
+  }));
+  assert.ok(screen.getByText("Bs 0,50"));
+  assert.equal(screen.queryByRole("button", { name: "Ver detalles" }), null);
+  await userEvent.click(screen.getByRole("button", { name: "Seleccionar Cuaderno (SKU: GEN-7)" }));
+  assert.equal(selected, decoded.products[0]);
+  assert.deepEqual(selected, nativeProduct);
+});
+
+test("uses generic singular and plural product counts", () => {
+  const props = {
+    presentation: "sales" as const,
+    state: { ...initialProductBrowserState, status: "results" as const, result: page },
+    onQueryChange: () => {}, onCategoryChange: () => {},
+    onSubmit: (event: { preventDefault(): void }) => event.preventDefault(),
+    onPageChange: () => {}, onSelect: () => {},
+  };
+  const view = render(createElement(ProductBrowser, props));
+  assert.ok(within(screen.getByRole("status")).getByText("Resultados del catálogo: 1 producto", { exact: true }));
+  view.rerender(createElement(ProductBrowser, { ...props, state: { ...props.state, result: { ...page, total: 2 } } }));
+  assert.ok(within(screen.getByRole("status")).getByText("Resultados del catálogo: 2 productos", { exact: true }));
+  assert.doesNotMatch(screen.getByRole("status").textContent ?? "", /repuestos?/);
+});
 
 test("names Seleccionar actions by product and SKU without changing visible copy or selection", async () => {
   const products = [page.products[0], { ...page.products[0], product_id: 2, sku: "FLT-2" }];
@@ -131,13 +219,14 @@ test("Catalog shows the same assigned generated location in Table and Gallery wi
   assert.equal(salesRow.querySelector("[data-ui-sales-primary-location]"), null);
 });
 
-test("Catalog browse falls back to the legacy list price when canonical sale price is absent", () => {
+test("Catalog decoder supplies canonical browser price from a legacy native list price", async () => {
   const legacyProduct = (({ sale_price_centavos: _, ...product }) => ({
     ...product,
     list_price_centavos: 3_000,
     catalog_unit_price_centavos: 2_000,
   }))(page.products[0]);
-  const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [legacyProduct] } };
+  const decoded = await createBrowseProductsCommand(async () => ({ kind: "success", ...page, products: [legacyProduct] }))();
+  const state = { ...initialProductBrowserState, status: "results" as const, result: decoded };
   render(createElement(ProductBrowser, {
     state, presentation: "catalog", catalogViewMode: "table",
     onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event) => event.preventDefault(), onPageChange: () => {},
@@ -185,7 +274,8 @@ test("Sales browse modes retain distinct geometry and protect table price and Ad
   const list = screen.getByRole("list", { name: "Resultados del catálogo" });
   const row = within(list).getByRole("listitem");
   assert.equal(list.getAttribute("data-ui-sales-table"), "true");
-  const actionArea = row.querySelector("[data-ui-product-action]")!;
+  const actionArea = row.querySelector("[data-ui-product-action]");
+  assert.ok(actionArea instanceof HTMLElement);
   assert.equal(actionArea.querySelector("[data-ui-unit-price] [data-ui-money]")?.textContent, "Bs 25,00");
   assert.equal(within(actionArea).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
 
@@ -195,9 +285,11 @@ test("Sales browse modes retain distinct geometry and protect table price and Ad
   const card = within(list).getByRole("listitem");
   assert.equal(card.getAttribute("data-ui-sales-product-card"), "true");
   assert.deepEqual(Array.from(card.children, (child) => child.getAttribute("data-ui-sales-image-area") ? "image" : child.getAttribute("data-ui-sales-product-identity") ? "identity" : child.getAttribute("data-ui-sales-commercial-footer") ? "commercial-footer" : "unexpected"), ["image", "identity", "commercial-footer"]);
-  const viewport = card.querySelector("[data-ui-sales-image-area]")!;
+  const viewport = card.querySelector("[data-ui-sales-image-area]");
+  assert.ok(viewport instanceof HTMLElement);
   assert.equal(within(viewport).getByRole("img", { name: "Sin imagen" }).getAttribute("data-ui-catalog-image-placeholder"), "true");
-  const footer = card.querySelector("[data-ui-sales-commercial-footer]")!;
+  const footer = card.querySelector("[data-ui-sales-commercial-footer]");
+  assert.ok(footer instanceof HTMLElement);
   assert.equal(footer.querySelector("[data-ui-money]")?.textContent, "Bs 25,00");
   assert.equal(within(footer).getByText("Disponible: 4").getAttribute("data-ui-badge"), "available");
   assert.equal(within(footer).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
@@ -253,7 +345,7 @@ test("Sales product identity opens an accessible read-only detail with every ord
     const row = within(screen.getByRole("list", { name: "Resultados del catálogo" })).getByRole("listitem");
     assert.equal(within(row).getByText("Filter").tagName, "SPAN");
     assert.equal(within(row).queryByRole("button", { name: "Filter" }), null);
-    const triggers = within(row).getAllByRole("button", { name: "Ver detalles", exact: true });
+    const triggers = within(row).getAllByRole("button", { name: "Ver detalles" });
     assert.equal(triggers.length, 1);
     const trigger = triggers[0];
     assert.equal(trigger.textContent, "Ver detalles");
@@ -346,7 +438,8 @@ test("Sales view preference is separate from Catalog and defaults safely", () =>
 test("Sales search, category, view, and submit controls share an accessible form toolbar", async () => {
   const props = { state: { ...initialProductBrowserState, status: "results" as const, result: page }, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
   const view = render(createElement(ProductBrowser, props));
-  const form = view.container.querySelector('[data-ui-product-browser="sales"] > form')!;
+  const form = view.container.querySelector('[data-ui-product-browser="sales"] > form');
+  assert.ok(form instanceof HTMLElement);
   const search = within(form).getByRole("searchbox", { name: "Buscar en el catálogo" });
   const category = within(form).getByRole("combobox", { name: "Categoría" });
   const views = within(form).getByRole("group", { name: "Presentación de ventas" });
@@ -389,8 +482,8 @@ test("defensively defaults and persists Catalog view preference", () => {
   assert.equal(readCatalogViewMode(storage), "gallery");
   assert.doesNotThrow(() => writeCatalogViewMode("gallery", storage));
   assert.equal(values.get("catalog.product-browser.view-mode"), "gallery");
-  assert.equal(readCatalogViewMode({ getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } }), "table");
-  assert.doesNotThrow(() => writeCatalogViewMode("gallery", { getItem: () => null, setItem: () => { throw new Error("blocked"); } }));
+  assert.equal(readCatalogViewMode({ getItem: () => { throw new Error("blocked"); } }), "table");
+  assert.doesNotThrow(() => writeCatalogViewMode("gallery", { setItem: () => { throw new Error("blocked"); } }));
 });
 
 test("keeps shared ProductBrowser viewport defaults outside Inventory", async () => {

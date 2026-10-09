@@ -846,7 +846,7 @@ fn persists_confirmed_sales_when_reopening_the_production_database() {
             .as_nanos()
     ));
     let config = production_database_config(&directory);
-    assert_eq!(config.path(), directory.join("repuestos-autos.sqlite3"));
+    assert_eq!(config.path(), directory.join(repuestos_autos::identity::DATABASE_FILENAME));
 
     let (product_id, first) = {
         let mut connection = open_database(&config).unwrap();

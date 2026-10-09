@@ -30,7 +30,7 @@ function MetricsPanel({ label, metrics }: { label: string; metrics: DashboardMet
             : null)))));
 }
 
-function QuietSectionMessage({ kind, children }: { kind: "loading" | "error" | "empty"; children: ReactNode }) {
+function QuietSectionMessage({ kind, children }: { kind: "loading" | "error" | "empty"; children?: ReactNode }) {
   return createElement("div", {
     "aria-busy": kind === "loading" || undefined,
     "data-ui-feedback": kind,
@@ -44,7 +44,7 @@ function SectionMessage({ status, hasItems, loadingMessage, errorMessage, emptyM
   loadingMessage: string;
   errorMessage: string;
   emptyMessage: string;
-  children: ReactNode;
+  children?: ReactNode;
 }) {
   if (status === "loading") return createElement(QuietSectionMessage, { kind: "loading" }, loadingMessage);
   if (status === "error") return createElement(QuietSectionMessage, { kind: "error" }, errorMessage);

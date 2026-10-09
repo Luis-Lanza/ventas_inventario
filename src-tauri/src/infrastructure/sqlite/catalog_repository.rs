@@ -93,7 +93,7 @@ impl BootstrapDemoRepository for SqliteCatalogRepository {
                 sku: product.sku.clone(),
                 name: product.name.clone(),
                 category_id,
-                purchase_price_centavos: 0,
+                purchase_price_centavos: None,
                 sale_price_centavos: product.list_price_centavos,
                 minimum_sale_price_centavos: product.minimum_sale_price_centavos,
                 low_stock_threshold: None,
@@ -106,7 +106,6 @@ impl BootstrapDemoRepository for SqliteCatalogRepository {
                 &[],
                 &plan.categories[product.category_index].name,
                 Some(BOOTSTRAP_DEMO_OCCURRED_AT),
-                false,
             )?;
         }
 
@@ -216,7 +215,6 @@ impl CreateProductRepository for SqliteCatalogRepository {
             values,
             category_name,
             None,
-            true,
         )
     }
 }
@@ -311,9 +309,8 @@ impl SqliteCatalogRepository {
         values: &[ValidatedAttributeValue],
         category_name: &str,
         occurred_at: Option<&str>,
-        has_purchase_price: bool,
     ) -> Result<i64> {
-        transaction.execute("INSERT INTO products (category_id, sku, name, active, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos, low_stock_threshold) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7)", params![input.category_id, input.sku.trim(), input.name.trim(), has_purchase_price.then_some(input.purchase_price_centavos), input.sale_price_centavos, input.minimum_sale_price_centavos, input.low_stock_threshold.unwrap_or(1)])?;
+        transaction.execute("INSERT INTO products (category_id, sku, name, active, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos, low_stock_threshold) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7)", params![input.category_id, input.sku.trim(), input.name.trim(), input.purchase_price_centavos, input.sale_price_centavos, input.minimum_sale_price_centavos, input.low_stock_threshold.unwrap_or(1)])?;
         let product_id = transaction.last_insert_rowid();
         for value in values {
             match value {
@@ -326,10 +323,12 @@ impl SqliteCatalogRepository {
             "INSERT INTO stock_balances (product_id, quantity) VALUES (?1, ?2)",
             params![product_id, input.opening_quantity],
         )?;
-        match occurred_at {
-            Some(occurred_at) => transaction.execute("INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, occurred_at) VALUES (?1, 'opening_stock', ?2, ?3)", params![product_id, input.opening_quantity, occurred_at])?,
-            None => transaction.execute("INSERT INTO inventory_movements (product_id, movement_type, quantity_delta) VALUES (?1, 'opening_stock', ?2)", params![product_id, input.opening_quantity])?,
-        };
+        if input.opening_quantity > 0 {
+            match occurred_at {
+                Some(occurred_at) => transaction.execute("INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, occurred_at) VALUES (?1, 'opening_stock', ?2, ?3)", params![product_id, input.opening_quantity, occurred_at])?,
+                None => transaction.execute("INSERT INTO inventory_movements (product_id, movement_type, quantity_delta) VALUES (?1, 'opening_stock', ?2)", params![product_id, input.opening_quantity])?,
+            };
+        }
         transaction.execute("INSERT INTO catalog_product_search (rowid, product_id, content) VALUES (?1, ?1, lower(?2 || ' ' || ?3 || ' ' || ?4 || ' ' || COALESCE((SELECT group_concat(searchable_value, ' ') FROM product_attribute_values WHERE product_id = ?1), '')))", params![product_id, input.sku.trim(), input.name.trim(), category_name])?;
         Ok(product_id)
     }
@@ -587,7 +586,7 @@ impl CatalogMetadataRepository for SqliteCatalogRepository {
         revision: i64,
         sku: &str,
         name: &str,
-        purchase_price_centavos: i64,
+        purchase_price_centavos: Option<i64>,
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
         low_stock_threshold: i64,

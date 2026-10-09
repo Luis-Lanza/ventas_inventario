@@ -1,4 +1,4 @@
-import { createElement, useEffect, useReducer, useRef, useState } from "react";
+import { createElement, useEffect, useReducer, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { MOVEMENT_TYPES, movementLedgerCommands, type MovementType } from "../../commands/movement-ledger.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
@@ -93,15 +93,15 @@ export function MovementLedgerScreen() {
   createElement(Panel, { label: "Filtros" },
    createElement("div", { "data-ui-ledger-filters": true },
     createElement("div", { "data-ui-ledger-date-row": true },
-     createElement(Field, { kind: "date", label: "Desde", control: createElement("input", { type: "date", required: true, value: state.draft.from, onChange: (event: Event) => change("from", (event.currentTarget as HTMLInputElement).value) }) }),
-     createElement(Field, { kind: "date", label: "Hasta", control: createElement("input", { type: "date", required: true, value: state.draft.to, onChange: (event: Event) => change("to", (event.currentTarget as HTMLInputElement).value) }) })),
+     createElement(Field, { kind: "date", label: "Desde", control: createElement("input", { type: "date", required: true, value: state.draft.from, onChange: (event: ChangeEvent<HTMLInputElement>) => change("from", event.currentTarget.value) }) }),
+     createElement(Field, { kind: "date", label: "Hasta", control: createElement("input", { type: "date", required: true, value: state.draft.to, onChange: (event: ChangeEvent<HTMLInputElement>) => change("to", event.currentTarget.value) }) })),
     createElement("div", { "data-ui-ledger-filter-row": true },
      reportMode !== "gross_profit" ? createElement("div", { "data-ui-ledger-product-filter": true },
-      createElement("form", { "data-ui-ledger-product-search": true, onSubmit: (event: Event) => { event.preventDefault(); searchProducts(state.product_query, 1); } },
-       createElement(Field, { kind: "search", label: "Buscar producto por nombre o SKU", control: createElement("input", { maxLength: 100, value: state.product_query, onChange: (event: Event) => changeProductQuery((event.currentTarget as HTMLInputElement).value), onKeyDown: (event: KeyboardEvent) => { if (event.key === "Enter") { event.preventDefault(); searchProducts(state.product_query, 1); } } }) }),
+      createElement("form", { "data-ui-ledger-product-search": true, onSubmit: (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); searchProducts(state.product_query, 1); } },
+       createElement(Field, { kind: "search", label: "Buscar producto por nombre o SKU", control: createElement("input", { maxLength: 100, value: state.product_query, onChange: (event: ChangeEvent<HTMLInputElement>) => changeProductQuery(event.currentTarget.value), onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => { if (event.key === "Enter") { event.preventDefault(); searchProducts(state.product_query, 1); } } }) }),
        createElement(Action, { variant: "secondary", type: "submit", disabled: !state.product_query.trim() }, "Buscar"))) : null,
-     createElement(Field, { kind: "select", label: "Tipo de movimiento", control: createElement("select", { value: reportMode, onChange: (event: Event) => { const value = (event.currentTarget as HTMLSelectElement).value; setReportMode(value === "gross_profit" ? "gross_profit" : value as MovementType | ""); } }, createElement("option", { value: "" }, "Todos"), ...MOVEMENT_TYPES.map(type => createElement("option", { key: type, value: type }, labels[type])), createElement("option", { value: "gross_profit" }, "Ganancia bruta")) }),
-     createElement("form", { "data-ui-ledger-apply-form": true, onSubmit: (event: Event) => { event.preventDefault(); apply(); } },
+     createElement(Field, { kind: "select", label: "Tipo de movimiento", control: createElement("select", { value: reportMode, onChange: (event: ChangeEvent<HTMLSelectElement>) => { const value = event.currentTarget.value; setReportMode(value === "gross_profit" ? "gross_profit" : value as MovementType | ""); } }, createElement("option", { value: "" }, "Todos"), ...MOVEMENT_TYPES.map(type => createElement("option", { key: type, value: type }, labels[type])), createElement("option", { value: "gross_profit" }, "Ganancia bruta")) }),
+     createElement("form", { "data-ui-ledger-apply-form": true, onSubmit: (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); apply(); } },
       createElement("span", { "aria-hidden": true, "data-ui-ledger-apply-label-space": true }, "Tipo de movimiento"),
       createElement(Action, { variant: "primary", type: "submit", disabled: !filtersValid }, "Aplicar filtros"))),
     reportMode !== "gross_profit" ? createElement("div", { "data-ui-ledger-product-feedback-row": true },
@@ -112,6 +112,6 @@ export function MovementLedgerScreen() {
   appliedMode === "gross_profit" ? createElement(GrossProfitReportScreen, { period: profitPeriod }) : createElement(Panel, { label: "Resultados" },
    createElement("div", { "data-ui-report-actions": true }, createElement(Action, { variant: "secondary", disabled: state.status !== "ready", pending: state.export_status === "pending", pendingLabel: "Exportar PDF", onClick: exportPdf }, "Exportar PDF")),
    status,
-   state.status === "ready" || state.status === "empty" ? createElement("div", { "data-ui-ledger-pages": true }, createElement("span", { role: "status" }, `Página ${state.page}`), createElement(Action, { variant: "secondary", disabled: state.page <= 1 || state.status === "loading", onClick: () => load(state.page - 1) }, "Anterior"), createElement(Action, { variant: "secondary", disabled: !state.has_more || state.status === "loading", onClick: () => load(state.page + 1) }, "Siguiente")) : null,
+   state.status === "ready" || state.status === "empty" ? createElement("div", { "data-ui-ledger-pages": true }, createElement("span", { role: "status" }, `Página ${state.page}`), createElement(Action, { variant: "secondary", disabled: state.page <= 1, onClick: () => load(state.page - 1) }, "Anterior"), createElement(Action, { variant: "secondary", disabled: !state.has_more, onClick: () => load(state.page + 1) }, "Siguiente")) : null,
    exportMessage && (!notifications || state.export_status === "pending") ? createElement(Feedback, { kind: state.export_status === "error" ? "error" : state.export_status === "success" ? "success" : "advisory" }, exportMessage) : null));
 }
