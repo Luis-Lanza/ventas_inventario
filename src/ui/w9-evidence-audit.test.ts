@@ -1517,12 +1517,72 @@ test("W9 binds every changed backup-integrity file to its exact unified-zero dif
   );
 });
 
+// Copied from the independently verified immutable source object, not later HEAD.
+// This declaration identifies the portable fixture; it does not prove the original
+// index state or invocation, and requires no external repository at runtime.
+const originalBackupTaskIdentity = {
+  path: "odd/tasks/backup-restore-integrity-hardening.md",
+  revision: "d055e75d97bdb4bf3160c2065a92ee2a1ac3f1b6",
+  blob: "6a4c31d1de3d44efc7c633adca54a6a184cea39c",
+};
+const readOriginalBackupTask = () => readFileSync(resolve(root, "test/fixtures/w9/backup-restore-integrity-hardening.original.md"));
+
+function assertOriginalBackupTaskEvidence(identity: typeof originalBackupTaskIdentity, contents: Buffer) {
+  // Expected identities are independently established origin receipts, not
+  // values derived from either the fixture declaration or the current document.
+  assert.equal(identity.path, "odd/tasks/backup-restore-integrity-hardening.md", "unexpected historical task source path");
+  assert.equal(identity.revision, "d055e75d97bdb4bf3160c2065a92ee2a1ac3f1b6", "unexpected historical task source revision");
+  assert.equal(identity.blob, "6a4c31d1de3d44efc7c633adca54a6a184cea39c", "unexpected historical task source blob");
+  assertBackupIntegrityDiffAllowlist({ [identity.path]: contents });
+  const blob = createHash("sha1").update(`blob ${contents.length}\0`).update(contents).digest("hex");
+  assert.equal(blob, identity.blob, "unexpected historical task Git blob bytes");
+}
+
 test("W9 preserves the committed backup-integrity task evidence", () => {
   const path = "odd/tasks/backup-restore-integrity-hardening.md";
   assert.equal(isTrackedPath(path), true);
-  const contents = Buffer.from(readFromHead(path));
-  assert.doesNotThrow(() => assertBackupIntegrityDiffAllowlist({ [path]: contents }));
+  assert.match(readFromHead(path), /T9 Close Linux cleanup-accounting gaps/);
+  const contents = readOriginalBackupTask();
+  assert.doesNotThrow(() => assertOriginalBackupTaskEvidence(originalBackupTaskIdentity, contents));
   assert.match(contents.toString("utf8"), /T9 Close Linux cleanup-accounting gaps/);
+});
+
+test("W9 historical backup task evidence rejects one-byte alteration", () => {
+  const contents = readOriginalBackupTask();
+  contents.writeUInt8(contents.readUInt8(0) ^ 1, 0);
+  assert.throws(() => assertOriginalBackupTaskEvidence(originalBackupTaskIdentity, contents), /unexpected backup-integrity diff content/);
+});
+
+test("W9 historical backup task evidence rejects truncation", () => {
+  const contents = readOriginalBackupTask();
+  assert.throws(() => assertOriginalBackupTaskEvidence(originalBackupTaskIdentity, contents.subarray(0, -1)), /unexpected backup-integrity diff content/);
+});
+
+test("W9 historical backup task evidence rejects wrong source path", () => {
+  assert.throws(
+    () => assertOriginalBackupTaskEvidence({ ...originalBackupTaskIdentity, path: "test/fixtures/w9/backup-restore-integrity-hardening.original.md" }, readOriginalBackupTask()),
+    /unexpected historical task source path/,
+  );
+});
+
+test("W9 historical backup task evidence rejects wrong source revision", () => {
+  assert.throws(
+    () => assertOriginalBackupTaskEvidence({ ...originalBackupTaskIdentity, revision: "02b89fa173ebe3f52f9506e626ae5eafd1171103" }, readOriginalBackupTask()),
+    /unexpected historical task source revision/,
+  );
+});
+
+test("W9 historical backup task evidence rejects wrong declared blob", () => {
+  assert.throws(
+    () => assertOriginalBackupTaskEvidence({ ...originalBackupTaskIdentity, blob: "0000000000000000000000000000000000000000" }, readOriginalBackupTask()),
+    /unexpected historical task source blob/,
+  );
+});
+
+test("W9 historical backup task evidence rejects later document substitution", () => {
+  const contents = Buffer.from(readFromHead(originalBackupTaskIdentity.path));
+  assert.match(contents.toString("utf8"), /T9 Close Linux cleanup-accounting gaps/);
+  assert.throws(() => assertOriginalBackupTaskEvidence(originalBackupTaskIdentity, contents), /unexpected backup-integrity diff content/);
 });
 
 test("W9 allows only the bounded owned-Result Windows picker-command diff", () => {
