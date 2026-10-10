@@ -12,7 +12,7 @@ Original feature commits and immutable task documents were recovered. R3 and T3 
 
 ## Authorization
 
-The original authorization covered **R3 only**, its focused checks, and a local work-unit commit, without push or merge. The user subsequently authorized **H2-T3 implementation and focused checks** after the scoped proposal. H3 live-policy changes remain unauthorized. No T3 commit, push, merge or publication has been explicitly requested. The proposed R3 material is approximately 53,718 decoded bytes before JSON encoding; review cost was disclosed.
+The original authorization covered **R3 only**, its focused checks, and a local work-unit commit, without push or merge. The user subsequently authorized **H2-T3 implementation and focused checks** after the scoped proposal. The user then explicitly authorized the local T3 work-unit commit and its closure record. H3 live-policy changes, push, merge and publication remain unauthorized. The proposed R3 material is approximately 53,718 decoded bytes before JSON encoding; review cost was disclosed.
 
 Source edit surfaces for this unit:
 
@@ -72,7 +72,7 @@ Read-only source repository: `/home/luis/velay/repuestos_autos-master`. Parent/w
 ## Tasks
 
 - [x] **H2-R3 — Implement, verify, review, and commit portable R3 material controls.** COMPLETE. Writer and bounded independent checks passed; native review approved and exact acknowledgement consumed; local work-unit commit `7b300adfa0dea8a92883776475c18a9cd99630f7` matches the approved tree. Historical RED has summary evidence only; independent byte coverage excludes 28 licensing-name paths. Original failed attempts remain PARTIAL. No full W9 or broader acceptance claim.
-- [ ] **H2-T3 — Add the corresponding T3 material controls.** IN PROGRESS; implementation and focused checks authorized. Route: delegated writer because the additive audit and readable fixture are two non-trivial files. Preserve original declarations and derivation label. Commit remains pending explicit authorization.
+- [x] **H2-T3 — Add the corresponding T3 material controls.** COMPLETE; writer and independent checks passed, native review approved and acknowledgement consumed, and local work-unit commit `dfcb50b73f17462a81f56782d2345708477765c1` matches the approved tree. Route: delegated two-file writer. Original declarations and derivation label preserved. No full W9 claim or publication.
 - [ ] **H3 — Resolve live pending-candidate policy and preserve every legacy profile before changing dispatch.** PENDING; not authorized. Decisions include clean `NO_CANDIDATE` non-proof, profile ownership, overlap/partial rejection, operations-task early return, and index-versus-baseline representation semantics.
 
 ## H2-R3 acceptance and checks
@@ -146,7 +146,13 @@ Checks:
 - One immutable canonical materialization matched the independently trusted candidate/tree/parent/audit/task identities and exact 5,753-byte task / 45,505-byte payload digests. Runtime validator accepts decoded material without Git; the existing surrounding runner still reads current HEAD.
 - Writer before/after controls preserved the parent task document, R3/H1 fixtures, frozen ledgers, both repositories' HEAD/branch/index/config, and historical status/six untracked document hashes. This is bounded coverage, not unrelated current payload or historical tracked worktree byte hashing.
 - Raw evidence: `/tmp/velay-w9-t3-writer-evidence/` including `positive-red.log`, `positive-green.log`, focused/rejection/type/diff logs, runner exit files, materialization and structural reports.
-- Source writes and writer checks are complete. Parent-requested independent spot check and native source review remain pending; T3 commit is not authorized. No full W9, paused Catalog functional tests, Windows operations, staging or commits ran.
+- Independent verifier `mv2jojiv-3-bkw8` completed: positive spot 1/1, focused R3/T3 18/18, strict types and diff check, each executed once. Independent prefix, task/blob/payload identities, ordered 16-path D/F map, 55 parser roots and bounded before/after preservation passed. Writer raw RED/GREEN logs were corroborated; no historical RED was recreated.
+- Independent evidence: `/tmp/velay-w9-t3-spot-59du29ul/`. No blockers or repository writes observed. Historical-object rematerialization and unrelated payload/worktree hashing were not performed.
+- Post-writer ASSESS was unassessable due to the native untracked-declaration requirement; its high-risk fallback was fulfilled by this independent verifier, not bypassed.
+- Native source review `review-27c91ba1d47e0b62`: medium, 1,158 logical lines, one consolidated reliability model run; approved and exact acknowledgement consumed for target `sha256:9b21c1f8220acf5d790936ed912cef95843f2ccb14ff97d8a58dd0f5a80652b0`, revision `sha256:1a2341fe2925c47254f2fbf353bdec0c3e8d416b06cbf8b23064e0af6d8252e3`. No STATUS after burn. Approved tree: `3e185d12c670ae4b25e28dc904d7dc50c7b0f943`.
+- This passive outcome receipt is parent-owned after verifier settlement and acknowledgement; it does not relabel its own later document bytes as part of the frozen source review. Source and fixture remain unchanged.
+- Explicitly authorized local work-unit commit: `dfcb50b73f17462a81f56782d2345708477765c1` (`test: pin derived historical W9 T3 material`), parent `aaed3862dd3f602eb81e2963bb56b0dbae879315`, tree `3e185d12c670ae4b25e28dc904d7dc50c7b0f943`. Staged tree exactly matched the native-approved tree before commit; the later passive document receipt was preserved in the worktree separately. No push or merge.
+- This closure records the source commit, not its own later bookkeeping commit. Keep that separate receipt in memory; do not create a recursive document/commit loop. No full W9, paused Catalog functional tests or Windows operations ran. Staging and commits belong only to the later authorized parent delivery.
 - Completed VM functional smoke/restoration/restart (Engram 4574) and new-profile first-start acceptance without restart (4695) remain accepted. Older frozen task-document pending lines do not require repeating those tests.
 
 ## Progress and evidence
@@ -202,4 +208,4 @@ Checks:
 
 ## Next step
 
-R3 remains complete and committed locally. Continue the newly authorized H2-T3 unit through one bounded writer and focused checks, then applicable review. Do not reuse burned R3 authority. H3 requires separate authorization, and full W9 closure remains open. The completed VM smoke and first-start acceptance are not pending repeats. No T3 commit, push, merge or publication follows without explicit authorization.
+R3 and T3 are complete and committed locally. H3 live pending-candidate policy is the next separate decision; it remains unauthorized, and full W9 closure remains open. Do not reuse burned review authority or repeat completed VM acceptance. No push, merge, publication or additional implementation follows automatically.
