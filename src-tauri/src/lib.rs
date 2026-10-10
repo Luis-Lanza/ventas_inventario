@@ -310,8 +310,19 @@ fn has_ambiguous_recovery_artifacts(canonical: &std::path::Path) -> bool {
 }
 
 fn recovery_sidecar_entries(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>, ()> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Only a genuinely absent root is fresh storage, not a dangling symlink.
+            return match std::fs::symlink_metadata(root) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+                _ => Err(()),
+            };
+        }
+        Err(_) => return Err(()),
+    };
     let mut sidecars = Vec::new();
-    for entry in std::fs::read_dir(root).map_err(|_| ())? {
+    for entry in entries {
         let entry = entry.map_err(|_| ())?;
         let name = entry.file_name();
         if name.to_string_lossy().starts_with("restore-state.json.previous-") {
@@ -474,6 +485,147 @@ mod database_state_tests {
     use std::{cell::Cell, fs};
 
     use super::*;
+
+    #[test]
+    fn fresh_start_with_absent_root_creates_a_valid_database() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let config = infrastructure::sqlite::production_database_config(&root);
+        let store = BackupStore::new(&root);
+        assert_eq!(
+            fs::symlink_metadata(&root).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert!(!config.path().exists());
+
+        let state = DatabaseState::recover_on_startup(config.clone(), &store);
+
+        let storage = state.with_read(|connection| {
+            validate_restored_database(connection).map_err(|error| format!("{error:?}"))?;
+            connection
+                .query_row(
+                    "SELECT (SELECT application_id FROM pragma_application_id),
+                            (SELECT user_version FROM pragma_user_version),
+                            (SELECT COUNT(*) FROM categories),
+                            (SELECT COUNT(*) FROM products),
+                            (SELECT COUNT(*) FROM stock_balances),
+                            (SELECT COUNT(*) FROM sales)",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, i64>(4)?,
+                            row.get::<_, i64>(5)?,
+                        ))
+                    },
+                )
+                .map_err(|error| error.to_string())
+        });
+        assert_eq!(
+            storage,
+            Ok((
+                i64::from(identity::SQLITE_APPLICATION_ID),
+                infrastructure::sqlite::CURRENT_SCHEMA_VERSION,
+                0,
+                0,
+                0,
+                0,
+            ))
+        );
+        assert!(config.path().is_file());
+        assert_eq!(store.read_restore_state(), Ok(None));
+        assert!(!root.join("restore-state.json").exists());
+        drop(state);
+
+        let reopened = DatabaseState::recover_on_startup(config, &store);
+        assert_eq!(
+            reopened.with_read(|connection| {
+                validate_restored_database(connection).map_err(|error| format!("{error:?}"))
+            }),
+            Ok(())
+        );
+        drop(reopened);
+    }
+
+    #[test]
+    fn fresh_start_with_existing_empty_root_creates_a_valid_database() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        assert_eq!(
+            fs::symlink_metadata(&root).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        fs::create_dir(&root).unwrap();
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        let config = infrastructure::sqlite::production_database_config(&root);
+        let store = BackupStore::new(&root);
+
+        let state = DatabaseState::recover_on_startup(config.clone(), &store);
+
+        assert_eq!(
+            state.with_read(|connection| {
+                validate_restored_database(connection).map_err(|error| format!("{error:?}"))
+            }),
+            Ok(())
+        );
+        assert!(config.path().is_file());
+        assert_eq!(store.read_restore_state(), Ok(None));
+        drop(state);
+    }
+
+    #[test]
+    fn startup_with_regular_file_root_refuses_storage_and_preserves_bytes() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        assert_eq!(
+            fs::symlink_metadata(&root).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        let bytes = b"existing non-directory root";
+        fs::write(&root, bytes).unwrap();
+        let config = infrastructure::sqlite::production_database_config(&root);
+
+        let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&root));
+
+        assert_eq!(
+            state.with_read(|_| Ok(())),
+            Err("database_unavailable".into())
+        );
+        assert!(fs::symlink_metadata(&root).unwrap().file_type().is_file());
+        assert_eq!(fs::read(&root).unwrap(), bytes);
+        assert!(!config.path().exists());
+        drop(state);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_with_dangling_root_symlink_refuses_storage_and_preserves_link() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let target = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        for path in [&root, &target] {
+            assert_eq!(
+                fs::symlink_metadata(path).unwrap_err().kind(),
+                std::io::ErrorKind::NotFound
+            );
+        }
+        std::os::unix::fs::symlink(&target, &root).unwrap();
+        let config = infrastructure::sqlite::production_database_config(&root);
+
+        let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&root));
+
+        assert_eq!(
+            state.with_read(|_| Ok(())),
+            Err("database_unavailable".into())
+        );
+        assert!(fs::symlink_metadata(&root).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_link(&root).unwrap(), target);
+        assert_eq!(
+            fs::symlink_metadata(&target).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert!(!config.path().exists());
+        drop(state);
+    }
 
     fn schema_upgrade_fixture(path: &std::path::Path) {
         let connection = rusqlite::Connection::open(path).unwrap();
