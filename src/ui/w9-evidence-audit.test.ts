@@ -2576,3 +2576,230 @@ test("W9 historical R3 material rejects metadata and body self-authentication", 
     assert.throws(() => assertHistoricalR3Material(value.material), /payload declared (digest|length)/);
   }
 });
+
+// T3 historical identity only; this pure seam never reads current Git or index.
+const historicalT3TaskSha256 = "8485f4af59abeebdfc02b875593695e251adcb0cc0fc7cdad10df566afc39848";
+const historicalT3PayloadSha256 = "b7e94178ef05299dddfa5bd001206794afd4440564d802a519b156354b0826b3";
+const historicalT3OrderedPaths = [
+  "odd/tasks/catalog-access-and-profit-report.md",
+  "src-tauri/src/application/reporting/mod.rs",
+  "src-tauri/src/commands/mod.rs",
+  "src-tauri/src/commands/gross_profit.rs",
+  "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
+  "src-tauri/src/lib.rs",
+  "src-tauri/tests/gross_profit_report.rs",
+  "src/commands/gross-profit.ts",
+  "src/commands/gross-profit.test.ts",
+  "src/commands/sales-history.ts",
+  "src/commands/sales-history.test.ts",
+  "src/ui/app.ts",
+  "src/ui/app-shell.mounted.test.ts",
+  "src/ui/reports/gross-profit-report-screen.ts",
+  "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+
+function assertHistoricalT3Material(value: unknown): void {
+  historicalR3Record(value, ["profile", "provenance", "candidate", "candidateTree", "parentBaseline", "trackingMap", "sourceAuditBlob", "task", "payload"], "material");
+  assert.equal(value.profile, "gross-profit-report-t3", "profile identity");
+  assert.equal(value.provenance, "DERIVED", "material provenance");
+  assert.equal(value.candidate, "d7001db633343679a503a9b339afaa112a9daf8a", "candidate identity");
+  assert.equal(value.candidateTree, "11e40cca39c12e1c5d93607660ae57db4b49a9c9", "candidate tree identity");
+  historicalR3Record(value.parentBaseline, ["provenance", "revision"], "parent baseline");
+  assert.equal(value.parentBaseline.provenance, "DERIVED", "parent baseline provenance");
+  assert.equal(value.parentBaseline.revision, "f1bafb5af15bcdf4407286bc928072220fb439d5", "parent baseline identity");
+  historicalR3Record(value.trackingMap, ["provenance", "basis"], "tracking map");
+  assert.equal(value.trackingMap.provenance, "DERIVED", "tracking map provenance");
+  assert.equal(value.trackingMap.basis, "parent-tree-membership", "tracking map basis");
+  assert.equal(value.sourceAuditBlob, "319b9c03f8ab67f5ebf3f11759b94601a3853c50", "source audit identity");
+  historicalR3Record(value.task, ["path", "blob", "bytes", "sha256", "chunks"], "task");
+  assert.equal(value.task.path, historicalT3OrderedPaths[0], "task source path");
+  assert.equal(value.task.blob, "7e5b4c3d061e8f0dba478a2391174cceed8ec1c7", "task source blob");
+  assert.equal(value.task.bytes, 5753, "task declared length");
+  assert.equal(value.task.sha256, historicalT3TaskSha256, "task declared digest");
+  assert.ok(historicalR3Chunks(value.task.chunks), "task: expected UTF-8 string chunks");
+  const taskBytes = Buffer.from(value.task.chunks.join(""), "utf8");
+  assert.equal(taskBytes.length, 5753, "task byte length");
+  assert.equal(createHash("sha256").update(taskBytes).digest("hex"), historicalT3TaskSha256, "task byte digest");
+  assert.equal(createHash("sha1").update(`blob ${taskBytes.length}\0`).update(taskBytes).digest("hex"), "7e5b4c3d061e8f0dba478a2391174cceed8ec1c7", "task Git blob identity");
+  historicalR3Record(value.payload, ["bytes", "sha256", "entries"], "payload");
+  assert.equal(value.payload.bytes, 45505, "payload declared length");
+  assert.equal(value.payload.sha256, historicalT3PayloadSha256, "payload declared digest");
+  assert.ok(Array.isArray(value.payload.entries), "payload: expected entries");
+  assert.equal(value.payload.entries.length, 16, "payload path count");
+  const representations = value.payload.entries.map((entry: unknown, index: number) => {
+    historicalR3Record(entry, ["path", "kind", "chunks"], "entry");
+    assert.equal(entry.path, historicalT3OrderedPaths[index], "payload path order");
+    assert.equal(entry.kind, ["D", "D", "D", "F", "D", "D", "F", "F", "F", "D", "D", "D", "D", "F", "F", "D"][index], "representation kind");
+    assert.ok(historicalR3Chunks(entry.chunks), "entry: expected UTF-8 string chunks");
+    // Preserve historical normalization, NUL separators and exact final newlines.
+    return `${entry.path}\0${entry.chunks.join("")}`;
+  });
+  const payloadBytes = Buffer.from(representations.join("\0"), "utf8");
+  assert.equal(payloadBytes.length, 45505, "payload byte length");
+  assert.equal(createHash("sha256").update(payloadBytes).digest("hex"), historicalT3PayloadSha256, "payload byte digest");
+}
+
+function readHistoricalT3Material(): unknown {
+  return JSON.parse(read("test/fixtures/w9/gross-profit-report-t3.derived.json"));
+}
+
+test("W9 historical T3 material accepts exact derived evidence", () => {
+  assert.doesNotThrow(() => assertHistoricalT3Material(readHistoricalT3Material()));
+});
+
+// Fresh decoded material for each rejection; no fixture metadata is trusted.
+function historicalT3Mutation() {
+  const material = readHistoricalT3Material();
+  historicalR3Record(material, ["profile", "provenance", "candidate", "candidateTree", "parentBaseline", "trackingMap", "sourceAuditBlob", "task", "payload"], "test material");
+  historicalR3Record(material.task, ["path", "blob", "bytes", "sha256", "chunks"], "test task");
+  historicalR3Record(material.payload, ["bytes", "sha256", "entries"], "test payload");
+  historicalR3Record(material.parentBaseline, ["provenance", "revision"], "test parent");
+  historicalR3Record(material.trackingMap, ["provenance", "basis"], "test tracking map");
+  assert.ok(historicalR3Chunks(material.task.chunks));
+  assert.ok(Array.isArray(material.payload.entries));
+  const entries = material.payload.entries.map((entry: unknown) => {
+    historicalR3Record(entry, ["path", "kind", "chunks"], "test entry");
+    assert.ok(historicalR3Chunks(entry.chunks));
+    return { record: entry, chunks: entry.chunks };
+  });
+  return { material, task: material.task, taskChunks: material.task.chunks,
+    payload: material.payload, entries, parent: material.parentBaseline, tracking: material.trackingMap };
+}
+
+test("W9 historical T3 material rejects byte tampering truncation and newline changes", () => {
+  const mutations: [((body: string) => string), RegExp][] = [
+    [body => `!${body.slice(1)}`, /byte digest/],
+    [body => body.slice(0, -1), /byte length/],
+    [body => `${body}\n`, /byte length/],
+    [body => body.replaceAll("\n", "\r\n"), /byte length/],
+    [body => body.replace("\n", "\r"), /byte digest/],
+  ];
+  for (const [mutate, rejection] of mutations) {
+    const task = historicalT3Mutation();
+    task.task.chunks = [mutate(task.taskChunks.join(""))];
+    assert.throws(() => assertHistoricalT3Material(task.material), rejection);
+    for (let index = 0; index < 16; index += 1) {
+      const value = historicalT3Mutation();
+      value.entries[index].record.chunks = [mutate(value.entries[index].chunks.join(""))];
+      assert.throws(() => assertHistoricalT3Material(value.material), rejection);
+    }
+  }
+  const audit = historicalT3Mutation();
+  audit.entries[15].record.chunks = [audit.entries[15].chunks.join("").replace("<SELF_INDEX>", "<SELF_OTHER>")];
+  assert.throws(() => assertHistoricalT3Material(audit.material), /payload byte digest/);
+});
+
+test("W9 historical T3 material rejects path and representation substitutions", () => {
+  for (let index = 0; index < 16; index += 1) {
+    const missing = historicalT3Mutation();
+    missing.payload.entries = missing.entries.filter((_, position) => position !== index).map(entry => entry.record);
+    assert.throws(() => assertHistoricalT3Material(missing.material), /payload path count/);
+    const changed = historicalT3Mutation();
+    changed.entries[index].record.path = `./${changed.entries[index].record.path}`;
+    assert.throws(() => assertHistoricalT3Material(changed.material), /payload path order/);
+    const kind = historicalT3Mutation();
+    kind.entries[index].record.kind = kind.entries[index].record.kind === "D" ? "F" : "D";
+    assert.throws(() => assertHistoricalT3Material(kind.material), /representation kind/);
+  }
+  const extra = historicalT3Mutation();
+  extra.payload.entries = [...extra.entries.map(entry => entry.record), extra.entries[0].record];
+  assert.throws(() => assertHistoricalT3Material(extra.material), /payload path count/);
+  const reversed = historicalT3Mutation();
+  reversed.payload.entries = reversed.entries.map(entry => entry.record).reverse();
+  assert.throws(() => assertHistoricalT3Material(reversed.material), /payload path order/);
+  const duplicate = historicalT3Mutation();
+  duplicate.entries[1].record.path = duplicate.entries[0].record.path;
+  assert.throws(() => assertHistoricalT3Material(duplicate.material), /payload path order/);
+});
+
+test("W9 historical T3 material binds independent metadata and provenance", () => {
+  const changes: ["material" | "parent" | "tracking" | "task" | "payload", string, unknown, RegExp][] = [
+    ["material", "profile", "gross-profit-report-t4", /profile identity/],
+    ["material", "provenance", "ORIGINAL_EXECUTION", /material provenance/],
+    ["material", "candidate", "0".repeat(40), /candidate identity/],
+    ["material", "candidateTree", "0".repeat(40), /candidate tree identity/],
+    ["material", "sourceAuditBlob", "0".repeat(40), /source audit identity/],
+    ["parent", "revision", "0".repeat(40), /parent baseline identity/],
+    ["parent", "provenance", "ORIGINAL_HEAD", /parent baseline provenance/],
+    ["tracking", "provenance", "ORIGINAL_INDEX", /tracking map provenance/],
+    ["tracking", "basis", "current-index", /tracking map basis/],
+    ["task", "path", "odd/tasks/substituted.md", /task source path/],
+    ["task", "blob", "0".repeat(40), /task source blob/],
+    ["task", "bytes", "5753", /task declared length/],
+    ["task", "sha256", "0".repeat(64), /task declared digest/],
+    ["payload", "bytes", "45505", /payload declared length/],
+    ["payload", "sha256", "0".repeat(64), /payload declared digest/],
+  ];
+  for (const [target, key, replacement, rejection] of changes) {
+    const value = historicalT3Mutation();
+    value[target][key] = replacement;
+    assert.throws(() => assertHistoricalT3Material(value.material), rejection);
+  }
+});
+
+test("W9 historical T3 material rejects unknown fields missing fields and malformed types", () => {
+  for (let index = 0; index < 21; index += 1) {
+    for (const action of ["extra", "missing"]) {
+      const value = historicalT3Mutation();
+      const records = [value.material, value.parent, value.tracking, value.task, value.payload,
+        ...value.entries.map(entry => entry.record)];
+      const target = records[index];
+      if (action === "extra") target.untrustedExecutionReceipt = "PASS";
+      else delete target[Object.keys(target)[0]];
+      assert.throws(() => assertHistoricalT3Material(value.material), /unexpected fields/);
+    }
+  }
+  for (const invalid of [null, undefined, [], "material", 5753, true]) {
+    assert.throws(() => assertHistoricalT3Material(invalid), /material: expected object/);
+  }
+  for (const key of ["parentBaseline", "trackingMap", "task", "payload"]) {
+    const value = historicalT3Mutation();
+    value.material[key] = null;
+    assert.throws(() => assertHistoricalT3Material(value.material), /expected object/);
+  }
+  for (const chunks of ["not an array", [123], [null], ["\ud800"]]) {
+    const task = historicalT3Mutation();
+    task.task.chunks = chunks;
+    assert.throws(() => assertHistoricalT3Material(task.material), /task: expected UTF-8 string chunks/);
+    const entry = historicalT3Mutation();
+    entry.entries[0].record.chunks = chunks;
+    assert.throws(() => assertHistoricalT3Material(entry.material), /entry: expected UTF-8 string chunks/);
+  }
+  const entries = historicalT3Mutation();
+  entries.payload.entries = {};
+  assert.throws(() => assertHistoricalT3Material(entries.material), /payload: expected entries/);
+  const entry = historicalT3Mutation();
+  entry.payload.entries = [null, ...entry.entries.slice(1).map(value => value.record)];
+  assert.throws(() => assertHistoricalT3Material(entry.material), /entry: expected object/);
+});
+
+test("W9 historical T3 material rejects synthetic earlier and later task substitutions", () => {
+  // Synthetic UTF-8 revisions, not independently recovered historical versions.
+  const earlier = historicalT3Mutation();
+  earlier.task.chunks = earlier.taskChunks.slice(0, -1);
+  assert.throws(() => assertHistoricalT3Material(earlier.material), /task byte length/);
+  const later = historicalT3Mutation();
+  later.taskChunks.push("\nSynthetic later task revision: additional completion record.\n");
+  assert.throws(() => assertHistoricalT3Material(later.material), /task byte length/);
+});
+
+test("W9 historical T3 material rejects metadata and body self-authentication", () => {
+  for (const claim of ["sha256", "blob", "bytes", "all"]) {
+    const value = historicalT3Mutation();
+    const bytes = Buffer.from(value.taskChunks.join("").slice(0, -1), "utf8");
+    value.task.chunks = [bytes.toString("utf8")];
+    if (claim === "sha256" || claim === "all") value.task.sha256 = createHash("sha256").update(bytes).digest("hex");
+    if (claim === "blob" || claim === "all") value.task.blob = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+    if (claim === "bytes" || claim === "all") value.task.bytes = bytes.length;
+    assert.throws(() => assertHistoricalT3Material(value.material), /task (declared (digest|length)|source blob)/);
+  }
+  for (const claim of ["sha256", "bytes", "all"]) {
+    const value = historicalT3Mutation();
+    value.entries[3].chunks[0] = value.entries[3].chunks[0].slice(1);
+    const bytes = Buffer.from(value.entries.map(entry => `${entry.record.path}\0${entry.chunks.join("")}`).join("\0"), "utf8");
+    if (claim === "sha256" || claim === "all") value.payload.sha256 = createHash("sha256").update(bytes).digest("hex");
+    if (claim === "bytes" || claim === "all") value.payload.bytes = bytes.length;
+    assert.throws(() => assertHistoricalT3Material(value.material), /payload declared (digest|length)/);
+  }
+});

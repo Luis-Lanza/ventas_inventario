@@ -12,7 +12,7 @@ Original feature commits and immutable task documents were recovered. R3 and T3 
 
 ## Authorization
 
-The user authorized **R3 only**, its focused checks, and a local work-unit commit, without push or merge. T3 implementation and live-policy changes remain unauthorized. The proposed R3 material is approximately 53,718 decoded bytes before JSON encoding; review cost was disclosed.
+The original authorization covered **R3 only**, its focused checks, and a local work-unit commit, without push or merge. The user subsequently authorized **H2-T3 implementation and focused checks** after the scoped proposal. H3 live-policy changes remain unauthorized. No T3 commit, push, merge or publication has been explicitly requested. The proposed R3 material is approximately 53,718 decoded bytes before JSON encoding; review cost was disclosed.
 
 Source edit surfaces for this unit:
 
@@ -72,7 +72,7 @@ Read-only source repository: `/home/luis/velay/repuestos_autos-master`. Parent/w
 ## Tasks
 
 - [x] **H2-R3 — Implement, verify, review, and commit portable R3 material controls.** COMPLETE. Writer and bounded independent checks passed; native review approved and exact acknowledgement consumed; local work-unit commit `7b300adfa0dea8a92883776475c18a9cd99630f7` matches the approved tree. Historical RED has summary evidence only; independent byte coverage excludes 28 licensing-name paths. Original failed attempts remain PARTIAL. No full W9 or broader acceptance claim.
-- [ ] **H2-T3 — Add the corresponding T3 material controls.** PENDING; not authorized. Separate reviewable work unit, preserve its original declarations and derivation label.
+- [ ] **H2-T3 — Add the corresponding T3 material controls.** IN PROGRESS; implementation and focused checks authorized. Route: delegated writer because the additive audit and readable fixture are two non-trivial files. Preserve original declarations and derivation label. Commit remains pending explicit authorization.
 - [ ] **H3 — Resolve live pending-candidate policy and preserve every legacy profile before changing dispatch.** PENDING; not authorized. Decisions include clean `NO_CANDIDATE` non-proof, profile ownership, overlap/partial rejection, operations-task early return, and index-versus-baseline representation semantics.
 
 ## H2-R3 acceptance and checks
@@ -84,6 +84,70 @@ Read-only source repository: `/home/luis/velay/repuestos_autos-master`. Parent/w
 5. Strict test types: `./node_modules/.bin/tsc --noEmit -p tsconfig.tests.json`. Preserve test discovery/configuration and the baseline root classification: 55 roots, comprising 53 TS tests, one JS test, and `test/react-dom.ts`. No arbitrary 53-root requirement.
 6. `git diff --check`, no unrelated edits, unchanged legacy code/H1/assertions, and bounded before/after integrity checks for current/source repositories. Do not hide failures by reformatting or normalizing unrelated content.
 7. Native review/assessment follows the current user-owned mode and exact provider envelopes. A fixture adds meaningful review workload; forecast does not authorize push/merge. Parent owns staging and commit after checks and applicable review, not the writer.
+
+## H2-T3 implementation scope and checks
+
+Allowed worker edit surfaces:
+
+- `src/ui/w9-evidence-audit.test.ts` (append-only T3 controls; preserve the entire current prefix, including R3)
+- `test/fixtures/w9/gross-profit-report-t3.derived.json` (new readable fixture)
+
+The agreed seam follows R3: decoded unknown historical material enters a pure validator and produces acceptance or a specific rejection. It must not acquire or approve a live candidate. Keep existing R3 code and fixtures unchanged; no shared refactor is needed for this unit.
+
+Independent trusted anchors recovered in Engram observations 4822 and 4829:
+
+- Candidate: `d7001db633343679a503a9b339afaa112a9daf8a`
+- Candidate tree: `11e40cca39c12e1c5d93607660ae57db4b49a9c9` (parent read-only Git resolution in this continuation)
+- Derived base hypothesis / direct parent: `f1bafb5af15bcdf4407286bc928072220fb439d5`
+- Original audit blob: `319b9c03f8ab67f5ebf3f11759b94601a3853c50`
+- Task path: `odd/tasks/catalog-access-and-profit-report.md`
+- Task blob: `7e5b4c3d061e8f0dba478a2391174cceed8ec1c7`
+- Full task: 5,753 bytes; SHA-256 `8485f4af59abeebdfc02b875593695e251adcb0cc0fc7cdad10df566afc39848`
+- Derived payload: 45,505 bytes; SHA-256 `b7e94178ef05299dddfa5bd001206794afd4440564d802a519b156354b0826b3`
+
+Ordered representations:
+
+1. D `odd/tasks/catalog-access-and-profit-report.md`
+2. D `src-tauri/src/application/reporting/mod.rs`
+3. D `src-tauri/src/commands/mod.rs`
+4. F `src-tauri/src/commands/gross_profit.rs`
+5. D `src-tauri/src/infrastructure/sqlite/dashboard_repository.rs`
+6. D `src-tauri/src/lib.rs`
+7. F `src-tauri/tests/gross_profit_report.rs`
+8. F `src/commands/gross-profit.ts`
+9. F `src/commands/gross-profit.test.ts`
+10. D `src/commands/sales-history.ts`
+11. D `src/commands/sales-history.test.ts`
+12. D `src/ui/app.ts`
+13. D `src/ui/app-shell.mounted.test.ts`
+14. F `src/ui/reports/gross-profit-report-screen.ts`
+15. F `src/ui/reports/gross-profit-report-screen.mounted.test.ts`
+16. D `src/ui/w9-evidence-audit.test.ts`
+
+Materialize once from the previously authorized historical root's immutable objects. Confirm the exact paths and normalizer against the original audit before writing; do not search variants to fit the digest. Reuse the R3 readable schema, original audit normalization and canonical diff acquisition. Historical object reads remain read-only and runtime acceptance must not require that clone. This is about 51,258 decoded bytes before JSON encoding, so the readable fixture intrinsically exceeds the 400-line planning heuristic; retain readable bytes and the single coherent material-control unit rather than compressing or splitting it artificially.
+
+Checks:
+
+1. Preserve actual raw logs for a selected positive behavioral RED against a type-correct stub, then GREEN; proceed in vertical behavior slices.
+2. Focused closure: `./node_modules/.bin/tsx --test --test-name-pattern='^W9 historical (R3|T3) material' src/ui/w9-evidence-audit.test.ts`. Run only historical material controls, not the full W9 or paused Catalog functional tests.
+3. Strict types: `./node_modules/.bin/tsc --noEmit -p tsconfig.tests.json`; preserve the existing 55 roots (53 TS tests, one JS test and support).
+4. Exercise T3 task/payload byte tampering, truncation/newline changes, path omission/addition/order, profile/revision/source/blob/kind changes, unknown fields and fixture metadata self-authentication. Older/later substitutions are synthetic unless independently recovered as actual historical versions.
+5. `git diff --check`; exact unchanged pre-existing audit prefix and R3/H1 fixtures; narrow before/after Git metadata, relevant frozen files and historical six-document preservation. Use Git-resolved administrative paths and no private licensing/signing payload reads or large new integrity framework.
+6. Writer self-verification, parent spot check and native review under the user-owned RDD switch; follow assessment for any required independent verifier. No native approval or functional result is assumed in advance.
+
+## H2-T3 progress
+
+- Current baseline: clean `feat/velay-retail-v1`, HEAD `aaed3862dd3f602eb81e2963bb56b0dbae879315`.
+- Read-only explorer `mv2ja334-1-ycp4` mapped the R3 pattern and T3 declarations; it lacks memory and shell tools. Parent forwarded exact recovered anchors once. Its specifically located older temporary artifacts are unavailable, not recreated.
+- Parent resolved the candidate tree and direct parent with read-only Git object commands; packed current-repository object availability remains unknown and is not needed at runtime.
+- Settled writer `mv2jfcl1-2-4dxw`: completed writer scope. Audit append-only +227 lines; exact original 137,307-byte prefix preserved. New readable T3 fixture: 861 lines, 65,186 bytes. Total source/fixture review delta: 1,088 lines.
+- Writer observed actual selected-positive RED (1 failed, exit 1, intended stub AssertionError), then GREEN (1 passed, exit 0). Parent read the raw RED log and the complete appended validator/tests. Six rejection tests exercise 223 attempts; their incremental GREEN results do not claim additional behavioral RED.
+- Writer focused R3/T3 closure: 18/18 passed; strict types once and diff check passed. Existing 55 parser roots and original prefix/order preserved; zero new casts, any or suppressions reported.
+- One immutable canonical materialization matched the independently trusted candidate/tree/parent/audit/task identities and exact 5,753-byte task / 45,505-byte payload digests. Runtime validator accepts decoded material without Git; the existing surrounding runner still reads current HEAD.
+- Writer before/after controls preserved the parent task document, R3/H1 fixtures, frozen ledgers, both repositories' HEAD/branch/index/config, and historical status/six untracked document hashes. This is bounded coverage, not unrelated current payload or historical tracked worktree byte hashing.
+- Raw evidence: `/tmp/velay-w9-t3-writer-evidence/` including `positive-red.log`, `positive-green.log`, focused/rejection/type/diff logs, runner exit files, materialization and structural reports.
+- Source writes and writer checks are complete. Parent-requested independent spot check and native source review remain pending; T3 commit is not authorized. No full W9, paused Catalog functional tests, Windows operations, staging or commits ran.
+- Completed VM functional smoke/restoration/restart (Engram 4574) and new-profile first-start acceptance without restart (4695) remain accepted. Older frozen task-document pending lines do not require repeating those tests.
 
 ## Progress and evidence
 
@@ -138,4 +202,4 @@ Read-only source repository: `/home/luis/velay/repuestos_autos-master`. Parent/w
 
 ## Next step
 
-R3 work-unit implementation is complete and committed locally. Close this passive parent-owned task record without reusing source review authority or introducing recursive commit receipts. T3 material controls and H3 live-candidate policy require separate authorization; remaining W9 and Windows/business acceptance remain open. No push, merge or additional implementation follows automatically.
+R3 remains complete and committed locally. Continue the newly authorized H2-T3 unit through one bounded writer and focused checks, then applicable review. Do not reuse burned R3 authority. H3 requires separate authorization, and full W9 closure remains open. The completed VM smoke and first-start acceptance are not pending repeats. No T3 commit, push, merge or publication follows without explicit authorization.
