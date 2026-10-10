@@ -12,7 +12,7 @@ Original feature commits and immutable task documents were recovered. R3 and T3 
 
 ## Authorization
 
-The original authorization covered **R3 only**, its focused checks, and a local work-unit commit, without push or merge. The user subsequently authorized **H2-T3 implementation and focused checks** after the scoped proposal. The user then explicitly authorized the local T3 work-unit commit and its closure record. H3 live-policy changes, push, merge and publication remain unauthorized. The proposed R3 material is approximately 53,718 decoded bytes before JSON encoding; review cost was disclosed.
+The original authorization covered **R3 only**, its focused checks, and a local work-unit commit, without push or merge. The user subsequently authorized **H2-T3 implementation and focused checks** after the scoped proposal. The user then explicitly authorized the local T3 work-unit commit and its closure record. The user subsequently authorized bounded H3 implementation and explicitly chose conservative selection: preserve existing acquisition/representation semantics, require one complete owned profile, and reject mixed, partial or extra paths. H3 commit, push, merge and publication remain unauthorized. The proposed R3 material is approximately 53,718 decoded bytes before JSON encoding; review cost was disclosed.
 
 Source edit surfaces for this unit:
 
@@ -73,7 +73,7 @@ Read-only source repository: `/home/luis/velay/repuestos_autos-master`. Parent/w
 
 - [x] **H2-R3 — Implement, verify, review, and commit portable R3 material controls.** COMPLETE. Writer and bounded independent checks passed; native review approved and exact acknowledgement consumed; local work-unit commit `7b300adfa0dea8a92883776475c18a9cd99630f7` matches the approved tree. Historical RED has summary evidence only; independent byte coverage excludes 28 licensing-name paths. Original failed attempts remain PARTIAL. No full W9 or broader acceptance claim.
 - [x] **H2-T3 — Add the corresponding T3 material controls.** COMPLETE; writer and independent checks passed, native review approved and acknowledgement consumed, and local work-unit commit `dfcb50b73f17462a81f56782d2345708477765c1` matches the approved tree. Route: delegated two-file writer. Original declarations and derivation label preserved. No full W9 claim or publication.
-- [ ] **H3 — Resolve live pending-candidate policy and preserve every legacy profile before changing dispatch.** PENDING; not authorized. Decisions include clean `NO_CANDIDATE` non-proof, profile ownership, overlap/partial rejection, operations-task early return, and index-versus-baseline representation semantics.
+- [ ] **H3 — Resolve live pending-candidate policy and preserve every legacy profile before changing dispatch.** VERIFIED; conservative selection implemented, writer and independent checks passed, native source review approved and acknowledgement consumed. Route: delegated writer for non-trivial policy/dispatch preparation. Acquisition, six original profiles, validators and material controls preserved. Work-unit closure awaits explicit local commit authorization.
 
 ## H2-R3 acceptance and checks
 
@@ -155,6 +155,42 @@ Checks:
 - This closure records the source commit, not its own later bookkeeping commit. Keep that separate receipt in memory; do not create a recursive document/commit loop. No full W9, paused Catalog functional tests or Windows operations ran. Staging and commits belong only to the later authorized parent delivery.
 - Completed VM functional smoke/restoration/restart (Engram 4574) and new-profile first-start acceptance without restart (4695) remain accepted. Older frozen task-document pending lines do not require repeating those tests.
 
+## H3 scope and confirmed policy
+
+Allowed worker source surface: `src/ui/w9-evidence-audit.test.ts` only. The parent owns this task record; no fixture, application, package, configuration or test-discovery changes.
+
+The user selected `retain_strict`: keep HEAD-to-worktree changes plus nonignored untracked paths, with existing current-index membership deciding D/F representations. Do not adopt HEAD-membership semantics or refresh any declared digest.
+
+Test at the agreed pure selection seam: acquired paths enter; explicit `NO_CANDIDATE` (non-proof), one selected profile with owning wrapper, or rejection leaves. Selection is not byte acceptance. Empty means no candidate only; never approve live changes by validating historical fixtures. Do not silently exempt this task document or audit edits from candidate ownership.
+
+Preserve all six original profiles and their substantive controls:
+
+- Operations wrapper: desktop fixture (three paths, exact task/lib diff digests and marker), R4 (thirteen paths and substantive export/PDF/resource/date/returns/sign/cancellation markers), R3 (eight paths and exact task/payload digests).
+- Catalog wrapper: T3 (sixteen paths and exact task/payload digests), responsive table (five paths and normalized aggregate digest), Catalog access (twelve paths, normalized aggregate digest and task markers).
+
+Classify against the entire acquired path set, not a filtered intersection. Require exactly one complete profile; reject partial, mixed, ambiguous, unrelated or extra paths. Retain operations delegation only after complete operations-profile ownership has been established; a changed operations task alone must not bypass Catalog assertions. Keep protected-scope policy independent and unchanged, including its existing baseline rules; it still runs for an empty candidate. Keep original task/digest declarations, normalizers, validators, R4 markers, H1 and R3/T3 material controls unchanged.
+
+## H3 checks and progress
+
+- Baseline: clean `feat/velay-retail-v1`, HEAD `cecc6c8bec9ae954c02625427a8fc46048a0eb0c`.
+- Read-only mapper `mv2kox1c-4-o8yp` settled. Evidence: acquisition/index membership at audit 1099-1110, original dispatch 1636-1687, independent protected policy 1690-1707. The two wrappers jointly own six profiles; R3 is a subset of R4 and shared `lib.rs` alone does not establish T3 ownership.
+- Parent spot-read both complete wrappers. The user explicitly chose retained semantics and strict rejection over companion-path exceptions (Engram 4958). No further product decision is pending for this scope.
+- Test-first vertical slices with preserved raw RED/GREEN logs: no-candidate non-proof, every complete original profile/owner, partial/mixed/extra rejection, shared-path ambiguity and safe operations delegation. Existing validators remain the only substantive acceptance route.
+- Focused new policy checks: `./node_modules/.bin/tsx --test --test-name-pattern='^W9 current candidate policy' src/ui/w9-evidence-audit.test.ts`.
+- Focused material regression checks: `./node_modules/.bin/tsx --test --test-name-pattern='^W9 historical (R3|T3) material|^W9 historical backup task evidence|^W9 preserves the committed backup-integrity task evidence$' src/ui/w9-evidence-audit.test.ts`. Confirm actual named cases/counts; zero selected is not PASS.
+- Strict types once: `./node_modules/.bin/tsc --noEmit -p tsconfig.tests.json`; retain the same 55 parser roots. `git diff --check`, preserved substantive validators/normalizers/fixtures/protected policy/frozen ledgers, narrow before/after metadata and parent-document preservation.
+- Focused runner initialization still reads current HEAD/package/CSS. No full `test:w9`, paused Catalog functional tests, Windows/VM operations, dependencies, hash refresh, authority recovery, staging, commit or publishing are authorized. Unexpected genuine failures require STOP with preserved evidence; planned behavioral RED is distinct.
+- Native review follows the current user-owned mode and exact envelopes; functional writer checks plus parent spot check and assessment-directed independent verification remain applicable. Nothing is approved in advance.
+- Settled writer `mv2l9w5u-5-l3d5` completed audit-only H3: +219/-15 lines, selection/tests after original line 1005 and routing in the two original wrappers. Operations owns desktop/R4/R3; Catalog owns T3/responsive/access. Selection establishes path ownership only, not byte approval.
+- Actual RED: empty selection failed 1 case and complete profiles failed 6 cases with intended AssertionErrors, each exit 1. Corresponding GREEN passed 1/1 and 6/6, exit 0. Five rejection/order/overlap tests were already GREEN; no additional RED claimed. Raw evidence: `/tmp/velay-w9-h3-writer-cecc6c8/` including `receipt.txt` and separate runner logs/exits.
+- Writer closure: new policy 12/12 and historical material regression 25/25 passed, strict types and diff check exit 0. Same 55 roots retained. Structural reconstruction preserved original code outside inserted policy/tests and two routing wrappers, with Catalog inline substantive logic and all other validators/normalizers/markers/protected checks unchanged.
+- Writer narrow preservation checks passed: HEAD/branch/index/config, parent document, fixtures, frozen ledgers and package/test configuration. Parent read the complete source diff and receipt. No broad unrelated payload hashing claim.
+- Wrapper integration was structurally checked, not executed against synthetic Git states. Full W9 was not run; this audit/document change remains an unowned candidate, not silently exempted or approved by historical fixtures.
+- Post-writer ASSESS returned medium risk with fallback small-model bias and unknown native outcome, requiring independent verification. This requirement was fulfilled by independent verifier `mv2ljgfk-6-65km`: spot 1/1, policy 12/12, material regression 25/25, strict types and diff check, each once and exit 0. No skipped cases or unexpected mutations.
+- Independent evidence: `/tmp/velay-w9-h3-independent-MO3Riw/`. Exact source reconstruction, six profile sets/owners, original substantive controls, acquisition/index semantics, fixtures/ledgers/configuration, 55 parser roots and fresh bounded before/after preservation passed. Raw writer RED/GREEN corroborated, not recreated.
+- Native review `review-5c8b65aba7653468`: medium, 273 logical lines, one consolidated reliability model run; approved and exact acknowledgement consumed for target `sha256:f7c82d39ac4f0b096a270b362f3f4e5b5a9ab0d7680dddc4e3d1e1186f28d44f`, revision `sha256:2aa30004938411b19e595f1dae675229d0c381daa14f53abcfca93402b5a6015`. Approved tree: `98ee6ddef7f0e2e957932f8a2291d0f162b599e8`. No STATUS after burn.
+- This later passive outcome receipt is parent-owned after verifier settlement and acknowledgement, not part of the frozen source review. Audit bytes remain unchanged; H3 commit is not authorized. Wrapper integration remains structurally verified only; no full W9 or broader acceptance claim.
+
 ## Progress and evidence
 
 - Authorization: user accepted R3 implementation, focused tests, and local commit after the scoped plan; no source writes yet at document creation.
@@ -208,4 +244,4 @@ Checks:
 
 ## Next step
 
-R3 and T3 are complete and committed locally. H3 live pending-candidate policy is the next separate decision; it remains unauthorized, and full W9 closure remains open. Do not reuse burned review authority or repeat completed VM acceptance. No push, merge, publication or additional implementation follows automatically.
+R3 and T3 are complete and committed locally. H3 implementation and verification are complete; obtain explicit local work-unit commit authorization. Keep the exact approved audit bytes and this later passive receipt's attribution separate. Full W9 closure remains open: neither clean-tree non-proof nor these focused checks approves a live candidate. Do not reuse burned authority, repeat completed VM acceptance or publish automatically.

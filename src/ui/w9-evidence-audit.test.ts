@@ -1003,6 +1003,195 @@ const catalogResponsiveTableCandidatePaths = [
 
 const catalogResponsiveTableUnifiedDiffSha256 = "59892e0e3e5eb56cbf47ea62be4eaf9a22e69380e9365d4fd2a354355b321126";
 
+type CurrentCandidateSelection =
+  | { status: "NO_CANDIDATE" }
+  | { status: "SELECTED"; profile: "desktop-fixture" | "R4" | "R3"; owner: "operations" }
+  | { status: "SELECTED"; profile: "T3" | "responsive-table" | "catalog-access"; owner: "catalog" }
+  | { status: "REJECTED"; reason: "NO_COMPLETE_PROFILE" | "AMBIGUOUS_PROFILE" };
+
+// Path selection is not byte acceptance or historical execution evidence.
+function selectCurrentCandidate(acquiredPaths: readonly string[]): CurrentCandidateSelection {
+  const paths = new Set(acquiredPaths);
+  if (paths.size === 0) return { status: "NO_CANDIDATE" };
+  const matches: CurrentCandidateSelection[] = [];
+  const complete = (expected: readonly string[]) =>
+    paths.size === expected.length && expected.every((path) => paths.has(path));
+  if (complete([
+    "odd/tasks/reporte-ganancia-operaciones-pdf.md",
+    "src-tauri/src/lib.rs",
+    "src/ui/w9-evidence-audit.test.ts",
+  ])) matches.push({ status: "SELECTED", profile: "desktop-fixture", owner: "operations" });
+  if (complete(grossProfitOperationsR4CandidatePaths)) matches.push({ status: "SELECTED", profile: "R4", owner: "operations" });
+  if (complete(grossProfitOperationsR3CandidatePaths)) matches.push({ status: "SELECTED", profile: "R3", owner: "operations" });
+  if (complete(grossProfitReportCandidatePaths)) matches.push({ status: "SELECTED", profile: "T3", owner: "catalog" });
+  if (complete(catalogResponsiveTableCandidatePaths)) matches.push({ status: "SELECTED", profile: "responsive-table", owner: "catalog" });
+  if (complete(catalogAccessCandidatePaths)) matches.push({ status: "SELECTED", profile: "catalog-access", owner: "catalog" });
+  if (matches.length > 1) return { status: "REJECTED", reason: "AMBIGUOUS_PROFILE" };
+  return matches[0] ?? { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" };
+}
+
+test("W9 current candidate policy reports an empty acquisition as non-proof", () => {
+  assert.deepEqual(selectCurrentCandidate([]), { status: "NO_CANDIDATE" });
+});
+
+const currentCandidatePolicyExamples: {
+  paths: string[];
+  profile: string;
+  owner: "operations" | "catalog";
+}[] = [
+  { profile: "desktop-fixture", owner: "operations", paths: [
+    "odd/tasks/reporte-ganancia-operaciones-pdf.md",
+    "src-tauri/src/lib.rs",
+    "src/ui/w9-evidence-audit.test.ts",
+  ] },
+  { profile: "R4", owner: "operations", paths: [
+    "src-tauri/src/application/reporting/mod.rs",
+    "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
+    "src-tauri/src/commands/gross_profit_operations.rs",
+    "src-tauri/src/lib.rs",
+    "src-tauri/tests/gross_profit_operations_export.rs",
+    "src/commands/gross-profit-operations.ts",
+    "src/commands/gross-profit-operations.test.ts",
+    "src/ui/reports/gross-profit-report-flow.ts",
+    "src/ui/reports/gross-profit-report-flow.test.ts",
+    "src/ui/reports/gross-profit-report-screen.ts",
+    "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
+    "src/ui/w9-evidence-audit.test.ts",
+    "odd/tasks/reporte-ganancia-operaciones-pdf.md",
+  ] },
+  { profile: "R3", owner: "operations", paths: [
+    "odd/tasks/reporte-ganancia-operaciones-pdf.md",
+    "src/commands/gross-profit-operations.ts",
+    "src/commands/gross-profit-operations.test.ts",
+    "src/ui/reports/gross-profit-report-flow.ts",
+    "src/ui/reports/gross-profit-report-flow.test.ts",
+    "src/ui/reports/gross-profit-report-screen.ts",
+    "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
+    "src/ui/w9-evidence-audit.test.ts",
+  ] },
+  { profile: "T3", owner: "catalog", paths: [
+    "odd/tasks/catalog-access-and-profit-report.md",
+    "src-tauri/src/application/reporting/mod.rs",
+    "src-tauri/src/commands/mod.rs",
+    "src-tauri/src/commands/gross_profit.rs",
+    "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
+    "src-tauri/src/lib.rs",
+    "src-tauri/tests/gross_profit_report.rs",
+    "src/commands/gross-profit.ts",
+    "src/commands/gross-profit.test.ts",
+    "src/commands/sales-history.ts",
+    "src/commands/sales-history.test.ts",
+    "src/ui/app.ts",
+    "src/ui/app-shell.mounted.test.ts",
+    "src/ui/reports/gross-profit-report-screen.ts",
+    "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
+    "src/ui/w9-evidence-audit.test.ts",
+  ] },
+  { profile: "responsive-table", owner: "catalog", paths: [
+    "odd/tasks/catalog-access-and-profit-report.md",
+    "src/ui/styles.css",
+    "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
+    "src/ui/visual-system/base-styles.mounted.test.ts",
+    "src/ui/w9-evidence-audit.test.ts",
+  ] },
+  { profile: "catalog-access", owner: "catalog", paths: [
+    "odd/tasks/catalog-access-and-profit-report.md",
+    "src-tauri/src/application/catalog/mod.rs",
+    "src-tauri/src/commands/catalog.rs",
+    "src-tauri/src/lib.rs",
+    "src-tauri/tests/catalog_search.rs",
+    "src/commands/catalog.test.ts",
+    "src/commands/catalog.ts",
+    "src/ui/inventory/inventory-screen.mounted.test.ts",
+    "src/ui/inventory/inventory-screen.ts",
+    "src/ui/onboarding/onboarding-screen.mounted.test.ts",
+    "src/ui/onboarding/onboarding-screen.ts",
+    "src/ui/w9-evidence-audit.test.ts",
+  ] },
+];
+
+for (const { paths, profile, owner } of currentCandidatePolicyExamples) {
+  test(`W9 current candidate policy selects complete ${profile} ownership without byte approval`, () => {
+    assert.deepEqual(selectCurrentCandidate(paths), { status: "SELECTED", profile, owner });
+  });
+}
+
+test("W9 current candidate policy rejects partial profiles and task-only delegation", () => {
+  for (const { paths } of currentCandidatePolicyExamples) {
+    for (let omitted = 0; omitted < paths.length; omitted += 1) {
+      assert.deepEqual(selectCurrentCandidate(paths.filter((_, index) => index !== omitted)), {
+        status: "REJECTED", reason: "NO_COMPLETE_PROFILE",
+      });
+    }
+  }
+  for (const paths of [
+    ["odd/tasks/reporte-ganancia-operaciones-pdf.md"],
+    ["src-tauri/src/lib.rs"],
+    ["odd/tasks/reporte-ganancia-operaciones-pdf.md", "src-tauri/src/lib.rs"],
+    ["src/ui/w9-evidence-audit.test.ts", "odd/tasks/velay-w9-historical-candidates.md"],
+  ]) {
+    assert.deepEqual(selectCurrentCandidate(paths), { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" });
+  }
+});
+
+test("W9 current candidate policy rejects mixed subsets and complete R4 with partial Catalog", () => {
+  assert.deepEqual(selectCurrentCandidate([
+    "src/commands/gross-profit-operations.ts",
+    "src/commands/catalog.ts",
+    "src-tauri/src/lib.rs",
+    "src/ui/w9-evidence-audit.test.ts",
+  ]), { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" });
+  for (const { paths, owner } of currentCandidatePolicyExamples) {
+    const otherTask = owner === "operations"
+      ? "odd/tasks/catalog-access-and-profit-report.md"
+      : "odd/tasks/reporte-ganancia-operaciones-pdf.md";
+    assert.deepEqual(selectCurrentCandidate([...paths, otherTask]), {
+      status: "REJECTED", reason: "NO_COMPLETE_PROFILE",
+    });
+  }
+});
+
+test("W9 current candidate policy rejects globally allowlisted extras and its own task record", () => {
+  for (const { paths } of currentCandidatePolicyExamples) {
+    for (const extra of ["package.json", "odd/tasks/velay-w9-historical-candidates.md", "unrelated.txt"]) {
+      assert.deepEqual(selectCurrentCandidate([...paths, extra]), {
+        status: "REJECTED", reason: "NO_COMPLETE_PROFILE",
+      });
+    }
+  }
+});
+
+test("W9 current candidate policy treats order and duplicates as the acquired normalized set", () => {
+  for (const { paths, profile, owner } of currentCandidatePolicyExamples) {
+    const acquired = changedPathsFromGitOutput([...paths].reverse().join("\n"), paths.join("\n"));
+    assert.deepEqual(acquired, [...paths].sort());
+    assert.deepEqual(selectCurrentCandidate(acquired), { status: "SELECTED", profile, owner });
+    assert.deepEqual(selectCurrentCandidate([...paths].reverse().concat(paths)), {
+      status: "SELECTED", profile, owner,
+    });
+  }
+});
+
+test("W9 current candidate policy resolves whole-set ownership rather than overlapping subsets", () => {
+  // The original whole sets are distinct: none can match simultaneously.
+  // R3 is contained in R4, but that does not make the complete R4 set ambiguous.
+  for (let left = 0; left < currentCandidatePolicyExamples.length; left += 1) {
+    for (let right = left + 1; right < currentCandidatePolicyExamples.length; right += 1) {
+      const first = currentCandidatePolicyExamples[left];
+      const second = currentCandidatePolicyExamples[right];
+      assert.notDeepEqual([...first.paths].sort(), [...second.paths].sort());
+      const union = [...new Set([...first.paths, ...second.paths])].sort();
+      const whole = currentCandidatePolicyExamples.filter(example =>
+        example.paths.length === union.length && example.paths.every(path => union.includes(path)));
+      assert.ok(whole.length <= 1, "original whole profiles must not be simultaneously identical");
+      const expected = whole[0];
+      assert.deepEqual(selectCurrentCandidate(union), expected
+        ? { status: "SELECTED", profile: expected.profile, owner: expected.owner }
+        : { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" });
+    }
+  }
+});
+
 const windowsDesktopFixCandidatePaths = new Set([
   "src-tauri/Cargo.toml",
   "src-tauri/src/commands/backup.rs",
@@ -1633,38 +1822,53 @@ test("W9 allows only the bounded owned-Result Windows picker-command diff", () =
   );
 });
 
-test("W9 binds the exact R3 gross-profit operations paths, diff, and task bytes", () => {
+test("W9 binds the exact R3 gross-profit operations paths, diff, and task bytes", (t) => {
   const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
   const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
   const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
-  const fixtureLibDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/src/lib.rs"], { cwd: root, encoding: "utf8" });
-  if (isGrossProfitDesktopFixtureLibDiff(fixtureLibDiff)) {
+  const selection = selectCurrentCandidate(changedPaths);
+  if (selection.status === "NO_CANDIDATE") {
+    t.skip("NO_CANDIDATE: no pending candidate; no byte or historical proof");
+    return;
+  }
+  assert.ok(selection.status === "SELECTED", "current candidate rejected: requires exactly one complete owned profile");
+  if (selection.owner !== "operations") {
+    t.skip(`Owned by Catalog (${selection.profile}); this wrapper supplies no candidate acceptance`);
+    return;
+  }
+  if (selection.profile === "desktop-fixture") {
+    const fixtureLibDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/src/lib.rs"], { cwd: root, encoding: "utf8" });
+    assert.ok(isGrossProfitDesktopFixtureLibDiff(fixtureLibDiff), "unexpected desktop fixture lib.rs digest or marker");
     assertGrossProfitDesktopFixtureCandidate(changedPaths, fixtureLibDiff);
     return;
   }
-  if (changedPaths.includes("src-tauri/tests/gross_profit_operations_export.rs")) {
+  if (selection.profile === "R4") {
     assertGrossProfitOperationsR4Candidate(changedPaths);
     return;
   }
   assertGrossProfitOperationsR3Candidate(changedPaths);
 });
 
-test("W9 binds the exact Catalog access candidate diff and untracked task bytes", () => {
+test("W9 binds the exact Catalog access candidate diff and untracked task bytes", (t) => {
   const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
   const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
   const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
-  const candidatePathSet = new Set(catalogAccessCandidatePaths);
-  const changedCandidates = changedPaths.filter((path) => candidatePathSet.has(path));
-  const t3Sources = changedPaths.filter((path) => grossProfitReportCandidatePaths.includes(path) && path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
-  if (t3Sources.length > 0 && !changedPaths.includes("odd/tasks/reporte-ganancia-operaciones-pdf.md")) {
+  const selection = selectCurrentCandidate(changedPaths);
+  if (selection.status === "NO_CANDIDATE") {
+    t.skip("NO_CANDIDATE: no pending candidate; no byte or historical proof");
+    return;
+  }
+  assert.ok(selection.status === "SELECTED", "current candidate rejected: requires exactly one complete owned profile");
+  if (selection.owner !== "catalog") {
+    t.skip(`Owned by Operations (${selection.profile}); this wrapper supplies no candidate acceptance`);
+    return;
+  }
+  if (selection.profile === "T3") {
     assertGrossProfitReportCandidate(changedPaths);
     return;
   }
-  if (changedPaths.includes("odd/tasks/reporte-ganancia-operaciones-pdf.md")) return;
-  const catalogAccessSources = changedCandidates.filter((path) => path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
-  if (catalogAccessSources.length === 0) {
-    const responsiveCandidates = changedPaths.filter((path) => catalogResponsiveTableCandidatePaths.includes(path));
-    assert.deepEqual(responsiveCandidates, [...catalogResponsiveTableCandidatePaths].sort());
+  if (selection.profile === "responsive-table") {
+    assert.deepEqual(changedPaths, [...catalogResponsiveTableCandidatePaths].sort());
     const exactDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", ...catalogResponsiveTableCandidatePaths], { cwd: root, encoding: "utf8" });
     const normalizedDiff = exactDiff
       .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
@@ -1672,7 +1876,7 @@ test("W9 binds the exact Catalog access candidate diff and untracked task bytes"
     assert.equal(sha256(normalizedDiff), catalogResponsiveTableUnifiedDiffSha256, "unexpected Catalog responsive-table candidate diff");
     return;
   }
-  assert.deepEqual(changedCandidates, [...catalogAccessCandidatePaths].sort());
+  assert.deepEqual(changedPaths, [...catalogAccessCandidatePaths].sort());
 
   const trackedCandidates = catalogAccessCandidatePaths.filter((path) => isTrackedPath(path));
   const exactDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", ...trackedCandidates], { cwd: root, encoding: "utf8" });
