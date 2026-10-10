@@ -2314,3 +2314,265 @@ test("W9 allows only the exact general-test exclusion and dedicated audit script
     );
   }
 });
+
+// Historical material identity only: no live candidate or execution approval.
+function historicalR3Record(
+  value: unknown, keys: readonly string[], label: string,
+): asserts value is Record<string, unknown> {
+  assert.ok(typeof value === "object" && value !== null && !Array.isArray(value), `${label}: expected object`);
+  assert.deepEqual(Object.keys(value).sort(), [...keys].sort(), `${label}: unexpected fields`);
+}
+
+function historicalR3Chunks(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((chunk: unknown) =>
+    typeof chunk === "string" && Buffer.from(chunk, "utf8").toString("utf8") === chunk);
+}
+
+// Independent original declarations, not hashes learned from fixture metadata.
+const historicalR3TaskSha256 = "f9fbe3f3055903382ab8c25dd74d92488ea68e3e46757cb4b9ad01d4e4865c98";
+const historicalR3PayloadSha256 = "d18c074173b55dbce142559d10486f4fa25aaa88d546955ccd48187276eea060";
+const historicalR3OrderedPaths = [
+  "odd/tasks/reporte-ganancia-operaciones-pdf.md",
+  "src/commands/gross-profit-operations.ts",
+  "src/commands/gross-profit-operations.test.ts",
+  "src/ui/reports/gross-profit-report-flow.ts",
+  "src/ui/reports/gross-profit-report-flow.test.ts",
+  "src/ui/reports/gross-profit-report-screen.ts",
+  "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+
+function assertHistoricalR3Material(value: unknown): void {
+  historicalR3Record(value, ["profile", "provenance", "candidate", "candidateTree", "parentBaseline", "trackingMap", "sourceAuditBlob", "task", "payload"], "material");
+  assert.equal(value.profile, "gross-profit-operations-r3", "profile identity");
+  assert.equal(value.provenance, "DERIVED", "material provenance");
+  assert.equal(value.candidate, "219c890e5db3bd5de6aa66dfe5fc60ffeef46435", "candidate identity");
+  assert.equal(value.candidateTree, "645f26249e75eb541b956e4eee129d0087a96369", "candidate tree identity");
+  historicalR3Record(value.parentBaseline, ["provenance", "revision"], "parent baseline");
+  assert.equal(value.parentBaseline.provenance, "DERIVED", "parent baseline provenance");
+  assert.equal(value.parentBaseline.revision, "f303b3d470ae3db342390886cbdab1187263b59b", "parent baseline identity");
+  historicalR3Record(value.trackingMap, ["provenance", "basis"], "tracking map");
+  assert.equal(value.trackingMap.provenance, "DERIVED", "tracking map provenance");
+  assert.equal(value.trackingMap.basis, "parent-tree-membership", "tracking map basis");
+  assert.equal(value.sourceAuditBlob, "90a4800e7712efd0638492440695e6729e8b8e60", "source audit identity");
+  historicalR3Record(value.task, ["path", "blob", "bytes", "sha256", "chunks"], "task");
+  assert.equal(value.task.path, historicalR3OrderedPaths[0], "task source path");
+  assert.equal(value.task.blob, "67e1d4fa0fa266d5f68961046b42968ff9890f9b", "task source blob");
+  assert.equal(value.task.bytes, 2961, "task declared length");
+  assert.equal(value.task.sha256, historicalR3TaskSha256, "task declared digest");
+  assert.ok(historicalR3Chunks(value.task.chunks), "task: expected UTF-8 string chunks");
+  const taskBytes = Buffer.from(value.task.chunks.join(""), "utf8");
+  assert.equal(taskBytes.length, 2961, "task byte length");
+  assert.equal(createHash("sha256").update(taskBytes).digest("hex"), historicalR3TaskSha256, "task byte digest");
+  assert.equal(createHash("sha1").update(`blob ${taskBytes.length}\0`).update(taskBytes).digest("hex"), "67e1d4fa0fa266d5f68961046b42968ff9890f9b", "task Git blob identity");
+  historicalR3Record(value.payload, ["bytes", "sha256", "entries"], "payload");
+  assert.equal(value.payload.bytes, 50757, "payload declared length");
+  assert.equal(value.payload.sha256, historicalR3PayloadSha256, "payload declared digest");
+  assert.ok(Array.isArray(value.payload.entries), "payload: expected entries");
+  assert.equal(value.payload.entries.length, 8, "payload path count");
+  const representations = value.payload.entries.map((entry: unknown, index: number) => {
+    historicalR3Record(entry, ["path", "kind", "chunks"], "entry");
+    assert.equal(entry.path, historicalR3OrderedPaths[index], "payload path order");
+    assert.equal(entry.kind, ["D", "F", "F", "F", "F", "D", "D", "D"][index], "representation kind");
+    assert.ok(historicalR3Chunks(entry.chunks), "entry: expected UTF-8 string chunks");
+    // Already normalized historical representations: no trimming or renormalization.
+    return `${entry.path}\0${entry.chunks.join("")}`;
+  });
+  const payloadBytes = Buffer.from(representations.join("\0"), "utf8");
+  assert.equal(payloadBytes.length, 50757, "payload byte length");
+  assert.equal(createHash("sha256").update(payloadBytes).digest("hex"), historicalR3PayloadSha256, "payload byte digest");
+}
+
+function readHistoricalR3Material(): unknown {
+  return JSON.parse(read("test/fixtures/w9/gross-profit-operations-r3.derived.json"));
+}
+
+test("W9 historical R3 material accepts exact derived evidence", () => {
+  assert.doesNotThrow(() => assertHistoricalR3Material(readHistoricalR3Material()));
+});
+
+// Fresh decoded values for each tamper attempt, never shared fixture state.
+function historicalR3Mutation() {
+  const material = readHistoricalR3Material();
+  historicalR3Record(material, ["profile", "provenance", "candidate", "candidateTree", "parentBaseline", "trackingMap", "sourceAuditBlob", "task", "payload"], "test material");
+  historicalR3Record(material.task, ["path", "blob", "bytes", "sha256", "chunks"], "test task");
+  historicalR3Record(material.payload, ["bytes", "sha256", "entries"], "test payload");
+  historicalR3Record(material.parentBaseline, ["provenance", "revision"], "test parent");
+  historicalR3Record(material.trackingMap, ["provenance", "basis"], "test tracking map");
+  assert.ok(historicalR3Chunks(material.task.chunks));
+  assert.ok(Array.isArray(material.payload.entries));
+  const entries = material.payload.entries.map((entry: unknown) => {
+    historicalR3Record(entry, ["path", "kind", "chunks"], "test entry");
+    assert.ok(historicalR3Chunks(entry.chunks));
+    return { record: entry, chunks: entry.chunks };
+  });
+  return { material, task: material.task, taskChunks: material.task.chunks,
+    payload: material.payload, entries, parent: material.parentBaseline, tracking: material.trackingMap };
+}
+
+test("W9 historical R3 material rejects same-length task byte tampering", () => {
+  const value = historicalR3Mutation();
+  value.taskChunks[0] = value.taskChunks[0].replace("#", "!");
+  assert.throws(() => assertHistoricalR3Material(value.material), /task byte digest/);
+});
+
+test("W9 historical R3 material rejects payload byte tampering without renormalizing", () => {
+  for (const index of [1, 7]) {
+    const value = historicalR3Mutation();
+    const chunk = value.entries[index].chunks[0];
+    value.entries[index].chunks[0] = `${chunk[0] === "!" ? "?" : "!"}${chunk.slice(1)}`;
+    assert.throws(() => assertHistoricalR3Material(value.material), /payload byte digest/);
+  }
+  const value = historicalR3Mutation();
+  value.entries[7].record.chunks = value.entries[7].chunks.join("").replace("<SELF_INDEX>", "<SELF_OTHER>").split(/(?<=\n)/);
+  assert.throws(() => assertHistoricalR3Material(value.material), /payload byte digest/);
+});
+
+test("W9 historical R3 material rejects truncation and newline changes", () => {
+  const mutations = [
+    (body: string) => body.slice(0, -1),
+    (body: string) => `${body}\n`,
+    (body: string) => body.replaceAll("\n", "\r\n"),
+    (body: string) => body.replace("\n", "\r"),
+  ];
+  for (const mutate of mutations) {
+    const taskValue = historicalR3Mutation();
+    taskValue.task.chunks = [mutate(taskValue.taskChunks.join(""))];
+    assert.throws(() => assertHistoricalR3Material(taskValue.material), /task byte (length|digest)/);
+    for (let index = 0; index < 8; index += 1) {
+      const value = historicalR3Mutation();
+      value.entries[index].record.chunks = [mutate(value.entries[index].chunks.join(""))];
+      assert.throws(() => assertHistoricalR3Material(value.material), /payload byte (length|digest)/);
+    }
+  }
+});
+
+test("W9 historical R3 material rejects missing extra reordered and substituted paths", () => {
+  for (let index = 0; index < 8; index += 1) {
+    const missing = historicalR3Mutation();
+    missing.payload.entries = missing.entries.filter((_, position) => position !== index).map(entry => entry.record);
+    assert.throws(() => assertHistoricalR3Material(missing.material), /payload path count/);
+    const changed = historicalR3Mutation();
+    changed.entries[index].record.path = `./${changed.entries[index].record.path}`;
+    assert.throws(() => assertHistoricalR3Material(changed.material), /payload path order/);
+  }
+  const extra = historicalR3Mutation();
+  extra.payload.entries = [...extra.entries.map(entry => entry.record), extra.entries[0].record];
+  assert.throws(() => assertHistoricalR3Material(extra.material), /payload path count/);
+  const reversed = historicalR3Mutation();
+  reversed.payload.entries = reversed.entries.map(entry => entry.record).reverse();
+  assert.throws(() => assertHistoricalR3Material(reversed.material), /payload path order/);
+  const duplicate = historicalR3Mutation();
+  duplicate.entries[1].record.path = duplicate.entries[0].record.path;
+  assert.throws(() => assertHistoricalR3Material(duplicate.material), /payload path order/);
+});
+
+test("W9 historical R3 material binds profile revisions provenance and source identities", () => {
+  const rootChanges: [string, unknown, RegExp][] = [
+    ["profile", "gross-profit-operations-r4", /profile identity/],
+    ["provenance", "ORIGINAL_EXECUTION", /material provenance/],
+    ["candidate", "0000000000000000000000000000000000000000", /candidate identity/],
+    ["candidateTree", "0000000000000000000000000000000000000000", /candidate tree identity/],
+    ["sourceAuditBlob", "0000000000000000000000000000000000000000", /source audit identity/],
+  ];
+  for (const [key, replacement, rejection] of rootChanges) {
+    const value = historicalR3Mutation();
+    value.material[key] = replacement;
+    assert.throws(() => assertHistoricalR3Material(value.material), rejection);
+  }
+  const nestedChanges: ["parent" | "tracking" | "task" | "payload", string, unknown, RegExp][] = [
+    ["parent", "revision", "0000000000000000000000000000000000000000", /parent baseline identity/],
+    ["parent", "provenance", "ORIGINAL_HEAD", /parent baseline provenance/],
+    ["tracking", "provenance", "ORIGINAL_INDEX", /tracking map provenance/],
+    ["tracking", "basis", "current-index", /tracking map basis/],
+    ["task", "path", "odd/tasks/substituted.md", /task source path/],
+    ["task", "blob", "0000000000000000000000000000000000000000", /task source blob/],
+    ["task", "bytes", "2961", /task declared length/],
+    ["task", "sha256", "0".repeat(64), /task declared digest/],
+    ["payload", "bytes", "50757", /payload declared length/],
+    ["payload", "sha256", "0".repeat(64), /payload declared digest/],
+  ];
+  for (const [target, key, replacement, rejection] of nestedChanges) {
+    const value = historicalR3Mutation();
+    value[target][key] = replacement;
+    assert.throws(() => assertHistoricalR3Material(value.material), rejection);
+  }
+});
+
+test("W9 historical R3 material rejects changed D-F representation classifications", () => {
+  for (let index = 0; index < 8; index += 1) {
+    const value = historicalR3Mutation();
+    value.entries[index].record.kind = value.entries[index].record.kind === "D" ? "F" : "D";
+    assert.throws(() => assertHistoricalR3Material(value.material), /representation kind/);
+  }
+});
+
+test("W9 historical R3 material rejects unknown and missing fields at every schema level", () => {
+  for (let index = 0; index < 13; index += 1) {
+    for (const action of ["extra", "missing"]) {
+      const value = historicalR3Mutation();
+      const records = [value.material, value.parent, value.tracking, value.task, value.payload,
+        ...value.entries.map(entry => entry.record)];
+      const target = records[index];
+      if (action === "extra") target.untrustedExecutionReceipt = "PASS";
+      else delete target[Object.keys(target)[0]];
+      assert.throws(() => assertHistoricalR3Material(value.material), /unexpected fields/);
+    }
+  }
+});
+
+test("W9 historical R3 material rejects malformed types and non-UTF-8 chunks", () => {
+  for (const invalid of [null, undefined, [], "material", 2961, true]) {
+    assert.throws(() => assertHistoricalR3Material(invalid), /material: expected object/);
+  }
+  for (const key of ["parentBaseline", "trackingMap", "task", "payload"]) {
+    const value = historicalR3Mutation();
+    value.material[key] = null;
+    assert.throws(() => assertHistoricalR3Material(value.material), /expected object/);
+  }
+  for (const chunks of ["not an array", [123], [null], ["\ud800"]]) {
+    const taskValue = historicalR3Mutation();
+    taskValue.task.chunks = chunks;
+    assert.throws(() => assertHistoricalR3Material(taskValue.material), /task: expected UTF-8 string chunks/);
+    const payloadValue = historicalR3Mutation();
+    payloadValue.entries[0].record.chunks = chunks;
+    assert.throws(() => assertHistoricalR3Material(payloadValue.material), /entry: expected UTF-8 string chunks/);
+  }
+  const invalidEntries = historicalR3Mutation();
+  invalidEntries.payload.entries = {};
+  assert.throws(() => assertHistoricalR3Material(invalidEntries.material), /payload: expected entries/);
+  const invalidEntry = historicalR3Mutation();
+  invalidEntry.payload.entries = [null, ...invalidEntry.entries.slice(1).map(entry => entry.record)];
+  assert.throws(() => assertHistoricalR3Material(invalidEntry.material), /entry: expected object/);
+});
+
+test("W9 historical R3 material rejects synthetic earlier and later task substitutions", () => {
+  // Synthetic valid UTF-8 revisions, not evidence of actual historical versions.
+  const earlier = historicalR3Mutation();
+  earlier.task.chunks = earlier.taskChunks.slice(0, -1);
+  assert.throws(() => assertHistoricalR3Material(earlier.material), /task byte length/);
+  const later = historicalR3Mutation();
+  later.taskChunks.push("\nSynthetic later task revision: additional completion record.\n");
+  assert.throws(() => assertHistoricalR3Material(later.material), /task byte length/);
+});
+
+test("W9 historical R3 material rejects metadata and body self-authentication", () => {
+  for (const claim of ["sha256", "blob", "bytes", "all"]) {
+    const value = historicalR3Mutation();
+    value.task.chunks = [value.taskChunks.join("").slice(0, -1)];
+    assert.ok(historicalR3Chunks(value.task.chunks));
+    const bytes = Buffer.from(value.task.chunks.join(""), "utf8");
+    if (claim === "sha256" || claim === "all") value.task.sha256 = createHash("sha256").update(bytes).digest("hex");
+    if (claim === "blob" || claim === "all") value.task.blob = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+    if (claim === "bytes" || claim === "all") value.task.bytes = bytes.length;
+    assert.throws(() => assertHistoricalR3Material(value.material), /task (declared (digest|length)|source blob)/);
+  }
+  for (const claim of ["sha256", "bytes", "all"]) {
+    const value = historicalR3Mutation();
+    value.entries[1].chunks[0] = value.entries[1].chunks[0].slice(1);
+    const bytes = Buffer.from(value.entries.map(entry => `${entry.record.path}\0${entry.chunks.join("")}`).join("\0"), "utf8");
+    if (claim === "sha256" || claim === "all") value.payload.sha256 = createHash("sha256").update(bytes).digest("hex");
+    if (claim === "bytes" || claim === "all") value.payload.bytes = bytes.length;
+    assert.throws(() => assertHistoricalR3Material(value.material), /payload declared (digest|length)/);
+  }
+});
