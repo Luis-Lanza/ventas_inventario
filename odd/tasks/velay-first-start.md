@@ -21,15 +21,15 @@ Windows smoke observed unavailable storage before a restart; a later restart wor
 - Fixtures must use unique absent UUID paths below an owned temporary directory, never actual application data.
 
 ## Task and delivery strategy
-- [ ] FS1 Correct genuine first-start bootstrap with observed RED/GREEN, refusal regressions, focused verification and native review; implementation, writer checks, independent verification and native review acknowledgement passed. Local commit explicitly authorized and in progress; Windows fresh-profile acceptance remains separate.
-- [ ] FS1-B1 Correct only the two new tracer validation-error diagnostic mappings, then resume the intended behavioral RED before production changes. Repair and valid behavioral RED passed; technically resolved, awaiting the same work-unit commit rather than a separate delivery.
+- [x] FS1 Correct genuine first-start bootstrap with observed RED/GREEN, refusal regressions, focused verification and native review. Technical work closed by local commit `19c66ae2f193568b82577373ba2b42e1ac83ec13`; Windows fresh-profile acceptance remains separate and pending.
+- [x] FS1-B1 Correct only the two new tracer validation-error diagnostic mappings, then resume the intended behavioral RED before production changes. Repair and valid behavioral RED passed; closed in the same work-unit commit `19c66ae2f193568b82577373ba2b42e1ac83ec13`.
 
 One coherent work unit, with these milestones:
 1. Add only the startup-interface tracer; observe its intended unavailable-storage RED.
 2. Apply the minimal correction, observe GREEN, add negative guards and run the relevant startup test module.
 3. Assess/review the normalized candidate with user-owned RDD, perform the required verification/readback, and request local commit authorization if not already granted.
 
-Delivery strategy: `ask-on-risk`. Forecast approximately 150 authored source/test changed lines plus this document, below the approximate 400-line delivery heuristic. Actual counts are pending; no committed running count yet. Commit/push approval remains separate.
+Delivery strategy: `ask-on-risk`. Forecast approximately 150 authored source/test changed lines plus this document. Observed local work-unit count: 244 authored changed lines (243 additions/1 deletion across two paths), below the approximate 400-line delivery heuristic. The local commit was explicitly authorized; push approval remains separate.
 
 ## Acceptance and checks
 - Genuine absent root becomes a valid, ready, empty Velay database on first startup and stays ready on reopen.
@@ -82,9 +82,12 @@ Also run scoped formatting and `git diff --check`. Save command outputs, exit co
 - Independent verifier `mv1nm2gx-1c-49db` passed the exact tracer spot check (1/1, exit 0, wall 2 seconds) and full relevant startup module (22/22, exit 0, wall 206 seconds), plus diff-check. Both Cargo runs retained three existing dead_code warnings. No contract blocker was found.
 - Independent receipts: `/tmp/velay-first-start-independent-i4QtLk/`; baseline/final comparison preserved 736 tracked/task/writer-evidence hashes, branch/HEAD/index/status. Parent spot-checked current source/old-ledger/task hashes after verifier settlement; source remains `ce677b74931ab7cc350fb399733bacebe968b06e1cdcc56b08b72e78b488ebce`.
 - This document was frozen at SHA-256 `0cb10b0695f53ff4a2d2bae735cb57d85de617ac1f81180b7bb866498d77529d` during review/verification. The current passive progress update is parent-owned after acknowledgement and verifier settlement; it is not falsely attributed to the frozen native candidate or independent baseline. Source has not changed since review.
-- Windows fresh-profile acceptance, permission/I/O functional coverage and native crash durability remain unproven. Full frontend/desktop/monorepo suites were outside this bounded fix and not run; formatting remains structural readback. No commit or publication occurred.
+- Local work-unit commit: `19c66ae2f193568b82577373ba2b42e1ac83ec13`, subject `fix: bootstrap storage on first launch with absent data root`, parent `dde2fc6acb11a211b43f01d6dbd1d6ffa837bb73`, tree `086312282dd5f3c633f33b533eff5f2f0f00857c`. Exactly two committed paths, 243 additions/1 deletion. Staged blob hashes matched source/document; cached diff-check passed. Immediately after creation the worktree/index were clean and committed source matched the verified hash.
+- Postcommit ASSESS for the explicit committed range from `dde2fc6acb11a211b43f01d6dbd1d6ffa837bb73`: medium risk, 244 changed lines, large runtime writer, `reviewDue: false`, `reviewDueReason: under_budget`. For this distinct range `candidate.consumed` is false and native outcome is unknown; do not relabel it as the earlier acknowledged workspace candidate. The returned plan accepts writer self-verification and requires no separate verifier; independent checks had already passed the identical source.
+- Windows fresh-profile acceptance, permission/I/O functional coverage and native crash durability remain unproven. Full frontend/desktop/monorepo suites were outside this bounded fix and not run; formatting remains structural readback. No push or publication occurred.
+- This observed-commit receipt and the completed checkboxes are parent-owned postcommit bookkeeping, intentionally uncommitted. No second commit or amendment is authorized or performed.
 - Six existing headless integration `dead_code` warnings are historical; report actual diagnostics without suppressing or assuming the same count for library tests.
 - Native review, independent verification (if required), Windows fresh-profile acceptance, and local commit remain pending.
 
 ## Next step
-Create the explicitly authorized local Conventional Commit containing only the bounded source fix/tests and this task document, with no push. Parent read-only preflight confirmed the expected branch/HEAD, empty index, exact source hash, no active hooks/commit-signing configuration and no filters on either path. Preserve review/evidence identity and do not query the burned lineage again. Record the observed work-unit commit after creation and close the technical tasks truthfully; the postcommit receipt is passive bookkeeping, not another authorized commit. Windows fresh-profile acceptance and all broader retail-V1 gaps remain open.
+The bounded technical work unit is committed locally, without push. Preserve the uncommitted passive closure receipt and earlier evidence; do not amend, create another commit, publish or query the burned lineage without applicable authorization. The user decides whether to publish the fix and how to perform Windows fresh-profile acceptance without modifying existing VM data. All broader retail-V1 gaps and the old frozen ledger remain open.
