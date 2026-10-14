@@ -104,7 +104,7 @@ Use available window height rather than indefinitely growing panels. In short wi
 
 No additional scroll mockups are required. Validate these rules in the running app with enough products to overflow each region, different window sizes, keyboard navigation and focus changes.
 
-The sale-success modal appears only after a real successful confirmation; do not stack it on top of the checkout dialog. Escape, outside-click and dismissal semantics are **not yet decided**. Closing must never undo the persisted sale or expose its old cart for another charge. Focus transfer and the transition to a fresh sale require functional checks before implementation is considered complete.
+The sale-success modal appears only after a real successful confirmation; do not stack it on top of the checkout dialog. Only “Nueva venta” dismisses the receipt and starts a clean draft; Escape and outside-click never dismiss it. Closing must never undo the persisted sale or expose its old cart for another charge. Focus transfer and the transition to a fresh sale require functional checks before implementation is considered complete.
 
 For Inventory operation modals, dismissal with edited fields and post-save presentation are **not yet decided**. Preserve input and error feedback on failures; protect pending operations from duplicate submission or unsafe dismissal, and show success only from the actual response. Keep stock-entry validation and physical-count password authorization intact. Opening, closing and animation must not change transaction semantics.
 

@@ -91,6 +91,33 @@ test("publishes repeated accepted sale failures without redundant inline results
   assert.equal(calls, 3);
 });
 
+test("deferred persistence replaces checkout with one non-dismissible receipt over Sales", async () => {
+  installUuid(UUID);
+  const response = deferred<unknown>();
+  let calls = 0;
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : command === "confirm_sale_command" ? (calls++, response.promise) : undefined);
+  render(createElement(StrictMode, null, createElement(SaleScreen)));
+  const u = await addFirst();
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  assert.equal(screen.queryByRole("dialog", { name: "Venta confirmada" }), null);
+  assert.ok(screen.getByRole("dialog", { name: "Revisar y cobrar" }));
+  await act(async () => response.resolve({ ...success, total_centavos: 100, payments: [{ method: "qr", amount_applied_centavos: 50 }] }));
+  const receipt = screen.getByRole("dialog", { name: "Venta confirmada" });
+  assert.equal(screen.getAllByRole("dialog").length, 1);
+  assert.ok(within(receipt).getByText("Bs 1,00"));
+  assert.ok(within(receipt).getByText("Bs 0,50"));
+  assert.ok(screen.getByRole("heading", { name: "Ventas", level: 1 }));
+  await u.keyboard("{Escape}");
+  fireEvent.click(receipt.parentElement!);
+  assert.equal(screen.getByRole("dialog"), receipt);
+  assert.equal(calls, 1);
+  await u.click(within(receipt).getByRole("button", { name: "Nueva venta" }));
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(document.activeElement, screen.getByRole("searchbox"));
+  assert.equal((screen.getByRole("button", { name: "Revisar y cobrar" }) as HTMLButtonElement).disabled, true);
+  assert.equal(calls, 1);
+});
+
 test("publishes sale success while preserving the persisted receipt", async () => {
   installUuid(UUID);
   mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : command === "confirm_sale_command" ? success : undefined);
@@ -99,12 +126,63 @@ test("publishes sale success while preserving the persisted receipt", async () =
   await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
   await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
   assert.ok(screen.getByRole("button", { name: "Nueva venta" }));
-  const receipt = screen.getByRole("main");
-  const facts = receipt.textContent;
+  const receipt = screen.getByRole("dialog", { name: "Venta confirmada" });
+  const receiptRegions = () => [...receipt.children].filter((node) =>
+    node.matches("h2, p, [data-ui-summary-body], [data-ui-dialog-actions]"));
+  assert.equal(receiptRegions().length, 4);
+  const facts = receiptRegions().map((node) => node.textContent);
+  const receiptActions = () => receiptRegions().flatMap((node) => [...node.querySelectorAll("button")].map((button) => button.textContent));
+  assert.deepEqual(receiptActions(), ["Nueva venta"]);
   await u.click(within(screen.getByRole("region", { name: "Notificaciones de acciones" })).getByRole("button", { name: /Cerrar/ }));
   assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
-  assert.equal(receipt.textContent, facts);
-  assert.ok(screen.getByRole("button", { name: "Nueva venta" }));
+  assert.deepEqual(receiptRegions().map((node) => node.textContent), facts);
+  assert.deepEqual(receiptActions(), ["Nueva venta"]);
+});
+
+test("keyboard reaches the named receipt body and remains trapped with and without its notification", async () => {
+  installUuid(UUID);
+  let calls = 0;
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : command === "confirm_sale_command" ? (calls++, success) : undefined);
+  render(createElement(ActionNotificationProvider, null, createElement(SaleScreen)));
+  const u = await addFirst();
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  const receipt = await screen.findByRole("dialog", { name: "Venta confirmada" });
+  const action = within(receipt).getByRole("button", { name: "Nueva venta" });
+  const body = within(receipt).getByRole("article");
+  const facts = body.textContent;
+  assert.equal(document.activeElement, action);
+  const dismiss = within(receipt).getByRole("button", { name: /Cerrar notificación/ });
+  await u.tab({ shift: true });
+  assert.ok(document.activeElement === body, "Shift+Tab from Nueva venta must reach the receipt body");
+  await u.tab({ shift: true });
+  assert.equal(document.activeElement, dismiss);
+  await u.tab();
+  assert.equal(document.activeElement, body);
+  await u.tab();
+  assert.equal(document.activeElement, action);
+  await u.tab();
+  assert.equal(document.activeElement, dismiss);
+  await u.keyboard("{Enter}");
+  assert.equal(screen.queryByRole("button", { name: /Cerrar notificación/ }), null);
+  await u.tab();
+  assert.equal(document.activeElement, body);
+  await u.tab();
+  assert.equal(document.activeElement, action);
+  await u.tab();
+  assert.equal(document.activeElement, body);
+  await u.tab({ shift: true });
+  assert.equal(document.activeElement, action);
+  await u.keyboard("{Escape}");
+  fireEvent.click(receipt.parentElement!);
+  assert.equal(screen.getByRole("dialog"), receipt);
+  assert.equal(within(receipt).getByRole("article", { name: "Detalle de la venta confirmada" }), body);
+  assert.equal(body.textContent, facts);
+  assert.deepEqual(within(receipt).getAllByRole("button"), [action]);
+  assert.equal(calls, 1);
+  await u.keyboard("{Enter}");
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(document.activeElement, screen.getByRole("searchbox"));
+  assert.equal(calls, 1);
 });
 
 test("suppresses duplicate and unmounted sale outcomes with a surviving provider", async () => {
@@ -588,7 +666,7 @@ test("shows every discovery state and ignores reverse-order search completion", 
   await act(() => { fourth.resolve(browse(products)); return fourth.promise; }); assert.equal(document.body.textContent, "")
 });
 
-test("focuses the confirmed-sale heading after the current successful confirmation mounts", async () => {
+test("focuses the sole receipt action after the current successful confirmation mounts", async () => {
   installUuid();
   mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : success);
   render(createElement(SaleScreen));
@@ -596,8 +674,8 @@ test("focuses the confirmed-sale heading after the current successful confirmati
 
   await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
 
-  const heading = await screen.findByRole("heading", { name: "Venta confirmada" });
-  assert.equal(document.activeElement, heading);
+  const dialog = await screen.findByRole("dialog", { name: "Venta confirmada" });
+  assert.equal(document.activeElement, within(dialog).getByRole("button", { name: "Nueva venta" }));
 });
 
 test("refreshes the inventory summary after a confirmed sale", async () => {
@@ -1118,24 +1196,23 @@ test("bounds Sales checkout field controls and money inputs to their grid track"
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\] \[data-ui-field="money"\] \[data-ui-field-control\] > input\s*\{[^}]*inline-size:\s*0[^}]*min-inline-size:\s*0[^}]*max-inline-size:\s*100%[^}]*flex:\s*1 1 0/s);
 });
 
-test("styles the confirmed receipt as a naturally growing Sales page at desktop and compact widths", () => {
+test("styles the confirmed receipt as a bounded modal at desktop and compact widths", () => {
   const css = style.textContent ?? "";
   assert.match(css, /:root\s*\{[^}]*--size-shell-sidebar:\s*208px/s);
   assert.match(css, /\[data-ui-shell-content\]\s*\{[^}]*overflow:\s*auto/s);
-  assert.match(css, /\.sale-summary-page\s*\{[^}]*display:\s*flex[^}]*block-size:\s*auto[^}]*overflow:\s*visible/s);
-  assert.match(css, /\.sale-summary-page\s*\{[^}]*justify-content:\s*center/s);
-  assert.match(css, /\.sale-summary-receipt\s*\{[^}]*inline-size:\s*min\(1040px,\s*100%\)[^}]*padding:\s*var\(--space-6\)[^}]*border-radius:\s*var\(--radius-modal\)[^}]*box-shadow:\s*var\(--elevation-modal\)/s);
+  assert.match(css, /\[data-ui-persisted-summary\]\s*\{[^}]*max-block-size:\s*calc\(100dvh - 32px\)[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\) auto[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.sale-summary-receipt\s*\{[^}]*min-block-size:\s*0[^}]*overflow-y:\s*auto[^}]*overscroll-behavior:\s*contain/s);
   assert.match(css, /\[data-ui-summary-layout\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(280px,\s*320px\)/s);
   assert.match(css, /\[data-ui-summary-rail\]\s*\{[^}]*align-self:\s*start/s);
   assert.match(css, /\.sale-summary-items\s*\{[^}]*table-layout:\s*fixed/s);
   assert.match(css, /\.sale-summary-items[^}]*:is\([^}]*td[^}]*\)\s*\{[^}]*overflow-wrap:\s*anywhere[^}]*text-overflow:\s*clip[^}]*white-space:\s*normal/s);
   assert.match(css, /\.sale-summary-items[^}]*data-ui-kind="money"[^}]*\{[^}]*contain:\s*inline-size[^}]*font-variant-numeric:\s*tabular-nums/s);
-  assert.match(css, /\[data-ui-persisted-summary\] h1:focus-visible\s*\{[^}]*outline:\s*3px solid #c56845[^}]*outline-offset:\s*2px/s);
-  assert.match(css, /\[data-ui-summary-rail\] > \[data-ui-action="primary"\]\s*\{[^}]*min-block-size:\s*48px/s);
+  assert.match(css, /\[data-ui-persisted-summary\] \[data-ui-action\]:focus-visible\s*\{[^}]*outline:\s*3px solid #c56845[^}]*outline-offset:\s*2px/s);
+  assert.match(css, /\[data-ui-persisted-summary\] > \[data-ui-dialog-actions\]\s*\{[^}]*padding:\s*24px 32px/s);
   assert.doesNotMatch(css, /\[data-ui-summary-articles\] \[data-ui-data-scroll\]/);
-  assert.match(css, /@media \(max-width: 960px\)[\s\S]*:root\s*\{[^}]*--size-shell-sidebar:\s*176px[\s\S]*\.sale-summary-receipt\s*\{[^}]*padding:\s*var\(--space-4\)[\s\S]*\[data-ui-summary-layout\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)[\s\S]*\[data-ui-summary-rail\]\s*\{[^}]*position:\s*static[\s\S]*\.sale-summary-items\s*\{[^}]*inline-size:\s*100%[^}]*table-layout:\s*auto/s);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*:root\s*\{[^}]*--size-shell-sidebar:\s*176px[\s\S]*\.sale-summary-receipt\s*\{[^}]*padding:\s*var\(--space-4\)[\s\S]*\[data-ui-summary-layout\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)[\s\S]*\[data-ui-summary-rail\]\s*\{[^}]*padding:\s*0[\s\S]*\.sale-summary-items\s*\{[^}]*inline-size:\s*100%[^}]*table-layout:\s*auto/s);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*\.sale-summary-items :is\(tbody, tr, td\)\s*\{[^}]*display:\s*block[\s\S]*\.sale-summary-items td\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)[^}]*overflow-wrap:\s*anywhere/s);
-  assert.match(css, /@media \(forced-colors: active\)[\s\S]*\.sale-summary-receipt[^}]*border-color:\s*CanvasText/s);
+  assert.match(css, /@media \(forced-colors: active\)[\s\S]*\[data-ui-persisted-summary\][^}]*border-color:\s*CanvasText/s);
 });
 
 test("discards late confirmation after unmount and keeps the existing success handoff", async () => {
@@ -1145,7 +1222,7 @@ test("discards late confirmation after unmount and keeps the existing success ha
   await act(() => { pending.resolve(success); return pending.promise; }); assert.equal(document.body.textContent, "");
 });
 
-test("replaces the draft with a stable persisted summary and resets through its sole action", async () => {
+test("overlays Sales with a stable persisted summary and resets through its sole action", async () => {
   installUuid();
   const catalog = [{ ...products[0] }];
   const confirmed = {
@@ -1163,7 +1240,9 @@ test("replaces the draft with a stable persisted summary and resets through its 
   mockIPC((command) => command === "browse_products_command" ? browse(catalog) : response);
   const view = render(createElement(SaleScreen)); const u = await addFirst(); await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
   await screen.findByRole("heading", { name: "Venta confirmada" });
-  const persistedSummary = screen.getByRole("main");
+  const persistedSummary = screen.getByRole("dialog", { name: "Venta confirmada" });
+  assert.ok(screen.getByRole("main").querySelector('[data-ui-sales-catalog]'));
+  assert.equal(screen.getAllByRole("dialog").length, 1);
   assert.equal(persistedSummary.getAttribute("data-ui-persisted-summary"), "true");
   const summaryLayout = persistedSummary.querySelector("[data-ui-summary-layout]");
   assert.ok(summaryLayout);
@@ -1177,11 +1256,14 @@ test("replaces the draft with a stable persisted summary and resets through its 
   const confirmedPayments = within(persistedSummary).getByRole("region", { name: "Pagos confirmados" });
   assert.deepEqual(within(confirmedPayments).getAllByRole("term").map((term) => term.textContent), ["Efectivo aplicado", "Efectivo recibido", "Cambio", "Pago QR"]);
   assert.deepEqual(within(confirmedPayments).getAllByRole("definition").map((definition) => definition.textContent), ["Bs 60,00", "Bs 70,00", "Bs 10,00", "Bs 40,50"]);
-  assert.equal(summaryLayout?.querySelector("[data-ui-summary-rail] button")?.textContent, "Nueva venta");
+  assert.equal(persistedSummary.querySelector("[data-ui-dialog-actions] button")?.textContent, "Nueva venta");
   screen.getByText("Venta #9"); screen.getByText("14/08/2026, 10:42"); screen.getByText("Filtro histórico"); screen.getByText("SKU no disponible");
   for (const fact of ["Bs 40,00", "Bs 80,00", "Bs 60,00", "Bs 70,00", "Bs 10,00", "Bs 40,50", "Bs 100,50"]) screen.getByText(fact);
   assert.equal(screen.getAllByText("Bs 20,50").length, 2);
-  const summaryMain = screen.getByRole("main"), beforeMutation = summaryMain.textContent;
+  const summaryMain = persistedSummary, beforeMutation = summaryMain.textContent;
+  await u.keyboard("{Escape}");
+  fireEvent.click(persistedSummary.parentElement!);
+  assert.equal(screen.getByRole("dialog", { name: "Venta confirmada" }), persistedSummary);
   const roles = ["button", "link", "textbox", "spinbutton", "combobox", "checkbox", "radio", "menuitem"] as const;
   const controls = roles.flatMap((role) => within(summaryMain).queryAllByRole(role));
   assert.deepEqual(controls.map((control) => control.textContent), ["Nueva venta"]);
@@ -1189,7 +1271,7 @@ test("replaces the draft with a stable persisted summary and resets through its 
   catalog[0].name = "Catálogo mutado";
   confirmed.lines.forEach((line) => Object.assign(line, { product_id: 0, sku: "MUT", product_name: "Resultado mutado", quantity: 0, unit_price_centavos: 0, line_total_centavos: 0 }));
   confirmed.payments.forEach((payment) => Object.assign(payment, { amount_applied_centavos: 0, amount_tendered_centavos: 0, change_given_centavos: 0 })); confirmed.total_centavos = 0;
-  view.rerender(createElement(SaleScreen)); assert.equal(screen.getByRole("main").textContent, beforeMutation);
+  view.rerender(createElement(SaleScreen)); assert.equal(screen.getByRole("dialog", { name: "Venta confirmada" }).textContent, beforeMutation);
   await u.click(screen.getByRole("button", { name: "Nueva venta" }));
   response = { ...success, sale_id: 10, confirmed_at: "2026-08-14 10:42:00", lines: [{ product_id: 1, sku: "FIL-1", product_name: "Filtro aceite", quantity: 1, unit_price_centavos: 8_550, line_total_centavos: 8_550 }], payments: [{ method: "qr" as const, amount_applied_centavos: 8_550 }], total_centavos: 8_550 };
   await addFirst(); await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByText("Venta #10");

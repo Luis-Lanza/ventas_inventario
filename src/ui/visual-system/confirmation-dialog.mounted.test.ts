@@ -5,7 +5,7 @@ import { StrictMode, createElement, createRef } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { ConfirmationDialog, FormDialog } from "./confirmation-dialog.ts";
+import { ConfirmationDialog, FormDialog, PersistedSaleDialog } from "./confirmation-dialog.ts";
 
 const style = document.createElement("style");
 style.textContent = `${await readFile(new URL("../styles.css", import.meta.url), "utf8")} .fixture-none{display:none}.fixture-invisible{visibility:hidden}`;
@@ -29,6 +29,30 @@ function opener(label = "Abrir") {
   button.focus();
   return button;
 }
+
+test("persisted receipt owns keys under StrictMode and cleanup never steals the next focus", async () => {
+  let newSales = 0;
+  const invoker = opener();
+  const view = render(createElement(StrictMode, null, createElement(PersistedSaleDialog, {
+    onNewSale: () => { newSales++; }, children: createElement("p", null, "Saved facts"),
+  })));
+  const receipt = screen.getByRole("dialog", { name: "Venta confirmada" });
+  const action = screen.getByRole("button", { name: "Nueva venta" });
+  assert.equal(document.activeElement, action);
+  assert.equal(receipt.getAttribute("aria-busy"), null);
+  const u = userEvent.setup({ document });
+  await u.keyboard("{Escape}{Tab}{Shift>}{Tab}{/Shift}");
+  fireEvent.click(receipt.parentElement!);
+  assert.equal(newSales, 0);
+  assert.equal(document.activeElement, action);
+  await u.click(action);
+  assert.equal(newSales, 1);
+  invoker.focus();
+  view.rerender(createElement("input", { "aria-label": "Next search", autoFocus: true }));
+  assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Next search" }));
+  view.unmount();
+  invoker.remove();
+});
 
 // Formal RED 1: the snapshot candidate restores the opener during StrictMode effect replay.
 test("StrictMode replay keeps focus in an open dialog", () => {

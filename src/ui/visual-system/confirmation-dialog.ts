@@ -62,7 +62,7 @@ type DialogFrameProps = {
   dialogDataAttribute?: "catalog-edit-dialog";
   purpose?: DialogPurpose;
   layout?: DialogLayout;
-  kind: "confirmation" | "form";
+  kind: "confirmation" | "form" | "persisted-sale";
   focusFirstControl?: boolean;
   onCancel: () => void;
   children?: ReactNode;
@@ -133,7 +133,7 @@ function DialogFrame({
       const current = currentDialog(owner);
       const replacement = [...owner.querySelectorAll<HTMLElement>('[role="dialog"]')]
         .some((node) => node !== container && node.isConnected);
-      if (current === previousDialogRef.current || (current !== container && !replacement)) restore(invokerRef.current);
+      if (kind !== "persisted-sale" && (current === previousDialogRef.current || (current !== container && !replacement))) restore(invokerRef.current);
       dialogs.delete(container);
       if (!container.isConnected) {
         invokerRef.current = null;
@@ -155,10 +155,13 @@ function DialogFrame({
       "data-ui-form-dialog": kind === "form" || undefined,
       "data-ui-checkout-dialog": purpose === "routine" && dialogDataAttribute !== "catalog-edit-dialog" || undefined,
       "data-ui-catalog-edit-dialog": dialogDataAttribute === "catalog-edit-dialog" || undefined,
+      "data-ui-persisted-summary": kind === "persisted-sale" || undefined,
       "data-ui-dialog-layout": layout,
       "data-ui-purpose": purpose,
     },
-    createElement("h2", { id: titleId }, title),
+    createElement("h2", { id: titleId, "data-ui-summary-header": kind === "persisted-sale" || undefined },
+      kind === "persisted-sale" ? createElement("span", { className: "sale-summary-success-icon", "aria-hidden": true, "data-ui-summary-success-icon": true }, "✓") : null,
+      title),
     createElement("p", { id: descriptionId }, description),
     children,
     actions));
@@ -178,6 +181,17 @@ export function ConfirmationDialog({
     actions: createElement("div", { "data-ui-dialog-actions": true },
       createElement(Action, { variant: "secondary", disabled: pending, onClick: () => { if (!pending) onCancel(); } }, "Volver"),
       createElement(Action, { variant: purpose === "routine" ? "primary" : "destructive", pending, pendingLabel, disabled: confirmDisabled, onClick: () => { if (!pending && !confirmDisabled) onConfirm(); } }, confirmLabel)),
+  });
+}
+
+/** Accepted persisted receipts can only transition through the explicit new-sale action. */
+export function PersistedSaleDialog({ children, onNewSale }: { children?: ReactNode; onNewSale: () => void }) {
+  return createElement(DialogFrame, {
+    open: true, kind: "persisted-sale", title: "Venta confirmada",
+    description: "La venta quedó guardada y estos datos son de solo lectura.",
+    pending: false, onCancel: () => {}, children,
+    actions: createElement("div", { "data-ui-dialog-actions": true },
+      createElement(Action, { variant: "primary", onClick: onNewSale }, "Nueva venta")),
   });
 }
 

@@ -69,7 +69,9 @@ test("preserves authoritative zeros and an empty persisted payment collection", 
 
 test("renders a semantic Spanish read-only summary with Nueva venta as its sole action", () => {
   const html = renderToStaticMarkup(PersistedSaleSummaryView({ details: projectPersistedSaleSummary({ ...summary, payments: [{ method: "qr", amount_applied_centavos: 6_750 }], total_centavos: 6_750 }), onNewSale() {} }));
-  assert.match(html, /<main[^>]+aria-labelledby="sale-summary-heading"/);
+  const headingId = html.match(/role="dialog"[^>]*aria-modal="true"[^>]*aria-labelledby="([^"]+)"/)?.[1];
+  assert.ok(headingId, "receipt must be a named modal");
+  assert.match(html, new RegExp(`<h2 id="${headingId}"[^>]*>.*Venta confirmada</h2>`));
   assert.match(html, />Venta confirmada</);
   assert.match(html, /<table/);
   assert.match(html, /data-ui-summary-header/);
@@ -84,16 +86,25 @@ test("renders a semantic Spanish read-only summary with Nueva venta as its sole 
   assert.doesNotMatch(html, /<input|<select|<textarea|Editar|Imprimir|Compartir|Reembolsar|Recibo/);
 });
 
-test("renders the confirmed result as an ordered receipt page with a parent-owned heading focus seam", () => {
+test("makes the read-only receipt article a named native keyboard stop", () => {
+  const html = renderToStaticMarkup(PersistedSaleSummaryView({ details: projectPersistedSaleSummary(summary), onNewSale() {} }));
+  const article = html.match(/<article\b[^>]*>/)?.[0];
+  assert.ok(article);
+  assert.match(article, /tabindex="0"/);
+  assert.match(article, /aria-label="Detalle de la venta confirmada"/);
+});
+
+test("renders the confirmed result as an ordered receipt dialog with a sole footer action", () => {
   const html = renderToStaticMarkup(PersistedSaleSummaryView({
     details: projectPersistedSaleSummary(summary),
-    headingRef: { current: null },
     onNewSale() {},
   }));
 
-  assert.match(html, /^<main class="sale-summary-page"[^>]*><article class="sale-summary-receipt"/);
-  assert.equal((html.match(/<h1\b/g) ?? []).length, 1);
-  assert.match(html, /<h1 id="sale-summary-heading" tabindex="-1">Venta confirmada<\/h1>/);
+  assert.match(html, /role="dialog"[^>]*aria-modal="true"/);
+  assert.equal((html.match(/<h1\b/g) ?? []).length, 0);
+  assert.equal((html.match(/<h2\b/g) ?? []).length, 1);
+  assert.match(html, /<h2[^>]*>.*Venta confirmada<\/h2>/);
+  assert.match(html, /data-ui-dialog-actions="true"[^>]*><button[^>]*>Nueva venta<\/button>/);
   assert.match(html, /<span[^>]+data-ui-summary-success-icon="true"[^>]*>✓<\/span>/);
 
   const orderedFacts = [
@@ -108,7 +119,7 @@ test("renders the confirmed result as an ordered receipt page with a parent-owne
   }
 
   assert.equal((html.match(/<(?:button|a|input|select|textarea)\b/g) ?? []).length, 1);
-  assert.doesNotMatch(html, /role="dialog"|aria-modal|data-ui-data-scroll|request_id|550e8400|status|outcome/i);
+  assert.doesNotMatch(html, /data-ui-data-scroll|request_id|550e8400|status|outcome/i);
 });
 
 test("renders the approved truthful fallback when persisted payment facts are empty", () => {

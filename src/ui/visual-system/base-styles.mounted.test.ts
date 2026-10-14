@@ -6,6 +6,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CheckoutDialog } from "./checkout-dialog.ts";
+import { PersistedSaleSummaryView } from "../sales/persisted-summary.ts";
 import { Action } from "./controls.ts";
 import type { CatalogProductBrowseResult } from "../../commands/catalog.ts";
 import { ProductBrowser, initialProductBrowserState, type CatalogViewMode } from "../catalog/product-browser.ts";
@@ -47,6 +48,57 @@ function styleOf(element: Element, property: string) {
       || getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
   }
   return value;
+}
+
+for (const [width, height] of [[1440, 900], [1200, 800], [960, 640]]) {
+  test(`Persisted receipt bounds only its body and isolates other dialogs at ${width}x${height}`, async () => {
+    const style = await mountBaseStyles(width, undefined, height);
+    // Activate only the receipt's keyboard-focus declarations for cascade
+    // checks; jsdom does not reliably invalidate computed styles on focus.
+    style.textContent = style.textContent!.replaceAll(".sale-summary-receipt:focus-visible", '.sale-summary-receipt[data-test-keyboard-focus="true"]');
+    try {
+      render(createElement("div", { "data-ui-shell-content": true },
+        createElement(PersistedSaleSummaryView, { onNewSale() {}, details: {
+          saleIdentity: "Venta #7", confirmedAt: "Fecha no disponible", total: "Bs 14814,72",
+          lines: Array.from({ length: 30 }, () => ["777", "Long saved product identity", "LONG-SKU", "12", "Bs 1234,56", "Bs 14814,72"]),
+          payments: [["Pago QR", "Bs 1,00"]],
+        } }),
+        createElement("section", { "data-ui-confirmation-dialog": true, "data-testid": "unrelated-receipt" },
+          createElement("div", { "data-ui-dialog-actions": true }, "Other footer"))));
+      const frame = screen.getByRole("dialog", { name: "Venta confirmada" });
+      const body = frame.querySelector("[data-ui-summary-body]")!;
+      const footer = frame.querySelector("[data-ui-dialog-actions]")!;
+      assert.equal(styleOf(frame, "overflow"), "hidden");
+      assert.equal(styleOf(frame, "padding"), "0px");
+      assert.equal(styleOf(frame, "grid-template-rows"), "auto auto minmax(0, 1fr) auto");
+      assert.equal(styleOf(frame, "max-block-size"), "calc(100dvh - 32px)");
+      assert.equal(styleOf(body, "min-block-size"), "0px");
+      assert.equal(styleOf(body, "overflow-y"), "auto");
+      assert.equal(styleOf(body, "overscroll-behavior"), "contain");
+      // The scroller itself needs all five pixels outside its border, not
+      // padding inside its scrollable content, clear of the fixed frame regions.
+      for (const edge of ["top", "right", "bottom", "left"]) {
+        assert.equal(styleOf(body, `margin-${edge}`), "5px", `${edge} body focus clearance`);
+      }
+      await userEvent.setup({ document }).tab({ shift: true });
+      assert.ok(document.activeElement === body);
+      body.setAttribute("data-test-keyboard-focus", "true");
+      assert.equal(styleOf(body, "outline-width"), "3px");
+      assert.equal(styleOf(body, "outline-style"), "solid");
+      assert.equal(styleOf(body, "outline-offset"), "2px");
+      assert.equal(styleOf(footer, "justify-content"), "flex-end");
+      assert.equal(styleOf(footer, "padding"), "24px 32px");
+      const button = screen.getByRole("button", { name: "Nueva venta" });
+      button.setAttribute("data-ui-focus-visible", "true");
+      assert.equal(styleOf(button, "min-height"), "44px");
+      assert.equal(styleOf(button, "outline-width"), "3px");
+      assert.equal(styleOf(button, "outline-offset"), "2px");
+      const unrelated = screen.getByTestId("unrelated-receipt");
+      assert.equal(styleOf(unrelated, "overflow"), "auto");
+      assert.notEqual(styleOf(unrelated.querySelector("[data-ui-dialog-actions]")!, "background"), "#eee7dc");
+      assert.equal(styleOf(document.querySelector("[data-ui-shell-content]")!, "overflow"), "hidden");
+    } finally { style.remove(); }
+  });
 }
 
 for (const [width, height] of [[1440, 900], [1200, 800], [1200, 640], [960, 640]]) {

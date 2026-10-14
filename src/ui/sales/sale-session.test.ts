@@ -161,6 +161,7 @@ test("minimum correction focuses the price and resets identity without routine n
 test("success stores the full immutable receipt once and new sale resets all fields", () => {
   const session = ready();
   session.edit({ type: "checkout_changed", open: true });
+  session.edit({ type: "payment_changed", field: "amount_tendered_centavos", value: "30" });
   const attempt = begin(session), response = receipt(attempt.request.request_id);
   session.subscribe(() => { throw new Error("Subscriber rendering failed"); });
   assert.deepEqual(session.settle(attempt.token, response), { kind: "success", notice: { severity: "success", message: "Venta confirmada." }, refreshInventory: true });
@@ -168,6 +169,11 @@ test("success stores the full immutable receipt once and new sale resets all fie
   assert.notEqual(session.getSnapshot().persisted_summary, response);
   assert.equal(session.settle(attempt.token, response), null);
   assert.equal(session.beginConfirmation().kind, "blocked");
+  assert.deepEqual(session.getSnapshot().lines, []);
+  assert.deepEqual(session.getSnapshot().payment, { amount_tendered_centavos: "", qr_applied_centavos: "" });
+  assert.equal(session.getSnapshot().request_id, attempt.request.request_id);
+  assert.equal(session.edit({ type: "discard" }), false);
+  assert.deepEqual(session.getSnapshot().persisted_summary, response);
   assert.equal(session.edit({ type: "checkout_changed", open: true }), false);
   session.edit({ type: "new_sale" });
   assert.deepEqual(session.getSnapshot(), createSaleSession(() => "unused").getSnapshot());

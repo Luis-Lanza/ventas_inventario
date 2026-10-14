@@ -1,7 +1,7 @@
-import { createElement, type Ref } from "react";
+import { createElement } from "react";
 
 import type { PersistedSaleSummary } from "../../commands/confirm-sale.ts";
-import { Action } from "../visual-system/controls.ts";
+import { PersistedSaleDialog } from "../visual-system/confirmation-dialog.ts";
 import { formatBs } from "./sale-flow.ts";
 
 export type PersistedSummaryDetails = {
@@ -56,7 +56,6 @@ const itemColumns = [
 ] as const;
 export type PersistedSaleSummaryViewProps = {
   details: PersistedSummaryDetails;
-  headingRef?: Ref<HTMLHeadingElement>;
   onNewSale: () => void;
 };
 
@@ -79,15 +78,11 @@ function renderItemTable(details: PersistedSummaryDetails) {
     createElement("tbody", null, rows));
 }
 
-export function PersistedSaleSummaryView({ details, headingRef, onNewSale }: PersistedSaleSummaryViewProps) {
-  return createElement("main", { className: "sale-summary-page", "aria-labelledby": "sale-summary-heading", "data-ui-persisted-summary": true },
-    createElement("article", { className: "sale-summary-receipt" },
-      createElement("header", { className: "sale-summary-header", "data-ui-summary-header": true },
-        createElement("span", { className: "sale-summary-success-icon", "aria-hidden": true, "data-ui-summary-success-icon": true }, "✓"),
-        createElement("h1", { id: "sale-summary-heading", tabIndex: -1, ref: headingRef }, "Venta confirmada"),
-        createElement("p", null, "La venta quedó guardada y estos datos son de solo lectura.")),
+export function PersistedSaleSummaryView({ details, onNewSale }: PersistedSaleSummaryViewProps) {
+  return createElement(PersistedSaleDialog, { onNewSale },
+    createElement("article", { className: "sale-summary-receipt", "data-ui-summary-body": true, tabIndex: 0, "aria-label": "Detalle de la venta confirmada" },
       createElement("section", { className: "sale-summary-identity", "aria-labelledby": "sale-identity-heading", "data-ui-summary-identity": true },
-        createElement("h2", { id: "sale-identity-heading" }, "Identificación de la venta"),
+        createElement("h3", { id: "sale-identity-heading" }, "Identificación de la venta"),
         createElement("dl", null,
           createElement("dt", null, "Venta"), createElement("dd", null, details.saleIdentity),
           createElement("dt", null, "Fecha y hora"), createElement("dd", { "data-ui-type": "numeric" }, details.confirmedAt))),
@@ -96,12 +91,11 @@ export function PersistedSaleSummaryView({ details, headingRef, onNewSale }: Per
           renderItemTable(details)),
         createElement("aside", { className: "sale-summary-rail", "aria-label": "Resumen de pago", "data-ui-summary-rail": true },
           createElement("section", { className: "sale-summary-payments", "aria-labelledby": "sale-payments-heading", "data-ui-summary-payments": true },
-            createElement("h2", { id: "sale-payments-heading" }, "Pagos confirmados"),
+            createElement("h3", { id: "sale-payments-heading" }, "Pagos confirmados"),
             details.payments.length === 0
               ? createElement("p", { className: "sale-summary-payments-empty" }, "Sin datos de pago")
               : createElement("dl", null, details.payments.map(([label, amount], index) => createElement("div", { key: index },
                 createElement("dt", null, label), createElement("dd", { "data-ui-kind": "money" }, amount))))),
           createElement("p", { className: "sale-summary-total", "data-ui-summary-total": true },
-            createElement("span", null, "Total persistido"), createElement("strong", null, details.total)),
-          createElement(Action, { variant: "primary", onClick: onNewSale }, "Nueva venta")))));
+            createElement("span", null, "Total persistido"), createElement("strong", null, details.total))))));
 }

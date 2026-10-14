@@ -121,7 +121,10 @@ test("pending navigation retains lock and delivers background success and refres
   assert.equal(ipc.refreshes(), refreshes + 1);
   assert.equal(screen.queryByRole("heading", { name: "Venta confirmada" }), null);
   await saleNavigate("Ventas");
-  assert.ok(screen.getByRole("heading", { name: "Venta confirmada" }));
+  assert.ok(screen.getByRole("heading", { name: "Ventas", level: 1 }));
+  assert.equal(screen.getAllByRole("dialog").length, 1);
+  const receiptDialog = screen.getByRole("dialog", { name: "Venta confirmada" });
+  assert.equal(document.activeElement, within(receiptDialog).getByRole("button", { name: "Nueva venta" }));
   assert.ok(screen.getByText("Venta #7"));
   assert.ok(screen.getByText("02/01/2026, 10:00"));
   const receiptRows = within(screen.getByRole("table", { name: "Artículos confirmados" })).getAllByRole("row");
@@ -133,6 +136,9 @@ test("pending navigation retains lock and delivers background success and refres
   assert.equal(ipc.refreshes(), refreshes + 2);
   assert.equal(ipc.requests.length, 1);
   await saleNavigate("Inventario"); await saleNavigate("Ventas");
+  assert.equal(screen.getAllByRole("dialog").length, 1);
+  assert.equal(document.activeElement, screen.getByRole("button", { name: "Nueva venta" }));
+  // This programmatic navigation verifies session lifetime, not user navigation through the modal.
   // Two navigation refreshes plus Inventory's own initial alert load; receipt re-entry adds none.
   assert.equal(ipc.refreshes(), refreshes + 5);
   assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1);

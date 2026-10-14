@@ -92,7 +92,7 @@ export function createSaleSession(generateId: () => string) {
       };
     },
     edit(action: SaleSessionEdit): boolean {
-      if (!alive || pending || (state.confirmation === "confirmed" && action.type !== "new_sale" && action.type !== "discard")) return false;
+      if (!alive || pending || (state.confirmation === "confirmed" && action.type !== "new_sale")) return false;
       if (action.type === "discard" || action.type === "new_sale") reset();
       else if (action.type === "checkout_changed") {
         if (checkoutOpen === action.open) return true;
@@ -148,6 +148,9 @@ export function createSaleSession(generateId: () => string) {
       let effect: SaleSettlementEffect;
       if (result?.kind === "success" && result.request_id === envelope!.request_id) {
         transition({ type: "confirmation_succeeded", summary: structuredClone(result) });
+        // Retire the charged draft without resetting the accepted receipt or request identity.
+        state = { ...state, lines: [], payment: { ...initialSaleState.payment } };
+        paymentErrors = {};
         checkoutOpen = false;
         effect = { kind: "success", notice: { severity: "success", message: "Venta confirmada." }, refreshInventory: true };
       } else if (result?.kind === "minimum_price_violation" || (result?.kind === "error" && result.code === "invalid_final_price")) {

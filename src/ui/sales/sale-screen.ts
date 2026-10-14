@@ -34,7 +34,7 @@ export function SaleScreen(props: SaleScreenProps) {
   const thumbnailCache = useRef(new Map<string, string>());
   const [checkoutDetail, setCheckoutDetail] = useState<SalesBrowseProduct | null>(null);
   const checkoutDetailTriggerRef = useRef<HTMLElement | null>(null);
-  const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null), checkoutInitialFocusRef = useRef<HTMLInputElement>(null), checkoutTriggerRef = useRef<HTMLButtonElement>(null), headingRef = useRef<HTMLHeadingElement>(null);
+  const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null), checkoutInitialFocusRef = useRef<HTMLInputElement>(null), checkoutTriggerRef = useRef<HTMLButtonElement>(null);
   const searchSequence = useRef(0), browseThumbnailAttempt = useRef(0), browserRef = useRef(browser), mounted = useRef(true), focusSearchOnDraftMount = useRef(false);
   const locked = () => session.getSnapshot().confirmation === "pending";
   browserRef.current = browser;
@@ -70,9 +70,6 @@ export function SaleScreen(props: SaleScreenProps) {
     if (state.focus_price_product_id === null || !mounted.current) return;
     draftRef.current?.querySelector<HTMLInputElement>(`#sale-final-price-${state.focus_price_product_id}`)?.focus();
   }, [state.focus_price_product_id]);
-  useEffect(() => {
-    if (state.persisted_summary && persistedDetails && mounted.current) headingRef.current?.focus();
-  }, [persistedDetails, state.persisted_summary]);
   useEffect(() => {
     if (persistedDetails || !focusSearchOnDraftMount.current || !mounted.current) return;
     const searchInput = draftRef.current?.querySelector<HTMLInputElement>('input[type="search"]');
@@ -127,7 +124,6 @@ export function SaleScreen(props: SaleScreenProps) {
     setCheckoutDetail(null);
     browserDispatch({ type: "browse_started", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: ++searchSequence.current });
   };
-  if (state.persisted_summary && persistedDetails) return createElement(PersistedSaleSummaryView, { details: persistedDetails, headingRef, onNewSale: () => { if (!draftDispatch({ type: "new_sale" })) return; focusSearchOnDraftMount.current = true; setCheckoutDetail(null); void browsePage("", null, 1); } });
   const total = formatBs(draftTotalCentavos(state.lines));
   const totalUnits = draftTotalUnits(state.lines);
   const lineCount = `${state.lines.length} ${state.lines.length === 1 ? "línea" : "líneas"}`;
@@ -203,5 +199,11 @@ export function SaleScreen(props: SaleScreenProps) {
             createElement("p", { "data-ui-money": true }, `Subtotal: ${total}`),
             createElement("p", { "data-ui-type": "total" }, `Total: ${total}`)),
           createElement("button", { ref: checkoutTriggerRef, type: "button", "data-ui-action": "primary", "aria-controls": "checkout-dialog", "aria-expanded": checkoutOpen, disabled: pending || state.lines.length === 0, onClick: () => setCheckoutOpen(true) } , "Revisar y cobrar")))),
+    persistedDetails ? createElement(PersistedSaleSummaryView, { details: persistedDetails, onNewSale: () => {
+      if (!draftDispatch({ type: "new_sale" })) return;
+      focusSearchOnDraftMount.current = true;
+      setCheckoutDetail(null);
+      void browsePage("", null, 1);
+    } }) : null,
     createElement(CheckoutDialog, { open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending, confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => { if (!checkoutDetail && !pending && !locked()) setCheckoutOpen(false); }, onConfirm: confirm, children: checkoutContent }));
 }
