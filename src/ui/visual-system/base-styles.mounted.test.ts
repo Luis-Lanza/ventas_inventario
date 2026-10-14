@@ -50,6 +50,71 @@ function styleOf(element: Element, property: string) {
   return value;
 }
 
+for (const reduced of [false, true]) {
+  test(`checkout transition-duration cascade is ${reduced ? "instant reduced" : "unchanged normal"} (structural only)`, async () => {
+    const style = await mountBaseStyles();
+    try {
+      // Activate only the matched reduced-motion group, in its original source order.
+      // jsdom cannot reproduce native visibility transitions or prove automatic focus.
+      style.textContent = Array.from(style.sheet!.cssRules).map((rule) => {
+        const media = rule as CSSMediaRule;
+        return rule.type === 4 && media.conditionText === "(prefers-reduced-motion: reduce)"
+          ? reduced ? Array.from(media.cssRules).map((child) => child.cssText).join("\n") : ""
+          : rule.cssText;
+      }).join("\n");
+      render(createElement("div", { dangerouslySetInnerHTML: { __html: `
+        <div data-ui-checkout-dialog data-ui-dialog-layout="checkout"><div data-ui-sales-checkout><section><label>Precio<input></label></section></div><div data-ui-dialog-actions><button>Confirmar</button></div></div>
+        <div data-ui-confirmation-dialog><button>Cancelar</button></div><div data-ui-form-dialog><input></div>
+        <div data-ui-catalog-edit-dialog><input></div><div data-ui-persisted-summary><button>Nueva venta</button></div>
+        <div data-ui-checkout-dialog data-ui-dialog-layout="default"><input></div>` } }));
+      const rules = Array.from(style.sheet!.cssRules) as CSSStyleRule[];
+      const durationRules = rules.filter((rule) => rule.style?.getPropertyValue("transition-duration"));
+      // Inspect declarations: jsdom reports 0s here even for the nonzero reduced policy.
+      const durationOf = (node: Element) => durationRules.filter((rule) => node.matches(rule.selectorText)).at(-1)?.style.getPropertyValue("transition-duration") ?? "0s";
+      const frame = document.querySelector('[data-ui-checkout-dialog][data-ui-dialog-layout="checkout"]')!;
+      for (const node of [frame, ...frame.querySelectorAll("*")]) {
+        const duration = durationOf(node);
+        if (reduced) assert.equal(duration, "0s", `${node.tagName} must not create a visibility transition`);
+        else assert.ok(["", "0s"].includes(duration), `${node.tagName} normal policy changed`);
+      }
+      for (const node of document.querySelectorAll('[data-ui-confirmation-dialog], [data-ui-form-dialog], [data-ui-catalog-edit-dialog], [data-ui-persisted-summary], [data-ui-dialog-layout="default"], [data-ui-confirmation-dialog] *, [data-ui-form-dialog] *, [data-ui-catalog-edit-dialog] *, [data-ui-persisted-summary] *, [data-ui-dialog-layout="default"] *')) {
+        const duration = durationOf(node);
+        if (reduced) { assert.equal(Number.parseFloat(duration), .01); assert.ok(duration.endsWith("ms")); }
+        else assert.ok(["", "0s"].includes(duration));
+      }
+      if (reduced) {
+        const universal = rules.findIndex((rule) => rule.selectorText === "*, *::before, *::after" && rule.style.getPropertyValue("transition-duration"));
+        const qualified = rules.findIndex((rule) => rule.selectorText?.split(",").map((selector) => selector.trim()).join(",") === '[data-ui-checkout-dialog][data-ui-dialog-layout="checkout"],[data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] *');
+        assert.ok(qualified > universal && universal >= 0, "qualified important override follows universal important policy");
+        assert.equal(rules[universal].style.getPropertyPriority("transition-duration"), "important");
+        assert.equal(rules[qualified].style.getPropertyPriority("transition-duration"), "important");
+      }
+    } finally { style.remove(); }
+  });
+}
+
+for (const forced of [false, true]) {
+  test(`checkout container keeps a scoped 3px + 2px focus ring${forced ? " in forced colors" : ""}`, async () => {
+    const style = await mountBaseStyles();
+    try {
+      if (forced) {
+        const rule = Array.from(style.sheet!.cssRules).find((rule) => rule.cssText.startsWith("@media (forced-colors: active)")) as CSSMediaRule;
+        style.textContent += Array.from(rule.cssRules).map((rule) => rule.cssText).join("\n");
+      }
+      style.textContent = style.textContent!.replaceAll('[data-ui-checkout-dialog][data-ui-dialog-layout="checkout"]:focus', '[data-ui-checkout-dialog][data-ui-dialog-layout="checkout"][data-test-checkout-focus]');
+      render(createElement("div", null,
+        createElement("div", { "data-testid": "checkout-focus", "data-ui-checkout-dialog": true, "data-ui-dialog-layout": "checkout", "data-test-checkout-focus": true }),
+        createElement("div", { "data-testid": "other-focus", "data-ui-form-dialog": true, "data-test-checkout-focus": true, style: { outlineColor: forced ? "Highlight" : undefined } })));
+      const frame = screen.getByTestId("checkout-focus");
+      assert.equal(styleOf(frame, "outline-width"), "3px");
+      assert.equal(styleOf(frame, "outline-style"), "solid");
+      assert.equal(styleOf(frame, "outline-offset"), "2px");
+      assert.equal(styleOf(frame, "outline-color").toLowerCase(), forced ? styleOf(screen.getByTestId("other-focus"), "outline-color").toLowerCase() : styleOf(document.documentElement, "--color-focus").toLowerCase());
+      assert.notEqual(styleOf(screen.getByTestId("other-focus"), "outline-width"), "3px");
+    } finally { style.remove(); }
+  });
+}
+
 for (const [width, height] of [[1440, 900], [1200, 800], [960, 640]]) {
   test(`Persisted receipt bounds only its body and isolates other dialogs at ${width}x${height}`, async () => {
     const style = await mountBaseStyles(width, undefined, height);

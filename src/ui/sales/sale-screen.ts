@@ -4,6 +4,7 @@ import { confirmSale, type ConfirmSaleRequest, type ConfirmSaleResponse } from "
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
+import type { CheckoutOpening } from "../visual-system/checkout-motion.ts";
 import { CheckoutDialog } from "../visual-system/checkout-dialog.ts";
 import { draftLineSubtotalCentavos, draftTotalCentavos, draftTotalUnits, effectiveDraftUnitPriceCentavos, formatBs } from "./sale-flow.ts";
 import { createSaleSession, type SaleSession, type SaleSessionEdit } from "./sale-session.ts";
@@ -21,7 +22,22 @@ export function SaleScreen(props: SaleScreenProps) {
   const [session] = useState(() => props.session ?? createSaleSession(() => crypto.randomUUID()));
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const { routineOutcome, paymentErrors, checkoutOpen } = state;
-  const setCheckoutOpen = (open: boolean) => session.edit({ type: "checkout_changed", open });
+  const [checkoutOpening, setCheckoutOpening] = useState<CheckoutOpening | null>(null);
+  const openingSequence = useRef(0);
+  const setCheckoutOpen = (open: boolean) => {
+    if (!open) setCheckoutOpening(null);
+    return session.edit({ type: "checkout_changed", open });
+  };
+  useEffect(() => { if (!checkoutOpen) setCheckoutOpening(null); }, [checkoutOpen]);
+  const openCheckout = (event: { currentTarget: HTMLButtonElement }) => {
+    const trigger = event.currentTarget;
+    const rect = trigger.getBoundingClientRect();
+    const candidate = Object.freeze({ id: ++openingSequence.current, trigger,
+      rect: Object.freeze({ left: rect.left, top: rect.top, width: rect.width, height: rect.height }),
+      radius: trigger.ownerDocument.defaultView?.getComputedStyle(trigger).borderRadius ?? "0px" });
+    setCheckoutOpening(candidate);
+    if (!setCheckoutOpen(true)) setCheckoutOpening(null);
+  };
   const persistedDetails = useMemo(() => state.persisted_summary ? projectPersistedSaleSummary({
     ...state.persisted_summary,
     lines: state.persisted_summary.lines.map((line) => ({ ...line })),
@@ -198,12 +214,12 @@ export function SaleScreen(props: SaleScreenProps) {
             createElement("p", { "data-ui-quantity": true }, `Cantidad de unidades: ${totalUnits}`),
             createElement("p", { "data-ui-money": true }, `Subtotal: ${total}`),
             createElement("p", { "data-ui-type": "total" }, `Total: ${total}`)),
-          createElement("button", { ref: checkoutTriggerRef, type: "button", "data-ui-action": "primary", "aria-controls": "checkout-dialog", "aria-expanded": checkoutOpen, disabled: pending || state.lines.length === 0, onClick: () => setCheckoutOpen(true) } , "Revisar y cobrar")))),
+          createElement("button", { ref: checkoutTriggerRef, type: "button", "data-ui-action": "primary", "aria-controls": "checkout-dialog", "aria-expanded": checkoutOpen, disabled: pending || state.lines.length === 0, onClick: openCheckout } , "Revisar y cobrar")))),
     persistedDetails ? createElement(PersistedSaleSummaryView, { details: persistedDetails, onNewSale: () => {
       if (!draftDispatch({ type: "new_sale" })) return;
       focusSearchOnDraftMount.current = true;
       setCheckoutDetail(null);
       void browsePage("", null, 1);
     } }) : null,
-    createElement(CheckoutDialog, { open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending, confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => { if (!checkoutDetail && !pending && !locked()) setCheckoutOpen(false); }, onConfirm: confirm, children: checkoutContent }));
+    createElement(CheckoutDialog, { opening: checkoutOpening, invokerRef: checkoutTriggerRef, open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending, confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => { if (!checkoutDetail && !pending && !locked()) setCheckoutOpen(false); }, onConfirm: confirm, children: checkoutContent }));
 }

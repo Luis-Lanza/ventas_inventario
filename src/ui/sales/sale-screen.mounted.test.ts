@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { gsap } from "gsap";
+import { createSaleSession } from "./sale-session.ts";
 import { createElement, StrictMode } from "react";
 import { mockIPC as registerNativeIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -54,6 +56,118 @@ const user = () => userEvent.setup({ document });
 async function searchFor(value = "filtro") { const u = user(); await u.type(screen.getByRole("searchbox", { name: "Buscar en el catálogo" }), `${value}{Enter}`); return u; }
 async function addFirst() { const u = await searchFor(); await u.click(await screen.findByRole("button", { name: "Agregar" })); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); return u; }
 function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? UUID }); }
+
+test("checkout captures the clicked button before session opening; navigation re-entry stays static", async (t) => {
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
+  const session = createSaleSession(() => UUID);
+  const completions: Array<() => void> = [];
+  t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect));
+  const view = render(createElement(SaleScreen, { session }));
+  fireEvent.click(await screen.findByRole("button", { name: "Agregar" }));
+  const trigger = screen.getByRole("button", { name: "Revisar y cobrar" });
+  trigger.style.borderRadius = "27px";
+  let captured = 0;
+  trigger.getBoundingClientRect = () => {
+    assert.equal(session.getSnapshot().checkoutOpen, false);
+    captured++;
+    return { left: 1120, top: 710, width: 210, height: 48 } as DOMRect;
+  };
+  fireEvent.click(trigger);
+  const frame = screen.getByRole("dialog", { name: "Revisar y cobrar" });
+  assert.equal(captured, 1);
+  assert.equal(frame.style.left, "1120px");
+  assert.equal(frame.style.borderTopLeftRadius, "27px");
+  assert.equal(document.activeElement, frame);
+  fireEvent.keyDown(frame, { key: "Escape" });
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(document.activeElement, trigger);
+  fireEvent.click(trigger);
+  assert.equal(captured, 2);
+  act(() => completions[0]());
+  assert.equal(screen.getByRole("dialog").hasAttribute("data-ui-checkout-opening"), true);
+  view.unmount();
+  render(createElement(SaleScreen, { session }));
+  const replacement = screen.getByRole("dialog", { name: "Revisar y cobrar" });
+  act(() => completions.forEach((complete) => complete()));
+  assert.equal(replacement.style.position, "");
+  assert.equal(replacement.hasAttribute("data-ui-checkout-opening"), false);
+  assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Precio de venta (Bs)" }));
+});
+
+test("Sales reduced-motion opening automatically focuses its original price control once", async (t) => {
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }) });
+  t.after(() => { Reflect.deleteProperty(window, "matchMedia"); });
+  let focused = 0;
+  const count = (event: FocusEvent) => { if ((event.target as HTMLElement).id === "sale-final-price-1") focused++; };
+  document.addEventListener("focusin", count);
+  t.after(() => document.removeEventListener("focusin", count));
+  render(createElement(StrictMode, null, createElement(SaleScreen)));
+  fireEvent.click(await screen.findByRole("button", { name: "Agregar" }));
+  fireEvent.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
+  assert.equal(screen.getByRole("dialog").hasAttribute("data-ui-checkout-opening"), false);
+  assert.equal(document.activeElement?.id, "sale-final-price-1");
+  assert.equal(focused, 1);
+});
+
+test("a refused clicked candidate cannot animate a later session-driven opening", async (t) => {
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
+  const session = createSaleSession(() => UUID);
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect));
+  render(createElement(SaleScreen, { session }));
+  fireEvent.click(await screen.findByRole("button", { name: "Agregar" }));
+  const detach = session.attachOwner(); detach();
+  fireEvent.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
+  assert.equal(screen.queryByRole("dialog"), null);
+  session.attachOwner();
+  act(() => { session.edit({ type: "checkout_changed", open: true }); });
+  const frame = screen.getByRole("dialog");
+  assert.equal(frame.hasAttribute("data-ui-checkout-opening"), false);
+  assert.equal(frame.style.position, "");
+});
+
+for (const outcome of ["failure", "success"] as const) {
+  test(`session-driven ${outcome} during expansion never activates hidden controls or replays motion`, async (t) => {
+    let ipc = 0;
+    mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : (ipc++, success));
+    const session = createSaleSession(() => UUID);
+    const completions: Array<() => void> = [];
+    t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
+    t.mock.method(HTMLElement.prototype, "getBoundingClientRect", () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect));
+    render(createElement(ActionNotificationProvider, null, createElement(SaleScreen, { session })));
+    fireEvent.click(await screen.findByRole("button", { name: "Agregar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
+    const frame = screen.getByRole("dialog");
+    const portal = frame.querySelector<HTMLElement>("[data-ui-action-notification-portal]")!;
+    assert.ok(portal);
+    assert.equal(getComputedStyle(portal).visibility, "hidden");
+    let attempt!: ReturnType<typeof session.beginConfirmation>;
+    act(() => { attempt = session.beginConfirmation(); });
+    assert.equal(attempt.kind, "attempt");
+    if (attempt.kind !== "attempt") throw Error("Expected valid session attempt");
+    assert.equal(frame.hasAttribute("data-ui-checkout-opening"), false);
+    assert.equal(frame.getAttribute("aria-busy"), "true");
+    assert.equal(document.activeElement, frame);
+    assert.equal(ipc, 0);
+    const token = attempt.token;
+    act(() => { session.settle(token, outcome === "success" ? { ...success, kind: "success", status: "confirmed", outcome: "confirmed" } : null); });
+    act(() => completions.forEach((complete) => complete()));
+    assert.equal(completions.length, 1);
+    if (outcome === "success") {
+      const receipt = screen.getByRole("dialog", { name: "Venta confirmada" });
+      assert.equal(document.activeElement, within(receipt).getByRole("button", { name: "Nueva venta" }));
+      assert.equal(screen.queryByRole("dialog", { name: "Revisar y cobrar" }), null);
+    } else {
+      assert.equal(frame.hasAttribute("data-ui-checkout-opening"), false);
+      assert.equal(getComputedStyle(portal).visibility, "visible");
+      // Ordinary visible submission remains command-owned, once presentation is ready.
+      await user().click(screen.getByRole("button", { name: "Confirmar venta" }));
+      assert.ok(await screen.findByRole("dialog", { name: "Venta confirmada" }));
+      assert.equal(ipc, 1);
+    }
+  });
+}
 
 test("StrictMode standalone replaces invalidated initial browse and confirms once", async () => {
   installUuid(UUID);

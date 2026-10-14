@@ -1,10 +1,11 @@
-import { createElement, isValidElement, useEffect, useId, useRef, type ReactElement, type ReactNode, type RefObject } from "react";
+import { createElement, isValidElement, useCallback, useEffect, useLayoutEffect, useId, useRef, type ReactElement, type ReactNode, type RefCallback, type RefObject } from "react";
 
 import { Action } from "./controls.ts";
 
 export type DialogPurpose = "restore" | "cancellation" | "routine";
 export type DialogLayout = "default" | "checkout";
 export type DestructivePurpose = Exclude<DialogPurpose, "routine">;
+export type CheckoutPresentation = { frameRef: RefCallback<HTMLDivElement>; ready: boolean };
 export type ConfirmationDialogProps = {
   open: boolean;
   purpose: DialogPurpose;
@@ -16,6 +17,8 @@ export type ConfirmationDialogProps = {
   pending?: boolean;
   pendingLabel?: ReactNode;
   initialFocusRef?: RefObject<HTMLElement>;
+  invokerRef?: RefObject<HTMLElement>;
+  checkoutPresentation?: CheckoutPresentation;
   dialogId?: string;
   dialogDataAttribute?: "catalog-edit-dialog";
   onCancel: () => void;
@@ -64,6 +67,7 @@ type DialogFrameProps = {
   layout?: DialogLayout;
   kind: "confirmation" | "form" | "persisted-sale";
   focusFirstControl?: boolean;
+  checkoutPresentation?: CheckoutPresentation;
   onCancel: () => void;
   children?: ReactNode;
   actions: ReactNode;
@@ -71,12 +75,22 @@ type DialogFrameProps = {
 
 function DialogFrame({
   open, title, description, pending, initialFocusRef, invokerRef: externalInvokerRef, dialogId, dialogDataAttribute,
-  purpose, layout = "default", kind, focusFirstControl = false, onCancel, children, actions,
+  purpose, layout = "default", kind, focusFirstControl = false, checkoutPresentation, onCancel, children, actions,
 }: DialogFrameProps) {
   const generated = useId().replace(/:/g, "");
   const titleId = `${kind === "confirmation" ? "confirmation" : "form"}-title-${generated}`;
   const descriptionId = `${kind === "confirmation" ? "confirmation" : "form"}-description-${generated}`;
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const presentation = purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog" ? checkoutPresentation : undefined;
+  const ready = presentation?.ready ?? true;
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
+  const deferredFocus = useRef(!ready);
+  const externalFrameRef = presentation?.frameRef;
+  const attachFrame = useCallback((node: HTMLDivElement | null) => {
+    dialogRef.current = node;
+    externalFrameRef?.(node);
+  }, [externalFrameRef]);
   const ownedDialogRef = useRef<HTMLElement | null>(null);
   const invokerRef = useRef<HTMLElement | null>(null);
   const previousDialogRef = useRef<HTMLElement | null>(null);
@@ -85,6 +99,29 @@ function DialogFrame({
   const onCancelRef = useRef(onCancel);
   pendingRef.current = pending;
   onCancelRef.current = onCancel;
+
+  const repairFocus = (container: HTMLElement) => {
+    const active = container.ownerDocument.activeElement as HTMLElement | null;
+    const activeDialog = active?.closest('[role="dialog"]');
+    if (presentation && readyRef.current && deferredFocus.current && activeDialog && activeDialog !== container) return;
+    if (!readyRef.current) container.focus();
+    else if (deferredFocus.current || !isEligible(active, container)) {
+      deferredFocus.current = false;
+      const explicit = initialFocusRef?.current ?? null;
+      const preferred = focusFirstControl
+        ? [...container.querySelectorAll<HTMLElement>("form input, form select, form textarea, form button")]
+            .find((node) => isEligible(node, container)) ?? null
+        : null;
+      const back = container.querySelector<HTMLElement>("[data-ui-dialog-actions] button");
+      (isEligible(explicit, container) ? explicit : preferred ?? (isEligible(back, container) ? back : container)).focus();
+    }
+  };
+  useLayoutEffect(() => {
+    const container = dialogRef.current;
+    if (!open || !container || !presentation) return;
+    if (!ready) deferredFocus.current = true;
+    if ((!ready || deferredFocus.current) && (!wasOpen.current || currentDialog(container.ownerDocument) === container)) repairFocus(container);
+  });
 
   useEffect(() => {
     const container = dialogRef.current;
@@ -109,7 +146,7 @@ function DialogFrame({
         return;
       }
       if (event.key !== "Tab") return;
-      const focusable = [...container.querySelectorAll<HTMLElement>(focusableSelector)].filter((node) => isEligible(node, container));
+      const focusable = readyRef.current ? [...container.querySelectorAll<HTMLElement>(focusableSelector)].filter((node) => isEligible(node, container)) : [];
       const activeIndex = focusable.indexOf(owner.activeElement as HTMLElement);
       if (!focusable.length || activeIndex < 0 || (!event.shiftKey && activeIndex === focusable.length - 1) || (event.shiftKey && activeIndex === 0)) {
         event.preventDefault();
@@ -117,16 +154,7 @@ function DialogFrame({
       }
     };
     owner.addEventListener("keydown", contain, true);
-    const active = owner.activeElement as HTMLElement | null;
-    if (!isEligible(active, container)) {
-      const explicit = initialFocusRef?.current ?? null;
-      const preferred = focusFirstControl
-        ? [...container.querySelectorAll<HTMLElement>("form input, form select, form textarea, form button")]
-            .find((node) => isEligible(node, container)) ?? null
-        : null;
-      const back = container.querySelector<HTMLElement>("[data-ui-dialog-actions] button");
-      (isEligible(explicit, container) ? explicit : preferred ?? (isEligible(back, container) ? back : container)).focus();
-    }
+    repairFocus(container);
     wasOpen.current = true;
     return () => {
       owner.removeEventListener("keydown", contain, true);
@@ -148,7 +176,8 @@ function DialogFrame({
   return createElement("div", { "data-ui-dialog-backdrop": true },
     createElement("div", {
       id: dialogId ?? (purpose === "routine" ? "checkout-dialog" : undefined),
-      ref: dialogRef, role: "dialog", tabIndex: -1,
+      ref: attachFrame, role: "dialog", tabIndex: -1,
+      "data-ui-checkout-opening": !ready || undefined,
       "aria-modal": "true", "aria-labelledby": titleId, "aria-describedby": descriptionId,
       "aria-busy": pending || undefined,
       "data-ui-confirmation-dialog": kind === "confirmation" && purpose !== "routine" || undefined,
@@ -169,14 +198,14 @@ function DialogFrame({
 
 export function ConfirmationDialog({
   open, purpose, layout = "default", title, description, confirmLabel, confirmDisabled = false, pending = false,
-  pendingLabel = "Procesando…", initialFocusRef, dialogId, dialogDataAttribute, onCancel, onConfirm, children,
+  pendingLabel = "Procesando…", initialFocusRef, invokerRef, checkoutPresentation, dialogId, dialogDataAttribute, onCancel, onConfirm, children,
 }: ConfirmationDialogProps) {
   if (typeof title !== "string" || !title.trim()) throw new TypeError("ConfirmationDialog requires a nonblank title");
   if (!(typeof description === "string" && description.trim()) && !isValidElement(description)) {
     throw new TypeError("ConfirmationDialog requires a valid description");
   }
   return createElement(DialogFrame, {
-    open, purpose, layout, title, description, pending, initialFocusRef, dialogId, dialogDataAttribute,
+    open, purpose, layout, title, description, pending, initialFocusRef, invokerRef, checkoutPresentation, dialogId, dialogDataAttribute,
     kind: "confirmation", onCancel, children,
     actions: createElement("div", { "data-ui-dialog-actions": true },
       createElement(Action, { variant: "secondary", disabled: pending, onClick: () => { if (!pending) onCancel(); } }, "Volver"),

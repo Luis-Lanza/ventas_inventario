@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createElement, createRef } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { readFile } from "node:fs/promises";
+import { StrictMode, createElement, createRef } from "react";
+import { gsap } from "gsap";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CheckoutDialog } from "./checkout-dialog.ts";
+
+const style = document.createElement("style");
+style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+document.head.append(style);
 
 function opener() {
   const button = document.createElement("button");
@@ -42,6 +48,57 @@ test("routine checkout has a safe primary action and restores focus after Volver
   rendered.unmount();
   trigger.remove();
 });
+
+test("actual checkout expansion contains focus until content is ready, once, under StrictMode", (t) => {
+  const trigger = opener(), first = createRef<HTMLInputElement>();
+  const completions: Array<() => void> = [];
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect));
+  t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
+  const props = { open: true, title: "Revisar y cobrar", description: "Revisá la venta antes de confirmar.", confirmLabel: "Confirmar venta",
+    onCancel() {}, onConfirm() {}, initialFocusRef: first,
+    opening: { id: 1, trigger, rect: { left: 1100, top: 720, width: 200, height: 48 }, radius: "24px" },
+    children: createElement("div", { "data-ui-sales-checkout": true }, createElement("input", { ref: first, "aria-label": "Precio" })),
+  };
+  const view = render(createElement(StrictMode, null, createElement(CheckoutDialog, props)));
+  const frame = screen.getByRole("dialog", { name: "Revisar y cobrar" });
+  assert.equal(frame.style.left, "1100px");
+  assert.equal(getComputedStyle(first.current!).visibility, "hidden");
+  assert.notEqual(getComputedStyle(first.current!).display, "none");
+  assert.equal(document.activeElement, frame);
+  for (const shiftKey of [false, true]) { fireEvent.keyDown(frame, { key: "Tab", shiftKey }); assert.equal(document.activeElement, frame); }
+  act(() => completions[0]()); // StrictMode's discarded epoch cannot reveal this opening.
+  assert.equal(document.activeElement, frame);
+  act(() => completions.at(-1)!());
+  assert.equal(frame.style.width, "");
+  assert.equal(getComputedStyle(first.current!).visibility, "visible");
+  assert.equal(document.activeElement, first.current);
+  const back = screen.getByRole("button", { name: "Volver" }); back.focus();
+  view.rerender(createElement(StrictMode, null, createElement(CheckoutDialog, props)));
+  assert.equal(document.activeElement, back);
+  view.unmount(); trigger.remove();
+});
+
+for (const mode of ["initial", "changed", "invalid", "exception"] as const) {
+  test(`automatic first-control focus after ${mode} fast readiness`, (t) => {
+    const trigger = opener(), first = createRef<HTMLInputElement>();
+    let matches = mode === "initial";
+    const media = new window.EventTarget();
+    Object.defineProperty(media, "matches", { get: () => matches });
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: () => media });
+    t.after(() => { Reflect.deleteProperty(window, "matchMedia"); trigger.remove(); });
+    t.mock.method(HTMLElement.prototype, "getBoundingClientRect", () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect));
+    t.mock.method(gsap, "to", () => { if (mode === "exception") throw Error("GSAP unavailable"); return {} as gsap.core.Tween; });
+    let focused = 0;
+    view({ initialFocusRef: first, invokerRef: { current: trigger },
+      opening: { id: 1, trigger, rect: { left: 1100, top: 720, width: mode === "invalid" ? 0 : 200, height: 48 }, radius: "24px" },
+      children: createElement("div", { "data-ui-sales-checkout": true }, createElement("input", { ref: first, "aria-label": "Precio", onFocus: () => { focused++; } })),
+    });
+    if (mode === "changed") act(() => { matches = true; media.dispatchEvent(new Event("change")); });
+    assert.equal(screen.getByRole("dialog").hasAttribute("data-ui-checkout-opening"), false);
+    assert.equal(document.activeElement, first.current);
+    assert.equal(focused, 1);
+  });
+}
 
 test("pending checkout contains focus and blocks Escape and activation", async () => {
   let cancels = 0;

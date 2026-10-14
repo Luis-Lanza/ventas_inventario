@@ -212,6 +212,16 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
 [data-ui-form-dialog] [data-ui-history-return], [data-ui-form-dialog] [data-ui-history-cancellation] { padding: 0; border: 0; background: transparent; }
 [data-ui-dialog-actions] { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); margin-block-start: var(--space-6); }
 
+[data-ui-checkout-dialog][data-ui-dialog-layout="checkout"]:focus {
+  outline-color: var(--color-focus);
+  outline-style: solid;
+  outline-width: 3px;
+  outline-offset: 2px;
+}
+
+/* Keep normal layout measurable while the actual checkout frame expands. Includes late portals. */
+[data-ui-checkout-dialog][data-ui-checkout-opening] > * { visibility: hidden; pointer-events: none; }
+
 /* Sales alone owns this frame and scroll containment; shared dialogs stay unchanged. */
 [data-ui-checkout-dialog]:has(> [data-ui-sales-checkout]) {
   display: grid;
@@ -1178,6 +1188,11 @@ html:has([data-ui-persisted-summary]), body:has([data-ui-persisted-summary]),
     animation-iteration-count: 1 !important;
     transition-duration: .01ms !important;
   }
+  /* Even a tiny visibility transition keeps checkout controls hidden during ready-time focus. */
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"],
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] * {
+    transition-duration: 0s !important;
+  }
   [data-ui-action]:not(:disabled):not([aria-busy="true"]):active { transform: none; }
 }
 @media (forced-colors: active) {
@@ -1185,6 +1200,7 @@ html:has([data-ui-persisted-summary]), body:has([data-ui-persisted-summary]),
   [data-ui-sales-checkout-item], [data-ui-sales-checkout-settlement], [data-ui-sales-checkout] [data-ui-checkout-total] { border-color: CanvasText; forced-color-adjust: auto; }
   [data-ui-persisted-summary], [data-ui-summary-identity], [data-ui-summary-rail], .sale-summary-items, .sale-summary-items :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
   .sale-summary-receipt:focus-visible { outline-color: Highlight; }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"]:focus { outline-color: Highlight; }
   [data-ui-dashboard-metric], [data-ui-dashboard] [data-ui-aligned-data] tr { border-color: CanvasText; forced-color-adjust: auto; }
   [data-ui-inventory-choice] { border-color: CanvasText; forced-color-adjust: auto; }
   [data-ui-inventory-choice]:has(input:focus-visible) { outline-color: Highlight; }

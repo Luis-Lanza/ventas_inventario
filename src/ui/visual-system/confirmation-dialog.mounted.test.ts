@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { StrictMode, createElement, createRef } from "react";
+import { StrictMode, createElement, createRef, useLayoutEffect, useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -55,6 +55,54 @@ test("persisted receipt owns keys under StrictMode and cleanup never steals the 
 });
 
 // Formal RED 1: the snapshot candidate restores the opener during StrictMode effect replay.
+test("fast checkout readiness transfers focus before the ready commit's parent layout phase", () => {
+  const first = createRef<HTMLInputElement>();
+  let readyFocus: Element | null = null;
+  function FastReady() {
+    const [ready, setReady] = useState(false);
+    useLayoutEffect(() => {
+      if (!ready) setReady(true);
+      else readyFocus = document.activeElement;
+    }, [ready]);
+    return dialog({ purpose: "routine", layout: "checkout", initialFocusRef: first,
+      checkoutPresentation: { ready, frameRef() {} },
+      children: createElement("input", { ref: first, "aria-label": "Precio" }),
+    });
+  }
+  const view = render(createElement(StrictMode, null, createElement(FastReady)));
+  assert.ok(readyFocus === first.current, "ready commit still leaves focus on the opening container");
+  assert.equal(document.activeElement, first.current);
+  view.unmount();
+});
+
+test("ready-time checkout focus does not steal from an active nested dialog", () => {
+  const first = createRef<HTMLInputElement>();
+  const checkout = (ready: boolean) => dialog({ purpose: "routine", layout: "checkout", initialFocusRef: first,
+    checkoutPresentation: { ready, frameRef() {} }, children: createElement("input", { ref: first }),
+  });
+  const view = render(checkout(false));
+  const nested = render(formDialog());
+  const nestedControl = screen.getByRole("textbox", { name: "Cantidad" });
+  view.rerender(checkout(true));
+  assert.ok(document.activeElement === nestedControl, "deferred checkout focus displaced nested owner");
+  nested.unmount(); view.unmount();
+});
+
+test("checkout presentation misuse cannot defer focus or attach to other dialog families", () => {
+  const target = createRef<HTMLInputElement>();
+  let attached = false;
+  for (const extra of [{ purpose: "cancellation" as const, layout: "checkout" as const }, { purpose: "routine" as const, layout: "default" as const }, { purpose: "routine" as const, layout: "checkout" as const, dialogDataAttribute: "catalog-edit-dialog" as const }]) {
+    const view = render(dialog({ ...extra, initialFocusRef: target,
+      checkoutPresentation: { ready: false, frameRef: () => { attached = true; } },
+      children: createElement("input", { ref: target, "aria-label": "Motivo" }),
+    }));
+    assert.equal(document.activeElement, target.current);
+    assert.equal(screen.getByRole("dialog").hasAttribute("data-ui-checkout-opening"), false);
+    assert.equal(attached, false);
+    view.unmount();
+  }
+});
+
 test("StrictMode replay keeps focus in an open dialog", () => {
   const invoker = opener();
   const view = render(createElement(StrictMode, null, dialog()));
