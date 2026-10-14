@@ -5,15 +5,17 @@ import { createElement } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { CheckoutDialog } from "./checkout-dialog.ts";
+import { Action } from "./controls.ts";
 import type { CatalogProductBrowseResult } from "../../commands/catalog.ts";
 import { ProductBrowser, initialProductBrowserState, type CatalogViewMode } from "../catalog/product-browser.ts";
 
-async function mountBaseStyles(width?: number, browseWidth?: number) {
+async function mountBaseStyles(width?: number, browseWidth?: number, height = 900) {
   const style = document.createElement("style");
   style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   document.head.append(style);
   if (width !== undefined) {
-    // jsdom does not evaluate viewport media queries. Activate width-only rules
+    // jsdom does not evaluate viewport media queries. Activate width/height rules
     // in source order to check declarations/cascade, not layout or wheel routing.
     const activeRules = (rules: CSSRuleList): string[] => Array.from(rules).flatMap((rule) => {
       if (rule.type === 1) return [rule.cssText];
@@ -23,8 +25,12 @@ async function mountBaseStyles(width?: number, browseWidth?: number) {
       }
       if (rule.type !== 4) return [];
       const media = rule as CSSMediaRule;
-      const bounds = [...media.conditionText.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)];
-      if (!bounds.length || !bounds.every(([, bound, pixels]) => bound === "min" ? width >= Number(pixels) : width <= Number(pixels))) return [];
+      const bounds = [...media.conditionText.matchAll(/\((min|max)-(width|height):\s*(\d+)px\)/g)];
+      const matches = bounds.map(([, bound, axis, pixels]) => {
+        const size = axis === "width" ? width : height;
+        return bound === "min" ? size >= Number(pixels) : size <= Number(pixels);
+      });
+      if (!bounds.length || !(media.conditionText.includes(",") ? matches.some(Boolean) : matches.every(Boolean))) return [];
       return activeRules(media.cssRules);
     });
     style.textContent = activeRules(style.sheet!.cssRules).join("\n");
@@ -41,6 +47,72 @@ function styleOf(element: Element, property: string) {
       || getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
   }
   return value;
+}
+
+for (const [width, height] of [[1440, 900], [1200, 800], [1200, 640], [960, 640]]) {
+  test(`Sales checkout separates surfaces and owns bounded scrolling at ${width}x${height}`, async () => {
+    const style = await mountBaseStyles(width, undefined, height);
+    try {
+      render(createElement("div", { "data-ui-shell-content": true },
+        createElement(CheckoutDialog, { open: true, title: "Revisar y cobrar", description: "Revisá la venta.", confirmLabel: "Confirmar venta", onCancel: () => {}, onConfirm: () => {} },
+          createElement("div", { "data-ui-sales-checkout": true, "data-ui-density": "sparse" },
+            createElement("section", { "data-ui-sales-checkout-cart": true },
+              createElement("h3", null, "Carrito"),
+              createElement("ul", { "data-ui-sale-cart": true },
+                createElement("li", { "data-ui-sale-cart-row": true },
+                  createElement("div", { "data-ui-sale-cart-primary": true },
+                    createElement("div", { "data-ui-sale-product": true }, "Long identity"),
+                    createElement("div", { "data-ui-sales-cart-actions": true },
+                      createElement(Action, { variant: "tertiary" }, "Ver detalles"),
+                      createElement(Action, { variant: "tertiary" }, "Quitar"))),
+                  createElement("div", { "data-ui-sale-cart-controls": true },
+                    createElement("p", { "data-ui-sale-subtotal": true }, "Subtotal"))))),
+            createElement("div", { "data-ui-sales-checkout-settlement": true },
+              createElement("p", { "data-ui-checkout-total": true }, "Total actual"),
+              createElement("section", null, "Pago"),
+              createElement("div", { "data-ui-sale-actions": true }, createElement(Action, { variant: "tertiary" }, "Descartar borrador"))))),
+        createElement("section", { "data-ui-confirmation-dialog": true, "data-testid": "unrelated" },
+          createElement("div", { "data-ui-dialog-actions": true }, createElement(Action, { variant: "tertiary" }, "Otro")))));
+      const frame = screen.getByRole("dialog", { name: "Revisar y cobrar" });
+      const body = frame.querySelector("[data-ui-sales-checkout]")!;
+      const cart = frame.querySelector("[data-ui-sale-cart]")!;
+      const footer = frame.querySelector("[data-ui-dialog-actions]")!;
+      assert.equal(styleOf(frame, "overflow"), "hidden");
+      assert.equal(styleOf(frame, "padding"), "0px");
+      assert.equal(styleOf(frame, "grid-template-rows"), "auto auto minmax(0, 1fr) auto");
+      assert.equal(styleOf(body, "min-block-size"), "0px");
+      assert.equal(styleOf(body, "overflow-y"), width <= 960 || height <= 700 ? "auto" : "hidden");
+      assert.equal(styleOf(cart, "overflow-y"), width <= 960 || height <= 700 ? "visible" : "auto");
+      assert.equal(styleOf(cart, "padding"), "5px");
+      assert.equal(styleOf(cart, "scroll-padding-block"), "8px");
+      assert.equal(styleOf(body, "overscroll-behavior"), "contain");
+      assert.equal(styleOf(frame.querySelector("[data-ui-sale-product]")!, "overflow-wrap"), "anywhere");
+      const total = frame.querySelector("[data-ui-checkout-total]")!;
+      const payment = frame.querySelector("[data-ui-sales-checkout-settlement] > section")!;
+      assert.equal(styleOf(total, "background"), "#eee7dc");
+      assert.equal(styleOf(payment, "background"), "#f4efe6");
+      assert.equal(styleOf(footer, "display"), "flex");
+      assert.equal(styleOf(footer, "justify-content"), "flex-end");
+      assert.equal(styleOf(footer, "padding-block"), "24px");
+      assert.equal(styleOf(footer, "padding-inline"), "32px");
+      assert.equal(styleOf(footer, "background"), "#eee7dc");
+      for (const button of frame.querySelectorAll("button")) {
+        assert.notEqual(styleOf(button, "background"), "transparent");
+        assert.equal(styleOf(button, "border-radius"), "999px");
+        assert.equal(styleOf(button, "min-height"), "44px");
+        button.setAttribute("data-ui-focus-visible", "true");
+        assert.equal(styleOf(button, "outline-width"), "3px");
+        assert.equal(styleOf(button, "outline-offset"), "2px");
+      }
+      assert.equal(styleOf(screen.getByRole("button", { name: "Descartar borrador" }), "color"), "#a33f46");
+      assert.equal(styleOf(screen.getByRole("button", { name: "Confirmar venta" }), "background"), "#3d3042");
+      assert.equal(styleOf(frame.parentElement!, "overscroll-behavior"), "contain");
+      assert.equal(styleOf(document.querySelector("[data-ui-shell-content]")!, "overflow"), "hidden");
+      const unrelated = screen.getByTestId("unrelated");
+      assert.equal(styleOf(unrelated, "overflow"), "auto");
+      assert.notEqual(styleOf(unrelated.querySelector("[data-ui-dialog-actions]")!, "background"), "#eee7dc");
+    } finally { style.remove(); }
+  });
 }
 
 test("Catalog table columns shrink and wrap while the results region retains optional horizontal scrolling", async () => {

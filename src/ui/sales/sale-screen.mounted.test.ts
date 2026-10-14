@@ -642,8 +642,8 @@ test("renders stock actions and manages whole quantities, subtotals, total, remo
   assert.equal(dialog.getAttribute("data-ui-dialog-layout"), "checkout");
   const checkoutContent = dialog.querySelector("[data-ui-checkout-content]");
   assert.equal(checkoutContent?.getAttribute("data-ui-density"), "sparse");
-  assert.match(style.textContent ?? "", /data-ui-checkout-dialog[^}]*:has\(> \[data-ui-sales-checkout\]\[data-ui-density="sparse"\]\)/);
-  assert.match(style.textContent ?? "", /data-ui-sales-checkout\]\[data-ui-density="sparse"\][\s\S]*data-ui-sale-cart[\s\S]*overflow-y:\s*visible/);
+  assert.match(style.textContent ?? "", /data-ui-checkout-dialog[^}]*:has\(> \[data-ui-sales-checkout\]\)/);
+  assert.doesNotMatch(style.textContent ?? "", /data-ui-sales-checkout\]\[data-ui-density="sparse"\]/);
   const cart = within(dialog).getByRole("region", { name: "Carrito" });
   const rail = dialog.querySelector("[data-ui-checkout-rail]");
   assert.ok(rail);
@@ -675,6 +675,12 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
   assert.equal(checkout?.getAttribute("data-ui-density"), null);
   assert.equal(checkout?.firstElementChild?.getAttribute("data-ui-sales-checkout-cart"), "true");
   assert.equal(checkout?.lastElementChild?.getAttribute("data-ui-sales-checkout-settlement"), "true");
+  const settlementSurface = checkout!.lastElementChild!;
+  const total = settlementSurface.querySelector("[data-ui-checkout-total]")!;
+  assert.equal(total.querySelector("strong")?.textContent, "Bs 211,00");
+  assert.equal(total.firstElementChild?.textContent, "Total actual: ");
+  assert.deepEqual(Array.from(settlementSurface.children).map((child) => child.tagName), ["P", "SECTION", "DIV"]);
+  assert.deepEqual(within(dialog.querySelector("[data-ui-dialog-actions]")! as HTMLElement).getAllByRole("button").map((button) => button.textContent), ["Volver", "Confirmar venta"]);
 
   const cart = within(dialog).getByRole("list", { name: "Carrito" });
   assert.equal(cart.querySelector("table"), null);
@@ -690,7 +696,7 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
     assert.ok(within(row).getByText(product.sku));
     const snapshot = within(row).getByText(`Stock: ${product.available_quantity}`);
     assert.equal(snapshot.getAttribute("data-ui-sales-stock-snapshot"), "true");
-    assert.match(within(row).getByText("Dato de la búsqueda; la disponibilidad se valida al confirmar.").textContent ?? "", /disponibilidad se valida al confirmar/);
+    assert.ok(!within(row).queryByText("Dato de la búsqueda; la disponibilidad se valida al confirmar."), "checkout omits the rejected availability disclaimer");
     const actions = within(row).getAllByRole("button").filter((button) => ["Ver detalles", `Quitar ${product.name}`].includes(button.textContent === "Quitar" ? button.getAttribute("aria-label") ?? "" : button.textContent ?? ""));
     assert.deepEqual(actions.map((button) => button.textContent), ["Ver detalles", "Quitar"]);
     const salePrice = `Bs ${product.sale_price_centavos === 8550 ? "85,50" : "125,50"}`;
@@ -1093,19 +1099,18 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-row\]\s*\{[^}]*display:\s*grid[^}]*border:\s*1px solid/s);
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-primary\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/s);
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-product\]\s*\{[^}]*grid-column:\s*1/s);
-  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-price-facts\]\s*\{[^}]*grid-column:\s*1/s);
-  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-primary\] \[data-ui-sales-cart-actions\]\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*1 \/ span 4/s);
-  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\]\s*\{[^}]*grid-template-columns:\s*minmax\(7rem,\s*1fr\)\s+minmax\(10rem,\s*1fr\)\s+minmax\(9rem,\s*max-content\)[^}]*column-gap:\s*var\(--space-4\)/s);
-  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-subtotal\]\s*\{[^}]*min-inline-size:\s*9rem[^}]*justify-self:\s*end[^}]*text-align:\s*end[^}]*white-space:\s*nowrap/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-price-facts\]\s*\{[^}]*grid-column:\s*1 \/ -1/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-primary\] \[data-ui-sales-cart-actions\]\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*1/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\]\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)[^}]*column-gap:\s*var\(--space-4\)/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-subtotal\]\s*\{[^}]*grid-column:\s*1 \/ -1[^}]*border-block-start:\s*1px solid[^}]*text-align:\s*start/s);
   assert.doesNotMatch(style.textContent ?? "", /^\[data-ui-checkout-content\]/m);
-  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-checkout-dialog[^}]*:has\(> \[data-ui-sales-checkout\]\)[\s\S]*inline-size:\s*min\(1040px,\s*100%\)[\s\S]*max-block-size:\s*calc\(100vh - 48px\)[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(280px,\s*320px\)[\s\S]*overflow:\s*hidden/s);
-  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-sales-checkout-settlement[\s\S]*grid-column:\s*2/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-checkout-dialog[^}]*:has\(> \[data-ui-sales-checkout\]\)[\s\S]*inline-size:\s*min\(520px,\s*100%\)[\s\S]*overflow:\s*auto[\s\S]*padding:\s*var\(--space-4\)/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-primary[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-product\], \[data-ui-sales-checkout\] \[data-ui-sale-price-facts\]\s*\{[^}]*grid-column:\s*1/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-primary[^}]*data-ui-sales-cart-actions[^}]*grid-column:\s*2[^}]*grid-row:\s*1 \/ span 4/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-controls[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart\][^{]*\{[^}]*max-block-size:\s*none[^}]*overflow-y:\s*visible/s);
+  assert.match(style.textContent ?? "", /data-ui-checkout-dialog[^}]*:has\(> \[data-ui-sales-checkout\]\)[^{]*\{[^}]*inline-size:\s*min\(1160px,\s*100%\)[^}]*max-block-size:\s*calc\(100dvh - 48px\)[^}]*overflow:\s*hidden/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(280px, 360px\)/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\), \(max-height: 700px\)[\s\S]*data-ui-sales-checkout\]\s*\{[^}]*overflow-y:\s*auto/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sale-cart-primary\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-cart-actions\]\s*\{[^}]*grid-column:\s*1[^}]*grid-row:\s*auto/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sale-cart-controls\]\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sale-cart\]\s*\{[^}]*overflow-y:\s*visible/s);
 });
 
 test("bounds Sales checkout field controls and money inputs to their grid track", () => {
