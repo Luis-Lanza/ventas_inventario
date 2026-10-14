@@ -257,6 +257,68 @@ for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [600, 
   });
 }
 
+for (const [width, browseWidth, columns] of [[1440, 800, 3], [1200, 560, 2], [960, 700, 2], [1440, 340, 1]]) {
+  test(`Sales gallery uses flat full-image cards and container columns at ${width}px/${browseWidth}px`, async () => {
+    const style = await mountBaseStyles(width, browseWidth);
+    try {
+      const product: CatalogProductBrowseResult = { product_id: 1, revision: 1, category_id: 1, sku: "LONG-SKU", name: "Long product identity", category_name: "Long category", available_quantity: 1, purchase_price_centavos: null, sale_price_centavos: 12550, list_price_centavos: 12550, catalog_unit_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_code: null, attribute_values: [{ definition_id: 1, label: "Marca", value: "Long attribute" }] };
+      const props = { presentation: "sales" as const, salesViewMode: "gallery" as const,
+        state: { ...initialProductBrowserState, status: "results" as const, result: { products: [product, { ...product, product_id: 2 }], categories: [], page: 1, page_size: 20, total: 2, total_pages: 1 } },
+        onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: () => {}, onPageChange: () => {}, onSelect: () => {}, actionLabel: "Agregar", thumbnails: { 1: "data:image/jpeg;base64,/9j/2Q==" } };
+      render(createElement("div", { "data-ui-catalog-workspace": true }, createElement(ProductBrowser, props), catalogBrowser("gallery")));
+      const gallery = document.querySelector('[data-ui-sales-gallery="true"]')!;
+      assert.equal(styleOf(gallery, "grid-template-columns"), `repeat(${columns}, minmax(0, 1fr))`);
+      assert.equal(styleOf(gallery, "align-content"), "start");
+      assert.equal(styleOf(gallery, "align-items"), "stretch");
+      assert.equal(styleOf(gallery, "gap"), "16px");
+      assert.equal(styleOf(gallery, "padding-block"), "5px");
+      assert.equal(styleOf(gallery, "scroll-padding-block"), "8px");
+      for (const card of gallery.querySelectorAll("li")) {
+        assert.equal(styleOf(card, "background"), "#fffcf7");
+        assert.equal(styleOf(card, "box-shadow"), "none");
+        assert.equal(styleOf(card, "border-radius"), "32px");
+        assert.equal(styleOf(card, "grid-template-columns"), "minmax(0, 1fr)");
+        const image = card.querySelector("[data-ui-sales-image-area]")!;
+        assert.equal(styleOf(image, "inline-size"), "100%");
+        assert.equal(styleOf(image, "aspect-ratio"), "4 / 3");
+        assert.equal(styleOf(image, "border-radius"), "24px");
+        assert.equal(styleOf(image.firstElementChild!, "inline-size"), "100%");
+        assert.equal(styleOf(image.firstElementChild!, "block-size"), "100%");
+        assert.equal(styleOf(image.firstElementChild!, "min-block-size"), "0px");
+        const identity = card.querySelector("[data-ui-sales-product-identity]")!;
+        assert.equal(styleOf(identity, "overflow-wrap"), "anywhere");
+        assert.equal(styleOf(identity.querySelector("strong")!, "font-size"), "18px");
+        const metadata = identity.querySelector("[data-ui-sales-product-metadata]")!;
+        assert.equal(styleOf(metadata, "flex-wrap"), "wrap");
+        assert.equal(styleOf(metadata.querySelector("[data-ui-sku]")!, "white-space"), "normal");
+        assert.equal(styleOf(metadata.querySelector("[data-ui-sales-product-category]")!, "border-radius"), "999px");
+        const footer = card.querySelector("[data-ui-sales-commercial-footer]")!;
+        assert.equal(styleOf(footer, "grid-template-columns"), "minmax(0, 1fr)");
+        assert.match(styleOf(footer, "border-block-start"), /^1px solid /);
+        assert.equal(styleOf(footer, "padding-block-start"), "12px");
+        const price = footer.querySelector("[data-ui-money]")!;
+        assert.equal(styleOf(price, "font-weight"), "650");
+        assert.equal(styleOf(price, "white-space"), "normal");
+        assert.equal(styleOf(price, "overflow-wrap"), "anywhere");
+        for (const button of footer.querySelectorAll("button")) {
+          assert.equal(styleOf(button, "inline-size"), "100%");
+          assert.equal(styleOf(button, "min-block-size"), "44px");
+          assert.equal(styleOf(button, "border-radius"), "999px");
+          button.setAttribute("data-ui-focus-visible", "true");
+          assert.equal(styleOf(button, "outline-width"), "3px");
+          assert.equal(styleOf(button, "outline-offset"), "2px");
+        }
+        const details = footer.querySelector("[data-ui-sales-product-detail-trigger]")!;
+        assert.match(styleOf(details, "border"), /^1px solid /);
+        assert.equal(styleOf(details, "background"), "#fffcf7");
+      }
+      const shared = document.querySelector('[data-ui-catalog-gallery="true"] [data-ui-catalog-image-placeholder]')!;
+      assert.equal(styleOf(shared, "min-block-size"), width <= 960 ? "96px" : "128px");
+      assert.notEqual(styleOf(shared.closest("li")!, "border-radius"), "32px");
+    } finally { style.remove(); }
+  });
+}
+
 test("base styles expose generic controls and the typography hierarchy", async () => {
   const style = await mountBaseStyles();
   const user = userEvent.setup({ document });

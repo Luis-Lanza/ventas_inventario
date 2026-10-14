@@ -337,7 +337,11 @@ test("Sales loads revision-free page thumbnails and offers a persisted Sales-onl
   const footer = card.querySelector("[data-ui-sales-commercial-footer]");
   assert.ok(footer instanceof HTMLElement);
   assert.equal(within(footer).getByText("Bs 85,50").textContent, "Bs 85,50");
-  assert.equal(within(footer).getByText("Disponible: 8").getAttribute("data-ui-badge"), "available");
+  const stock = within(card).getByText("Disponible: 8");
+  assert.equal(stock.getAttribute("data-ui-badge"), "available");
+  assert.equal(stock.previousElementSibling?.getAttribute("data-ui-sales-product-attributes"), "true");
+  assert.equal(stock.parentElement?.getAttribute("data-ui-sales-product-identity"), "true");
+  assert.equal(stock.parentElement?.nextElementSibling, footer);
   assert.equal(within(footer).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
 });
 
@@ -353,7 +357,7 @@ test("keeps Sales toolbar and gallery presentation isolated from browser layout 
   assert.equal(within(list).getAllByRole("listitem").length, 1);
   const css = style.textContent ?? "";
   assert.match(css, /@container sales-browse \(min-width:\s*40rem\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-sale-search\] \{ grid-template-columns: minmax\(0, 1\.6fr\) minmax\(0, 1fr\) auto; \}/);
-  assert.match(css, /\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\] \{[^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)[^}]*\}/);
+  assert.match(css, /@container sales-browse \(min-width: 46rem\)[\s\S]*\[data-ui-sales-gallery="true"\] \{[^}]*repeat\(3, minmax\(0, 1fr\)\)[^}]*\}/);
   assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*aspect-ratio: 4 \/ 3/);
 });
 
@@ -560,7 +564,7 @@ test("contains the product result viewport between search and pagination without
   assert.ok(within(list).getAllByRole("button", { name: "Agregar" }).length > 0);
   await user().click(within(catalog).getByRole("button", { name: "Vista de galería" }));
   assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
-  assert.match(style.textContent ?? "", /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\][^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)/s);
+  assert.match(style.textContent ?? "", /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\][^}]*repeat\(1, minmax\(0, 1fr\)\)/s);
   assert.equal(within(list).getAllByRole("listitem").length, 100);
   assert.ok(within(catalog).getByRole("status"));
   assert.ok(within(catalog).getByRole("button", { name: "Siguiente" }));

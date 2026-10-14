@@ -323,6 +323,54 @@ test("Sales table and gallery render ordered non-empty attribute summaries, thum
   assert.equal(within(list).getByText("Diámetro: 50 mm").textContent, "Diámetro: 50 mm");
 });
 
+test("Sales gallery puts metadata before identity and stock above the price and actions", async () => {
+  const product = { ...page.products[0], sku: "FILTER-LONG-SKU", name: "Filtro de aceite de nombre largo", category_name: "Repuestos y accesorios", sale_price_centavos: 8550,
+    attribute_values: [{ definition_id: 1, label: "Vacío", value: " " }, { definition_id: 2, label: "Marca", value: "Bosch" }, { definition_id: 3, label: "Medida", value: "50 mm" }, { definition_id: 4, label: "Oculto", value: "Tercero" }] };
+  const products = [product, { ...product, product_id: 2, available_quantity: 0 }, { ...product, product_id: 3, available_quantity: 1 }];
+  const selected: unknown[] = [];
+  const props = { presentation: "sales" as const, salesViewMode: "gallery" as const,
+    state: { ...initialProductBrowserState, status: "results" as const, result: { ...page, products, total: 3 } },
+    onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: () => {}, onPageChange: () => {},
+    onSelect: (value: ProductBrowseResult) => selected.push(value), actionLabel: "Agregar", disabledProductIds: new Set([1]),
+    thumbnails: { 1: "data:image/jpeg;base64,/9j/2Q==", 2: "/private/image.jpg" } };
+  const view = render(createElement(ProductBrowser<ProductBrowseResult>, props));
+  const cards = screen.getAllByRole("listitem");
+  const identity = cards[0].querySelector("[data-ui-sales-product-identity]")!;
+  const metadata = identity.querySelector("[data-ui-sales-product-metadata]")!;
+  assert.ok(metadata, "category and SKU precede the prominent name");
+  assert.equal(identity.firstElementChild, metadata);
+  assert.equal(within(metadata as HTMLElement).getByText(product.category_name).getAttribute("data-ui-sales-product-category"), "true");
+  assert.equal(within(metadata as HTMLElement).getByText(`SKU: ${product.sku}`).getAttribute("data-ui-sku"), "true");
+  assert.equal(metadata.nextElementSibling?.tagName, "STRONG");
+  assert.equal(metadata.nextElementSibling?.textContent, product.name);
+  assert.ok(within(identity as HTMLElement).getByText("Marca: Bosch"));
+  assert.ok(within(identity as HTMLElement).getByText("Medida: 50 mm"));
+  assert.equal(within(cards[0]).queryByText("Oculto: Tercero"), null);
+  const stock = within(cards[0]).getByText("Disponible: 4");
+  assert.equal(stock.getAttribute("data-ui-badge"), "available");
+  assert.equal(identity.lastElementChild, stock);
+  assert.equal(stock.previousElementSibling?.getAttribute("data-ui-sales-product-attributes"), "true");
+  const footer = identity.nextElementSibling as HTMLElement;
+  assert.equal(footer.getAttribute("data-ui-sales-commercial-footer"), "true");
+  assert.equal(within(footer).getByText("Precio").parentElement, within(footer).getByText("Bs 85,50").parentElement);
+  assert.equal(within(footer).getByText("Bs 85,50").tagName, "STRONG");
+  assert.deepEqual(within(footer).getAllByRole("button").map(button => button.textContent), ["Ver detalles", "Agregado"]);
+  assert.equal((within(cards[0]).getByRole("button", { name: "Agregado" }) as HTMLButtonElement).disabled, true);
+  assert.equal((within(cards[1]).getByRole("button", { name: "Agregar" }) as HTMLButtonElement).disabled, true);
+  assert.equal(within(cards[1]).getByText("Sin stock: 0").getAttribute("data-ui-badge"), "out-of-stock");
+  assert.equal(within(cards[2]).getByText("Stock bajo: 1").getAttribute("data-ui-badge"), "low-stock");
+  assert.equal(within(cards[0]).getByRole("img", { name: product.name }).getAttribute("loading"), "lazy");
+  assert.ok(within(cards[1]).getByRole("img", { name: "Sin imagen" }));
+  assert.ok(within(cards[2]).getByRole("img", { name: "Sin imagen" }));
+  await userEvent.click(within(cards[2]).getByRole("button", { name: "Agregar" }));
+  assert.equal(selected[0], products[2]);
+  view.rerender(createElement(ProductBrowser<ProductBrowseResult>, { ...props, disabled: true }));
+  for (const card of screen.getAllByRole("listitem")) {
+    assert.equal((within(card).getByRole("button", { name: /Agregar|Agregado/ }) as HTMLButtonElement).disabled, true);
+    assert.equal((within(card).getByRole("button", { name: "Ver detalles" }) as HTMLButtonElement).disabled, false);
+  }
+});
+
 test("Sales browse modes retain distinct geometry and protect table price and Add content", async () => {
   const state = { ...initialProductBrowserState, status: "results" as const, result: page };
   const props = { state, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {}, actionLabel: "Agregar" };
@@ -347,21 +395,20 @@ test("Sales browse modes retain distinct geometry and protect table price and Ad
   const footer = card.querySelector("[data-ui-sales-commercial-footer]");
   assert.ok(footer instanceof HTMLElement);
   assert.equal(footer.querySelector("[data-ui-money]")?.textContent, "Bs 25,00");
-  assert.equal(within(footer).getByText("Disponible: 4").getAttribute("data-ui-badge"), "available");
+  assert.equal(within(card).getByText("Disponible: 4").getAttribute("data-ui-badge"), "available");
   assert.equal(within(footer).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
 
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-sales-table="true"[^}]*grid-template-columns:\s*3rem minmax\(0, 1fr\)/s);
   assert.match(css, /data-ui-sales-table="true"] \[data-ui-product-action\][^}]*flex-wrap:\s*wrap/s);
   assert.match(css, /data-ui-sales-table="true"] \[data-ui-money\][^}]*word-break:\s*keep-all/s);
-  assert.match(css, /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\]\s*\{[^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)/s);
-  assert.match(css, /@media \(min-width: 961px\)[\s\S]*data-ui-product-browser="sales"\] \[data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\]\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/s);
+  assert.match(css, /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\]\s*\{[^}]*repeat\(1, minmax\(0, 1fr\)\)/s);
+  assert.match(css, /@container sales-browse \(min-width: 46rem\)[\s\S]*data-ui-sales-gallery="true"\]\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/s);
   assert.match(css, /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\] > \[data-ui-sales-product-card\][^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
-  assert.match(css, /data-ui-sales-image-area\]\s*\{[^}]*inline-size:\s*min\(100%, clamp\(8rem, 14vw, 10\.6667rem\)\)[^}]*aspect-ratio:\s*4 \/ 3[^}]*justify-self:\s*center/s);
-  assert.match(css, /data-ui-sales-image-area\] > \[data-ui-product-thumbnail\], \[data-ui-sales-image-area\] > \[data-ui-catalog-image-placeholder\][^}]*inline-size:\s*100%[^}]*block-size:\s*100%/s);
-  assert.match(css, /data-ui-sales-commercial-footer\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/s);
-  assert.match(css, /data-ui-sales-commercial-footer\] > \[data-ui-action\][^}]*grid-column:\s*1 \/ -1[^}]*inline-size:\s*100%[^}]*white-space:\s*nowrap/s);
-  assert.match(css, /@media \(max-width: 400px\)[\s\S]*data-ui-sales-commercial-footer\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+  assert.match(css, /data-ui-sales-image-area\]\s*\{[^}]*inline-size:\s*100%[^}]*aspect-ratio:\s*4 \/ 3/s);
+  assert.match(css, /data-ui-sales-image-area\] > \[data-ui-product-thumbnail\],[\s\S]*data-ui-sales-image-area\] > \[data-ui-catalog-image-placeholder\][^}]*inline-size:\s*100%[^}]*block-size:\s*100%/s);
+  assert.match(css, /data-ui-sales-commercial-footer\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+  assert.match(css, /data-ui-sales-commercial-footer\] > \[data-ui-action\][^}]*inline-size:\s*100%[^}]*white-space:\s*normal/s);
 });
 
 test("Sales table and gallery details show assigned and unassigned locations without changing rows", () => {
