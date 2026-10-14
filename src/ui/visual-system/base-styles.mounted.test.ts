@@ -126,6 +126,68 @@ for (const width of [961, 960, 600]) {
   });
 }
 
+for (const width of [1440, 1200, 960, 600]) {
+  test(`Sales summary bounds only selected products at ${width}px without changing generic panels`, async () => {
+    const style = await mountBaseStyles(width);
+    try {
+      render(createElement("div", { "data-ui-sale-layout": true },
+        createElement("section", { "data-ui-panel": true, "data-ui-catalog-workspace": true, "data-testid": "generic-panel" },
+          createElement("h2", null, "Catálogo de productos"), catalogBrowser("table")),
+        createElement("section", { "data-ui-panel": true },
+          createElement("h2", null, "Resumen de venta"),
+          createElement("div", { "data-ui-sale-summary": true },
+            createElement("div", { "data-ui-sale-summary-heading": true }, "Líneas seleccionadas", createElement("span", null, "12 líneas")),
+            createElement("div", { "data-ui-sale-summary-lines": true },
+              createElement("ul", null, createElement("li", { "data-ui-sale-summary-line": true },
+                createElement("strong", null, "A long selected product name"),
+                createElement("span", { "data-ui-sku": true }, "LONG-SKU"),
+                createElement("button", { "data-ui-sale-summary-remove": true }, "×"),
+                createElement("div", null, "2 un. × Bs 85,50")))),
+            createElement("div", { "data-ui-sale-summary-totals": true },
+              createElement("p", { "data-ui-type": "total" }, "Total: Bs 171,00")),
+            createElement("button", { "data-ui-action": "primary" }, "Revisar y cobrar")))));
+      const summary = document.querySelector("[data-ui-sale-summary]")!;
+      const viewport = summary.querySelector("[data-ui-sale-summary-lines]")!;
+      assert.equal(styleOf(viewport, "overflow-y"), "auto");
+      assert.match(style.textContent ?? "", /\[data-ui-sale-summary-lines\]\s*\{[^}]*max-block-size:\s*min\(36vh, 24rem\)/);
+      assert.ok(Number.parseFloat(styleOf(viewport, "max-block-size")) > 0);
+      assert.equal(styleOf(viewport, "min-block-size"), width <= 960 ? "56px" : "0px");
+      if (width <= 960) {
+        // Cascade/isolation contract only; real Chromium verifies physical
+        // containment, scrolling and the full focused 44px control + outline.
+        assert.equal(styleOf(summary.parentElement!.parentElement!, "grid-template-rows"), "max-content max-content");
+        assert.equal(styleOf(viewport, "flex-shrink"), "0");
+        assert.equal(styleOf(summary, "flex-shrink"), "0");
+        assert.equal(styleOf(summary.parentElement!, "position"), "static");
+      }
+      assert.equal(styleOf(viewport, "overscroll-behavior"), "contain");
+      assert.equal(styleOf(summary, "display"), "flex");
+      assert.equal(styleOf(summary, "min-block-size"), "0px");
+      assert.equal(styleOf(summary.parentElement!, "max-block-size"), width <= 960 ? "none" : "100%");
+      for (const fixed of summary.querySelectorAll("[data-ui-sale-summary-heading], [data-ui-sale-summary-totals], :scope > button")) {
+        assert.equal(styleOf(fixed, "flex-shrink"), "0");
+        assert.notEqual(styleOf(fixed, "overflow-y"), "auto");
+      }
+      const card = summary.querySelector("li")!;
+      assert.equal(styleOf(card, "background"), "#f4efe6");
+      assert.equal(styleOf(card.querySelector("strong")!, "overflow-wrap"), "anywhere");
+      assert.equal(styleOf(card.querySelector("[data-ui-sku]")!, "overflow-wrap"), "anywhere");
+      assert.equal(styleOf(summary.querySelector(":scope > button")!, "border-radius"), "999px");
+      const remove = card.querySelector("button")!;
+      remove.setAttribute("data-ui-focus-visible", "true");
+      assert.equal(styleOf(remove, "outline-style"), "solid");
+      assert.equal(styleOf(remove, "inline-size"), "44px");
+      const generic = screen.getByTestId("generic-panel");
+      assert.notEqual(styleOf(generic, "max-block-size"), "100%");
+      assert.notEqual(styleOf(generic.querySelector("h2")!, "margin-block-end"), "0px");
+      const table = generic.querySelector('[data-ui-catalog-table="true"]')!;
+      assert.equal(styleOf(table, "overflow-y"), "visible");
+    } finally {
+      style.remove();
+    }
+  });
+}
+
 test("base styles expose generic controls and the typography hierarchy", async () => {
   const style = await mountBaseStyles();
   const user = userEvent.setup({ document });

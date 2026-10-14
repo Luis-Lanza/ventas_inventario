@@ -138,7 +138,10 @@ test("renders the approved Sales catalog and read-only empty and active draft su
   assert.equal(firstProduct.querySelector("[data-ui-unit-price-caption]")?.textContent, "Precio de venta");
 
   const summary = screen.getByRole("region", { name: "Resumen de venta" });
-  assert.ok(within(summary).getByText("Comprobante en preparación"));
+  assert.ok(within(summary).queryByText("Comprobante en preparación") === null, "the rejected preparation label must not be rendered");
+  assert.equal(within(summary).getAllByText("Líneas seleccionadas").length, 1);
+  const summaryHeading = summary.querySelector("[data-ui-sale-summary-heading]")!;
+  assert.equal(summaryHeading.textContent, "Líneas seleccionadas0 líneas");
   assert.ok(within(summary).getByText("0 líneas"));
   assert.ok(within(summary).getByText("El carrito está vacío"));
   assert.ok(within(summary).getByText("Agregá productos desde el catálogo para iniciar una venta."));
@@ -152,6 +155,19 @@ test("renders the approved Sales catalog and read-only empty and active draft su
   const added = within(catalog).getByRole("button", { name: "Agregado" }) as HTMLButtonElement;
   assert.equal(added.disabled, true);
   assert.ok(within(summary).getByText("1 línea"));
+  assert.equal(within(summary).getAllByText("Líneas seleccionadas").length, 1);
+  assert.equal(summaryHeading.textContent, "Líneas seleccionadas1 línea");
+  const selectedProducts = within(summary).getByRole("list", { name: "Líneas seleccionadas" });
+  const viewport = selectedProducts.parentElement!;
+  assert.equal(viewport.getAttribute("data-ui-sale-summary-lines"), "true");
+  assert.equal(viewport.previousElementSibling, summaryHeading);
+  const totals = summary.querySelector("[data-ui-sale-summary-totals]")!;
+  const checkout = within(summary).getByRole("button", { name: "Revisar y cobrar" });
+  assert.equal(viewport.nextElementSibling, totals);
+  assert.equal(totals.nextElementSibling, checkout);
+  assert.equal(viewport.contains(summaryHeading), false);
+  assert.equal(viewport.contains(totals), false);
+  assert.equal(viewport.contains(checkout), false);
   const line = within(summary).getByRole("listitem");
   assert.ok(within(line).getByText("Filtro aceite"));
   assert.ok(within(line).getByText("FIL-1"));
@@ -190,10 +206,56 @@ test("removes products directly from the read-only Sales summary", async () => {
   assert.ok(within(summary).getByText("Filtro premium"));
   assert.ok(within(summary).getByText("1 línea"));
 
-  await u.click(secondRemove);
+  assert.ok(within(summary).getByText("Subtotal: Bs 125,50"));
+  assert.ok(within(summary).getByText("Total: Bs 125,50"));
+  assert.equal((within(catalog).getAllByRole("button", { name: "Agregar" })[0] as HTMLButtonElement).disabled, false);
+  secondRemove.focus();
+  await u.keyboard("{Enter}");
   assert.ok(within(summary).getByText("El carrito está vacío"));
   assert.ok(within(summary).getByText("0 líneas"));
   assert.equal((within(summary).getByRole("button", { name: "Revisar y cobrar" }) as HTMLButtonElement).disabled, true);
+});
+
+test("retains a long selected list across Sales views and reaches checkout by keyboard with effective prices", async () => {
+  const manyProducts = Array.from({ length: 12 }, (_, index) => ({
+    ...products[0], product_id: index + 1,
+    name: `Long selected product identity ${index + 1} with additional descriptive text`,
+    sku: `LONG-UNBROKEN-SKU-${index + 1}-ABCDEFGHIJKLMNOPQRSTUVWXYZ`,
+  }));
+  mockIPC((command) => command === "browse_products_command" ? browse(manyProducts) : Promise.reject(new Error("unexpected command")));
+  render(createElement(SaleScreen));
+  const u = user();
+  const catalog = screen.getByRole("region", { name: "Catálogo de productos" });
+  const summary = screen.getByRole("region", { name: "Resumen de venta" });
+  for (const add of await within(catalog).findAllByRole("button", { name: "Agregar" })) await u.click(add);
+  const list = within(summary).getByRole("list", { name: "Líneas seleccionadas" });
+  assert.equal(within(list).getAllByRole("listitem").length, 12);
+  assert.ok(within(summary).getByText("12 líneas"));
+  assert.ok(within(summary).getByText("Total: Bs 1026,00"));
+  await u.click(within(catalog).getByRole("button", { name: "Vista de galería" }));
+  assert.equal(within(summary).getAllByText("Líneas seleccionadas").length, 1);
+  assert.equal(within(summary).getByRole("list", { name: "Líneas seleccionadas" }), list);
+  const lastRemove = within(list).getAllByRole("button").at(-1)!;
+  lastRemove.focus();
+  await u.tab();
+  const trigger = within(summary).getByRole("button", { name: "Revisar y cobrar" });
+  assert.equal(document.activeElement, trigger);
+  await u.keyboard("{Enter}");
+  const dialog = screen.getByRole("dialog", { name: "Revisar y cobrar" });
+  const firstCartLine = within(dialog).getAllByRole("listitem")[0];
+  fireEvent.change(within(firstCartLine).getByRole("spinbutton"), { target: { value: "2" } });
+  fireEvent.change(within(firstCartLine).getByRole("textbox", { name: "Precio de venta (Bs)" }), { target: { value: "90" } });
+  await u.keyboard("{Escape}");
+  assert.equal(document.activeElement, trigger);
+  assert.ok(within(summary).getByText("Cantidad de unidades: 13"));
+  assert.ok(within(summary).getByText("12 líneas"));
+  const firstSummaryLine = within(list).getAllByRole("listitem")[0];
+  assert.ok(within(firstSummaryLine).getByText(manyProducts[0].name));
+  assert.ok(within(firstSummaryLine).getByText(manyProducts[0].sku));
+  assert.ok(within(firstSummaryLine).getByText("2 un. × Bs 90,00"));
+  assert.ok(within(firstSummaryLine).getByText("Bs 180,00"));
+  assert.ok(within(summary).getByText("Subtotal: Bs 1120,50"));
+  assert.ok(within(summary).getByText("Total: Bs 1120,50"));
 });
 
 test("revision-free native Sales keeps rich unknown-cost detail and captured prices after browsing", async () => {
@@ -486,7 +548,7 @@ test("contains the product result viewport between search and pagination without
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-sale-layout\] \[data-ui-product-browser="sales"\][^}]*min-block-size:\s*0[^}]*flex:\s*1 1 auto/s);
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-catalog-results\][^}]*min-block-size:\s*0[^}]*flex:\s*1 1 auto/s);
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*0[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-layout\][^}]*grid-template-rows:\s*auto auto;[^}]*align-content:\s*start;[^}]*flex:\s*0 0 auto/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-layout\][^}]*grid-template-rows:\s*max-content max-content;[^}]*align-content:\s*start;[^}]*flex:\s*0 0 auto/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*0[^}]*max-block-size:\s*min\(42vh, 32rem\)[^}]*flex:\s*0 1 auto[^}]*overflow-y:\s*auto[^}]*overscroll-behavior:\s*contain/s);
   assert.match(style.textContent ?? "", /data-ui-product-browser="sales"\] \[data-ui-sales-table="true"\] > \[data-ui-sales-product\][^}]*grid-template-columns:\s*3rem minmax\(0, 1fr\) max-content/s);
   assert.match(style.textContent ?? "", /data-ui-product-browser="sales"\] \[data-ui-sales-table="true"\] \[data-ui-unit-price\][^}]*white-space:\s*nowrap/s);
@@ -969,12 +1031,20 @@ test("locks every draft mutation and submitted intent during deferred confirmati
   render(createElement(SaleScreen)); const u = await searchFor(); await u.click((await screen.findAllByRole("button", { name: "Agregar" }))[0]); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); await u.type(screen.getByRole("textbox", { name: "Pago QR" }), "85,50");
   fireEvent.click(screen.getByRole("button", { name: "Confirmar venta" })); fireEvent.click(screen.getByRole("button", { name: "Confirmando…" }));
   const summaryRemove = within(screen.getByRole("region", { name: "Resumen de venta" })).getByRole("button", { name: "Quitar Filtro aceite del resumen de venta" });
+  const summaryTrigger = within(screen.getByRole("region", { name: "Resumen de venta" })).getByRole("button", { name: "Revisar y cobrar" });
+  assert.equal((summaryTrigger as HTMLButtonElement).disabled, true);
+  fireEvent.click(summaryTrigger);
   const controls = [screen.getByRole("searchbox"), screen.getByRole("button", { name: "Buscar" }), screen.getAllByRole("button", { name: "Agregar" })[1], screen.getByRole("spinbutton"), within(screen.getByRole("dialog", { name: "Revisar y cobrar" })).getByRole("button", { name: "Ver detalles" }), screen.getByRole("button", { name: "Quitar Filtro aceite" }), summaryRemove, screen.getByRole("textbox", { name: "Efectivo recibido" }), screen.getByRole("textbox", { name: "Pago QR" }), screen.getByRole("button", { name: "Descartar borrador" }), screen.getByRole("button", { name: "Confirmando…" })];
   assert.ok(controls.every((control) => (control as HTMLInputElement).disabled)); assert.equal(screen.getByRole("main").getAttribute("aria-busy"), "true");
   fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.click(controls[5]); fireEvent.click(controls[6]); fireEvent.change(controls[7], { target: { value: "1" } }); fireEvent.change(controls[8], { target: { value: "2" } }); fireEvent.click(controls[9]);
   assert.equal(confirms, 1); assert.equal(searches, 2); assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filtro"); assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "1"); assert.equal((screen.getByRole("textbox", { name: "Pago QR" }) as HTMLInputElement).value, "85,50");
   assert.deepEqual(submitted, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 8550 } } });
   await act(() => { pending.resolve({ kind: "error", code: "insufficient_stock", message: "Insufficient stock is available." }); return pending.promise; }); screen.getByText("No hay stock suficiente para completar la venta.");
+  assert.equal((summaryRemove as HTMLButtonElement).disabled, false);
+  assert.equal((summaryTrigger as HTMLButtonElement).disabled, false);
+  await u.keyboard("{Escape}");
+  await u.click(summaryTrigger);
+  assert.ok(screen.getByRole("dialog", { name: "Revisar y cobrar" }));
 });
 
 test("blocks a backend minimum violation, preserves the draft, and focuses its final price", async () => {
