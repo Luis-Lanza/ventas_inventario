@@ -129,10 +129,12 @@ test("renders the approved Sales catalog and read-only empty and active draft su
   render(createElement(SaleScreen));
 
   const catalog = await screen.findByRole("region", { name: "Catálogo de productos" });
-  assert.equal(screen.getAllByText("Búsqueda y venta de productos en mostrador").length, 2);
+  assert.equal(screen.getAllByText("Búsqueda y venta de productos en mostrador").length, 1);
+  assert.equal(catalog.getAttribute("data-ui-sales-catalog"), "true");
+  assert.equal(catalog.querySelector("[data-ui-panel-subtitle]"), null);
   assert.doesNotMatch(screen.getByRole("main").textContent ?? "", /repuestos en mostrador|Catálogo de repuestos/);
   assert.equal(catalog.querySelector("[data-ui-product-browser]")?.getAttribute("data-ui-product-browser"), "sales");
-  await waitFor(() => assert.equal(within(catalog).getByRole("status").textContent, "Resultados del catálogo: 3 productosFiltro: Stock activo"));
+  await waitFor(() => assert.equal(within(catalog).getByRole("status").textContent, "Resultados del catálogo: 3 productos"));
   const firstProduct = within(catalog).getAllByRole("listitem")[0];
   assert.equal(firstProduct.querySelector("[data-ui-product-facts]")?.textContent, "FIL-1FiltrosDisponible: 8");
   assert.equal(firstProduct.querySelector("[data-ui-unit-price-caption]")?.textContent, "Precio de venta");
@@ -344,13 +346,13 @@ test("keeps Sales toolbar and gallery presentation isolated from browser layout 
   render(createElement(SaleScreen));
   const catalog = await screen.findByRole("region", { name: "Catálogo de productos" });
   const toolbar = within(catalog).getByRole("searchbox", { name: "Buscar en el catálogo" }).closest("form")!;
-  assert.deepEqual(Array.from(toolbar.querySelectorAll(":scope > *"), (item) => item.getAttribute("role") === "group" ? item.getAttribute("aria-label") : item.tagName === "BUTTON" ? item.textContent?.trim() : item.querySelector("label")?.textContent), ["Buscar en el catálogo", "Categoría", "Presentación de ventas", "Buscar"]);
+  assert.deepEqual(Array.from(toolbar.querySelectorAll(":scope > *"), (item) => item.getAttribute("role") === "group" ? item.getAttribute("aria-label") : item.tagName === "BUTTON" ? item.textContent?.trim() : item.querySelector("label")?.textContent), ["Buscar en el catálogo", "Categoría", "Buscar"]);
   const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
   await user().click(within(catalog).getByRole("button", { name: "Vista de galería" }));
   assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
   assert.equal(within(list).getAllByRole("listitem").length, 1);
   const css = style.textContent ?? "";
-  assert.match(css, /@container sales-browse \(min-width:\s*40rem\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-sale-search\] \{ grid-template-columns: minmax\(12rem, 1\.6fr\) minmax\(10rem, 1fr\) auto auto; \}/);
+  assert.match(css, /@container sales-browse \(min-width:\s*40rem\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-sale-search\] \{ grid-template-columns: minmax\(0, 1\.6fr\) minmax\(0, 1fr\) auto; \}/);
   assert.match(css, /\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\] \{[^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)[^}]*\}/);
   assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*aspect-ratio: 4 \/ 3/);
 });
@@ -533,8 +535,11 @@ test("contains the product result viewport between search and pagination without
   const results = list.parentElement!;
   assert.equal(results.getAttribute("data-ui-catalog-results"), "true");
   assert.equal(results.parentElement?.getAttribute("data-ui-product-browser"), "sales");
-  assert.equal(results.previousElementSibling?.getAttribute("data-ui-sales-catalog-status"), "true");
-  assert.equal(results.previousElementSibling?.previousElementSibling?.tagName, "FORM");
+  const toolbar = results.previousElementSibling!;
+  assert.equal(toolbar.getAttribute("data-ui-sales-catalog-toolbar"), "true");
+  assert.equal(toolbar.querySelector("[data-ui-sales-catalog-status]")?.getAttribute("role"), "status");
+  assert.ok(toolbar.querySelector("form"));
+  assert.equal(toolbar.querySelector("[data-ui-sales-view-toggle]")?.closest("form"), null);
   assert.equal(results.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");
   assert.equal(within(catalog).getAllByRole("listitem").length, 100);
   assert.ok(screen.getByRole("region", { name: "Resumen de venta" }));
@@ -550,7 +555,7 @@ test("contains the product result viewport between search and pagination without
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*0[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-layout\][^}]*grid-template-rows:\s*max-content max-content;[^}]*align-content:\s*start;[^}]*flex:\s*0 0 auto/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*0[^}]*max-block-size:\s*min\(42vh, 32rem\)[^}]*flex:\s*0 1 auto[^}]*overflow-y:\s*auto[^}]*overscroll-behavior:\s*contain/s);
-  assert.match(style.textContent ?? "", /data-ui-product-browser="sales"\] \[data-ui-sales-table="true"\] > \[data-ui-sales-product\][^}]*grid-template-columns:\s*3rem minmax\(0, 1fr\) max-content/s);
+  assert.match(style.textContent ?? "", /data-ui-product-browser="sales"\] \[data-ui-sales-table="true"\] > \[data-ui-sales-product\][^}]*grid-template-columns:\s*3rem minmax\(0, 1fr\)/s);
   assert.match(style.textContent ?? "", /data-ui-product-browser="sales"\] \[data-ui-sales-table="true"\] \[data-ui-unit-price\][^}]*white-space:\s*nowrap/s);
   assert.ok(within(list).getAllByRole("button", { name: "Agregar" }).length > 0);
   await user().click(within(catalog).getByRole("button", { name: "Vista de galería" }));

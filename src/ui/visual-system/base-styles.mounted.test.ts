@@ -8,7 +8,7 @@ import userEvent from "@testing-library/user-event";
 import type { CatalogProductBrowseResult } from "../../commands/catalog.ts";
 import { ProductBrowser, initialProductBrowserState, type CatalogViewMode } from "../catalog/product-browser.ts";
 
-async function mountBaseStyles(width?: number) {
+async function mountBaseStyles(width?: number, browseWidth?: number) {
   const style = document.createElement("style");
   style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   document.head.append(style);
@@ -17,6 +17,10 @@ async function mountBaseStyles(width?: number) {
     // in source order to check declarations/cascade, not layout or wheel routing.
     const activeRules = (rules: CSSRuleList): string[] => Array.from(rules).flatMap((rule) => {
       if (rule.type === 1) return [rule.cssText];
+      if (rule.cssText.startsWith("@container sales-browse") && browseWidth !== undefined) {
+        const minimum = Number(rule.cssText.match(/min-width:\s*(\d+)rem/)?.[1]) * 16;
+        return browseWidth >= minimum ? activeRules((rule as CSSMediaRule).cssRules) : [];
+      }
       if (rule.type !== 4) return [];
       const media = rule as CSSMediaRule;
       const bounds = [...media.conditionText.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)];
@@ -185,6 +189,71 @@ for (const width of [1440, 1200, 960, 600]) {
     } finally {
       style.remove();
     }
+  });
+}
+
+for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [600, 340]]) {
+  test(`Sales catalog surfaces and full-size wrapping controls stay isolated at ${width}px/${browseWidth}px`, async () => {
+    const style = await mountBaseStyles(width, browseWidth);
+    try {
+      const product: CatalogProductBrowseResult = { product_id: 1, revision: 1, category_id: 1, sku: "LONG-SKU", name: "A long product identity", category_name: "Filters", available_quantity: 1, purchase_price_centavos: null, sale_price_centavos: 12550, list_price_centavos: 12550, catalog_unit_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_code: null, attribute_values: [] };
+      render(createElement("div", null, createElement("section", { "data-ui-panel": true, "data-ui-sales-catalog": true },
+        createElement(ProductBrowser, {
+          presentation: "sales", salesViewMode: "table",
+          state: { ...initialProductBrowserState, status: "results", result: { products: [product], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 } },
+          onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: () => {}, onPageChange: () => {}, onSelect: () => {}, actionLabel: "Agregar",
+        })), catalogBrowser("table"), catalogBrowser("gallery"),
+        createElement("section", { "data-ui-inventory-layout": true },
+          createElement(ProductBrowser, {
+            state: { ...initialProductBrowserState, status: "results", result: { products: [product], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 } },
+            onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: () => {}, onPageChange: () => {}, onSelect: () => {}, actionLabel: "Seleccionar",
+          }))));
+      const outer = document.querySelector("[data-ui-sales-catalog]")!;
+      const toolbar = outer.querySelector("[data-ui-sales-catalog-toolbar]")!;
+      assert.equal(styleOf(outer, "background"), "transparent");
+      assert.equal(styleOf(outer, "border-top-width"), "0px");
+      assert.equal(styleOf(outer, "border-top-style"), "none");
+      assert.equal(styleOf(outer, "padding"), "0px");
+      assert.equal(styleOf(toolbar, "background"), "#fffcf7");
+      assert.equal(styleOf(toolbar, "border-radius"), "32px");
+      assert.equal(styleOf(toolbar, "flex-shrink"), "0");
+      // Cascade contract, not physical visibility: Chromium must separately
+      // prove trusted Tab keeps the whole 3px outline + 2px offset unclipped.
+      const results = outer.querySelector("[data-ui-product-browser-list]")!;
+      assert.equal(styleOf(results, "padding-block"), "5px");
+      assert.equal(styleOf(results, "scroll-padding-block"), "8px");
+      assert.equal(styleOf(results, "padding"), "0px");
+      assert.equal(styleOf(results, "overflow-y"), "auto");
+      assert.equal(styleOf(results, "overscroll-behavior"), "contain");
+      for (const shared of document.querySelectorAll('[data-ui-product-browser]:not([data-ui-product-browser="sales"]) [data-ui-product-browser-list]')) {
+        assert.notEqual(styleOf(shared, "padding-block"), "5px");
+        assert.notEqual(styleOf(shared, "scroll-padding-block"), "8px");
+      }
+      const row = outer.querySelector("[data-ui-sales-product]")!;
+      assert.equal(styleOf(row, "background"), "#fffcf7");
+      assert.equal(styleOf(row, "border-radius"), "32px");
+      assert.equal(styleOf(row, "grid-template-columns"), browseWidth >= 640 ? "3rem minmax(0, 1fr) auto" : "3rem minmax(0, 1fr)");
+      const actions = row.querySelector("[data-ui-product-action]")!;
+      assert.equal(styleOf(actions, "display"), "flex");
+      assert.equal(styleOf(actions, "flex-wrap"), "wrap");
+      assert.equal(styleOf(actions, "min-inline-size"), "0px");
+      assert.equal(styleOf(outer.querySelector("form")!, "grid-template-columns"), browseWidth >= 640 ? "minmax(0, 1.6fr) minmax(0, 1fr) auto" : "minmax(0, 1fr)");
+      assert.equal(styleOf(actions, "grid-column"), browseWidth >= 640 ? "3" : "1 / -1");
+      for (const button of outer.querySelectorAll("button")) {
+        assert.equal(styleOf(button, "min-height"), "44px");
+        assert.notEqual(styleOf(button, "inline-size"), "44px");
+        button.setAttribute("data-ui-focus-visible", "true");
+        assert.equal(styleOf(button, "outline-style"), "solid");
+        assert.equal(styleOf(button, "outline-width"), "3px");
+        assert.equal(styleOf(button, "outline-offset"), "2px");
+      }
+      for (const control of outer.querySelectorAll("input, select")) assert.equal(styleOf(control, "min-height"), "44px");
+      assert.equal(styleOf(row.querySelector("[data-ui-product-identity]")!, "overflow-wrap"), "anywhere");
+      assert.equal(styleOf(row.querySelector("[data-ui-money]")!, "white-space"), "nowrap");
+      const catalog = document.querySelector('[data-ui-product-browser="catalog"]')!;
+      assert.equal(catalog.querySelector("[data-ui-sales-catalog-toolbar]"), null);
+      assert.notEqual(styleOf(catalog.querySelector("li")!, "border-radius"), "32px");
+    } finally { style.remove(); }
   });
 }
 
