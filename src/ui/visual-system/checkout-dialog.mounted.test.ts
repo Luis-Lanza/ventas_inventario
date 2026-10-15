@@ -56,12 +56,15 @@ test("actual checkout expansion contains focus until content is ready, once, und
   t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
   const props = { open: true, title: "Revisar y cobrar", description: "Revisá la venta antes de confirmar.", confirmLabel: "Confirmar venta",
     onCancel() {}, onConfirm() {}, initialFocusRef: first,
-    opening: { id: 1, trigger, rect: { left: 1100, top: 720, width: 200, height: 48 }, radius: "24px" },
+    opening: { id: 1, trigger, rect: { left: 1100, top: 720, width: 200, height: 48 }, radius: "24px",
+      surface: { backgroundColor: "rgb(10, 20, 30)", borderColor: "rgb(40, 50, 60)", boxShadow: "none" } },
     children: createElement("div", { "data-ui-sales-checkout": true }, createElement("input", { ref: first, "aria-label": "Precio" })),
   };
   const view = render(createElement(StrictMode, null, createElement(CheckoutDialog, props)));
   const frame = screen.getByRole("dialog", { name: "Revisar y cobrar" });
   assert.equal(frame.style.left, "1100px");
+  assert.equal(frame.style.backgroundColor, "rgb(10, 20, 30)");
+  assert.equal(frame.style.borderColor, "rgb(40, 50, 60)");
   assert.equal(getComputedStyle(first.current!).visibility, "hidden");
   assert.notEqual(getComputedStyle(first.current!).display, "none");
   assert.equal(document.activeElement, frame);
@@ -70,6 +73,8 @@ test("actual checkout expansion contains focus until content is ready, once, und
   assert.equal(document.activeElement, frame);
   act(() => completions.at(-1)!());
   assert.equal(frame.style.width, "");
+  assert.equal(frame.style.backgroundColor, "");
+  assert.equal(frame.style.borderColor, "");
   assert.equal(getComputedStyle(first.current!).visibility, "visible");
   assert.equal(document.activeElement, first.current);
   const back = screen.getByRole("button", { name: "Volver" }); back.focus();
@@ -90,7 +95,8 @@ for (const mode of ["initial", "changed", "invalid", "exception"] as const) {
     t.mock.method(gsap, "to", () => { if (mode === "exception") throw Error("GSAP unavailable"); return {} as gsap.core.Tween; });
     let focused = 0;
     view({ initialFocusRef: first, invokerRef: { current: trigger },
-      opening: { id: 1, trigger, rect: { left: 1100, top: 720, width: mode === "invalid" ? 0 : 200, height: 48 }, radius: "24px" },
+      opening: { id: 1, trigger, rect: { left: 1100, top: 720, width: mode === "invalid" ? 0 : 200, height: 48 }, radius: "24px",
+        surface: { backgroundColor: "rgb(10, 20, 30)", borderColor: "rgb(40, 50, 60)", boxShadow: "none" } },
       children: createElement("div", { "data-ui-sales-checkout": true }, createElement("input", { ref: first, "aria-label": "Precio", onFocus: () => { focused++; } })),
     });
     if (mode === "changed") act(() => { matches = true; media.dispatchEvent(new Event("change")); });

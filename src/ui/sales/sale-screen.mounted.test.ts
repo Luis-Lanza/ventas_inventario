@@ -66,7 +66,20 @@ test("checkout captures the clicked button before session opening; navigation re
   const view = render(createElement(SaleScreen, { session }));
   fireEvent.click(await screen.findByRole("button", { name: "Agregar" }));
   const trigger = screen.getByRole("button", { name: "Revisar y cobrar" });
-  trigger.style.borderRadius = "27px";
+  trigger.style.borderRadius = "999px";
+  trigger.style.backgroundColor = "rgb(10, 20, 30)";
+  trigger.style.borderColor = "rgb(40, 50, 60)";
+  trigger.style.boxShadow = "rgb(70, 80, 90) 0px 2px 4px";
+  const nativeComputedStyle = window.getComputedStyle.bind(window);
+  let surfacesCaptured = 0;
+  t.mock.method(window, "getComputedStyle", (element: Element, pseudo?: string | null) => {
+    if (element === trigger) {
+      assert.equal(session.getSnapshot().checkoutOpen, false, "surface capture precedes source hiding");
+      assert.notEqual(nativeComputedStyle(trigger).opacity, "0");
+      surfacesCaptured++;
+    }
+    return nativeComputedStyle(element, pseudo);
+  });
   let captured = 0;
   trigger.getBoundingClientRect = () => {
     assert.equal(session.getSnapshot().checkoutOpen, false);
@@ -76,12 +89,23 @@ test("checkout captures the clicked button before session opening; navigation re
   fireEvent.click(trigger);
   const frame = screen.getByRole("dialog", { name: "Revisar y cobrar" });
   assert.equal(captured, 1);
+  assert.equal(surfacesCaptured, 1);
+  assert.equal(nativeComputedStyle(trigger).opacity, "0");
+  assert.notEqual(nativeComputedStyle(trigger).display, "none");
+  assert.notEqual(nativeComputedStyle(trigger).visibility, "hidden");
+  assert.equal(nativeComputedStyle(trigger).pointerEvents, "none");
   assert.equal(frame.style.left, "1120px");
-  assert.equal(frame.style.borderTopLeftRadius, "27px");
+  assert.equal(frame.style.borderTopLeftRadius, "24px");
+  assert.equal(frame.style.backgroundColor, "rgb(10, 20, 30)");
+  assert.equal(frame.style.borderColor, "rgb(40, 50, 60)");
+  assert.equal(frame.style.boxShadow, "rgb(70, 80, 90) 0px 2px 4px");
   assert.equal(document.activeElement, frame);
+  act(() => completions[0]());
+  assert.equal(nativeComputedStyle(trigger).opacity, "0", "source stays hidden after tween completion");
   fireEvent.keyDown(frame, { key: "Escape" });
   assert.equal(screen.queryByRole("dialog"), null);
   assert.equal(document.activeElement, trigger);
+  assert.notEqual(nativeComputedStyle(trigger).opacity, "0");
   fireEvent.click(trigger);
   assert.equal(captured, 2);
   act(() => completions[0]());
@@ -94,6 +118,29 @@ test("checkout captures the clicked button before session opening; navigation re
   assert.equal(replacement.hasAttribute("data-ui-checkout-opening"), false);
   assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Precio de venta (Bs)" }));
 });
+
+for (const [radius, width, expected] of [["6px", 210, "6px"], ["999px", 32, "16px"]] as const) {
+  test(`used source radius ${expected} and cancel restoration do not depend on tween completion`, async (t) => {
+    mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
+    t.mock.method(gsap, "to", () => ({} as gsap.core.Tween));
+    t.mock.method(HTMLElement.prototype, "getBoundingClientRect", () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect));
+    render(createElement(SaleScreen));
+    fireEvent.click(await screen.findByRole("button", { name: "Agregar" }));
+    const trigger = screen.getByRole("button", { name: "Revisar y cobrar" });
+    trigger.style.borderRadius = radius;
+    trigger.getBoundingClientRect = () => ({ left: 1120, top: 710, width, height: 48 } as DOMRect);
+    trigger.focus();
+    fireEvent.click(trigger);
+    const frame = screen.getByRole("dialog");
+    assert.equal(frame.style.borderTopLeftRadius, expected);
+    assert.equal(frame.hasAttribute("data-ui-checkout-opening"), true);
+    assert.equal(getComputedStyle(trigger).opacity, "0");
+    fireEvent.keyDown(frame, { key: "Escape" });
+    assert.equal(screen.queryByRole("dialog"), null);
+    assert.notEqual(getComputedStyle(trigger).opacity, "0");
+    assert.equal(document.activeElement, trigger);
+  });
+}
 
 test("Sales reduced-motion opening automatically focuses its original price control once", async (t) => {
   mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
@@ -120,6 +167,7 @@ test("a refused clicked candidate cannot animate a later session-driven opening"
   const detach = session.attachOwner(); detach();
   fireEvent.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
   assert.equal(screen.queryByRole("dialog"), null);
+  assert.notEqual(getComputedStyle(screen.getByRole("button", { name: "Revisar y cobrar" })).opacity, "0");
   session.attachOwner();
   act(() => { session.edit({ type: "checkout_changed", open: true }); });
   const frame = screen.getByRole("dialog");

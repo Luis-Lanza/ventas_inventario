@@ -50,6 +50,30 @@ function styleOf(element: Element, property: string) {
   return value;
 }
 
+test("only the expanded Sales checkout source loses paint without layout or focus suppression", async () => {
+  const style = await mountBaseStyles();
+  try {
+    render(createElement("div", { dangerouslySetInnerHTML: { __html: `
+      <main data-ui-sale><button aria-controls="checkout-dialog" aria-expanded="true">Source</button>
+      <button aria-controls="checkout-dialog" aria-expanded="false">Closed</button>
+      <button aria-controls="other-dialog" aria-expanded="true">Other</button></main>
+      <button aria-controls="checkout-dialog" aria-expanded="true">Outside Sales</button>` } }));
+    const source = screen.getByRole("button", { name: "Source" });
+    assert.equal(styleOf(source, "opacity"), "0");
+    assert.equal(styleOf(source, "pointer-events"), "none");
+    assert.notEqual(styleOf(source, "display"), "none");
+    assert.notEqual(styleOf(source, "visibility"), "hidden");
+    assert.equal(source.hasAttribute("hidden"), false);
+    assert.equal(source.hasAttribute("disabled"), false);
+    for (const name of ["Closed", "Other", "Outside Sales"]) {
+      assert.notEqual(styleOf(screen.getByRole("button", { name }), "opacity"), "0");
+    }
+    const paintRule = Array.from(style.sheet!.cssRules).find((rule) =>
+      (rule as CSSStyleRule).selectorText === '[data-ui-sale] button[aria-controls="checkout-dialog"][aria-expanded="true"]') as CSSStyleRule;
+    assert.deepEqual(Array.from(paintRule.style).sort(), ["opacity", "pointer-events"]);
+  } finally { style.remove(); }
+});
+
 for (const reduced of [false, true]) {
   test(`checkout transition-duration cascade is ${reduced ? "instant reduced" : "unchanged normal"} (structural only)`, async () => {
     const style = await mountBaseStyles();

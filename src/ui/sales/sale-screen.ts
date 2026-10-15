@@ -32,9 +32,16 @@ export function SaleScreen(props: SaleScreenProps) {
   const openCheckout = (event: { currentTarget: HTMLButtonElement }) => {
     const trigger = event.currentTarget;
     const rect = trigger.getBoundingClientRect();
+    const style = trigger.ownerDocument.defaultView?.getComputedStyle(trigger);
+    const computedRadius = style?.borderRadius ?? "0px";
+    // This project uses a uniform px pill. Tween its used radius (24px at 48px high),
+    // not 999px, which would stay clamped then suddenly change near the end.
+    const radius = /^\d+(?:\.\d+)?px$/.test(computedRadius)
+      ? `${Math.min(Number.parseFloat(computedRadius), rect.width / 2, rect.height / 2)}px` : computedRadius;
     const candidate = Object.freeze({ id: ++openingSequence.current, trigger,
-      rect: Object.freeze({ left: rect.left, top: rect.top, width: rect.width, height: rect.height }),
-      radius: trigger.ownerDocument.defaultView?.getComputedStyle(trigger).borderRadius ?? "0px" });
+      rect: Object.freeze({ left: rect.left, top: rect.top, width: rect.width, height: rect.height }), radius,
+      surface: Object.freeze({ backgroundColor: style?.backgroundColor ?? "transparent",
+        borderColor: style?.borderColor ?? "transparent", boxShadow: style?.boxShadow ?? "none" }) });
     setCheckoutOpening(candidate);
     if (!setCheckoutOpen(true)) setCheckoutOpening(null);
   };

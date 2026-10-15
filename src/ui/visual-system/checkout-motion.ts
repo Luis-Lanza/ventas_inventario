@@ -5,7 +5,18 @@ export type CheckoutOpening = Readonly<{
   trigger: HTMLElement;
   rect: Readonly<{ left: number; top: number; width: number; height: number }>;
   radius: string;
+  surface: Readonly<{ backgroundColor: string; borderColor: string; boxShadow: string }>;
 }>;
+
+// Only declarations touched by the frame tween. Keep author priorities as well as
+// values: GSAP's revert restores values, but does not retain every !important.
+const ownedStyles = new Set([
+  "position", "inline-size", "block-size", "left", "top", "width", "height",
+  "min-width", "min-height", "max-width", "max-height",
+  "min-inline-size", "min-block-size", "max-inline-size", "max-block-size",
+  "border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-left-radius", "border-bottom-right-radius",
+  "background-color", "border-color", "border-top-color", "border-right-color", "border-bottom-color", "border-left-color", "box-shadow",
+]);
 
 export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening, ready: () => void) {
   const owner = frame.ownerDocument, view = owner.defaultView;
@@ -13,11 +24,23 @@ export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening
   let context: gsap.Context | undefined;
   let deadline: number | undefined;
   const reduced = view?.matchMedia?.("(prefers-reduced-motion: reduce)");
+  const original = Array.from(frame.style).filter((property) => ownedStyles.has(property))
+    .map((property) => [property, frame.style.getPropertyValue(property), frame.style.getPropertyPriority(property)] as const);
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    context?.revert();
+    const priorProperties = new Set(original.map(([property]) => property));
+    // CSS shorthand writes can leave expanded longhands behind after revert.
+    for (const property of ownedStyles) if (!priorProperties.has(property)) frame.style.removeProperty(property);
+    for (const [property, value, priority] of original) frame.style.setProperty(property, value, priority);
+  };
   const finish = () => {
     if (!live || terminal) return;
     terminal = true;
     if (deadline !== undefined) view?.clearTimeout(deadline);
-    context?.revert();
+    restore();
     if (frame.isConnected && frame.ownerDocument === owner) ready();
   };
   const preference = () => { if (reduced?.matches) finish(); };
@@ -27,6 +50,7 @@ export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening
     const target = frame.getBoundingClientRect();
     const style = view?.getComputedStyle(frame);
     const targetRadius = style?.borderRadius;
+    const targetSurface = { backgroundColor: style?.backgroundColor, borderColor: style?.borderColor, boxShadow: style?.boxShadow };
     const valid = (rect: CheckoutOpening["rect"]) => [rect.left, rect.top, rect.width, rect.height].every(Number.isFinite) && rect.width > 0 && rect.height > 0;
     if (!view || reduced?.matches || !frame.isConnected || !opening.trigger.isConnected
       || opening.trigger.ownerDocument !== owner || !valid(opening.rect) || !valid(target)
@@ -46,9 +70,11 @@ export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening
           minInlineSize: 0, minBlockSize: 0, maxInlineSize: "none", maxBlockSize: "none",
           left: opening.rect.left, top: opening.rect.top,
           width: opening.rect.width, height: opening.rect.height, borderRadius: opening.radius,
+          ...opening.surface,
         });
         gsap.to(frame, { left: target.left, top: target.top, width: target.width, height: target.height,
-          borderRadius: targetRadius, duration: 0.22, ease: "power2.out", onComplete: finish });
+          borderRadius: targetRadius, ...targetSurface,
+          duration: 0.22, ease: "power2.out", onComplete: finish });
       });
     }
   } catch { finish(); }
@@ -59,7 +85,7 @@ export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening
       if (deadline !== undefined) view?.clearTimeout(deadline);
       view?.removeEventListener("resize", finish);
       reduced?.removeEventListener("change", preference);
-      context?.revert();
+      restore();
     },
   };
 }

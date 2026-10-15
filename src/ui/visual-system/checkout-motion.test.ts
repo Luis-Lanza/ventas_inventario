@@ -9,7 +9,8 @@ function fixture() {
   document.body.append(trigger, frame);
   frame.style.cssText = "color: red; width: 777px; border-radius: 19px; inline-size: 888px; block-size: 444px;";
   frame.getBoundingClientRect = () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect);
-  const opening: CheckoutOpening = { id: 1, trigger, rect: { left: 1100, top: 720, width: 200, height: 48 }, radius: "24px" };
+  const opening: CheckoutOpening = { id: 1, trigger, rect: { left: 1100, top: 720, width: 200, height: 48 }, radius: "24px",
+    surface: { backgroundColor: "rgb(10, 20, 30)", borderColor: "rgb(40, 50, 60)", boxShadow: "rgb(70, 80, 90) 0px 2px 4px" } };
   return { frame, opening, clean() { frame.remove(); trigger.remove(); } };
 }
 
@@ -37,13 +38,88 @@ test("actual frame starts outside its final bounds and restores preexisting styl
   motion.dispose(); f.clean();
 });
 
+test("captured source surface becomes the final actual modal and preserves owned priorities only", (t) => {
+  const f = fixture();
+  f.frame.style.setProperty("background-color", "rgb(100, 110, 120)", "important");
+  f.frame.style.setProperty("border-color", "rgb(130, 140, 150)", "important");
+  f.frame.style.setProperty("box-shadow", "rgb(160, 170, 180) 0px 8px 16px", "important");
+  f.frame.style.setProperty("width", "777px", "important");
+  let complete!: () => void;
+  t.mock.method(gsap, "to", (target: unknown, vars: gsap.TweenVars) => {
+    assert.equal(target, f.frame);
+    assert.equal(vars.backgroundColor, "rgb(100, 110, 120)");
+    assert.equal(vars.borderColor, "rgb(130, 140, 150)");
+    assert.equal(vars.boxShadow, "rgb(160, 170, 180) 0px 8px 16px");
+    complete = vars.onComplete as () => void;
+    return {} as gsap.core.Tween;
+  });
+  const motion = startCheckoutMotion(f.frame, f.opening, () => {});
+  assert.equal(f.frame.style.backgroundColor, "rgb(10, 20, 30)");
+  assert.equal(f.frame.style.borderColor, "rgb(40, 50, 60)");
+  assert.equal(f.frame.style.boxShadow, "rgb(70, 80, 90) 0px 2px 4px");
+  f.frame.style.setProperty("color", "blue", "important"); // Not owned by the motion.
+  complete();
+  for (const property of ["width", "background-color", "border-color", "box-shadow"]) {
+    assert.equal(f.frame.style.getPropertyPriority(property), "important", property);
+  }
+  assert.equal(f.frame.style.backgroundColor, "rgb(100, 110, 120)");
+  assert.equal(f.frame.style.color, "blue");
+  // A late dispose of the finished epoch must not restore over a fresh frame.
+  f.frame.style.backgroundColor = "green";
+  motion.dispose();
+  assert.equal(f.frame.style.backgroundColor, "green");
+  f.clean();
+});
+
+for (const reason of ["complete", "resize", "pending", "exception", "deadline", "dispose", "initial-reduce", "mid-reduce"] as const) {
+  test(`${reason} restores nondefault owned declarations and their priorities`, async (t) => {
+    const f = fixture();
+    let matches = reason === "initial-reduce";
+    const media = new window.EventTarget();
+    Object.defineProperty(media, "matches", { get: () => matches });
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: () => media });
+    t.after(() => { Reflect.deleteProperty(window, "matchMedia"); f.clean(); });
+    f.frame.style.setProperty("width", "777px", "important");
+    f.frame.style.setProperty("inline-size", "888px", "important");
+    f.frame.style.setProperty("border-radius", "19px", "important");
+    f.frame.style.setProperty("background-color", "rgb(100, 110, 120)", "important");
+    f.frame.style.setProperty("border-top-color", "rgb(130, 140, 150)", "important");
+    f.frame.style.setProperty("border-right-color", "rgb(160, 170, 180)");
+    f.frame.style.setProperty("box-shadow", "rgb(190, 200, 210) 0px 8px 16px", "important");
+    // Declaration order has no visual meaning; values, absent additions and mixed
+    // longhand priorities do. Do not depend on jsdom/GSAP shorthand serialization.
+    const declarations = () => Array.from(f.frame.style).sort().map((property) =>
+      [property, f.frame.style.getPropertyValue(property), f.frame.style.getPropertyPriority(property)]);
+    const original = declarations();
+    let complete: (() => void) | undefined, ready = 0;
+    t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => {
+      if (reason === "exception") throw Error("GSAP unavailable");
+      complete = vars.onComplete as () => void; return {} as gsap.core.Tween;
+    });
+    const motion = startCheckoutMotion(f.frame, f.opening, () => { ready++; });
+    if (reason === "complete") complete!();
+    if (reason === "resize") window.dispatchEvent(new Event("resize"));
+    if (reason === "pending") motion.finish();
+    if (reason === "dispose") motion.dispose();
+    if (reason === "deadline") await new Promise((resolve) => setTimeout(resolve, 390));
+    if (reason === "mid-reduce") { matches = true; media.dispatchEvent(new Event("change")); }
+    assert.deepEqual(declarations(), original);
+    assert.equal(ready, reason === "dispose" ? 0 : 1);
+    complete?.(); motion.finish(); motion.dispose();
+    assert.deepEqual(declarations(), original);
+    assert.equal(ready, reason === "dispose" ? 0 : 1);
+  });
+}
+
 test("independent deadline reveals a stalled frame even without GSAP completion", async (t) => {
   const f = fixture(); let ready = 0;
   t.mock.method(gsap, "to", () => ({} as gsap.core.Tween));
+  const original = f.frame.style.cssText;
   const motion = startCheckoutMotion(f.frame, f.opening, () => { ready++; });
   await new Promise((resolve) => setTimeout(resolve, 390));
   assert.equal(ready, 1);
   assert.equal(f.frame.style.position, "");
+  assert.equal(f.frame.style.cssText, original);
   motion.dispose(); f.clean();
 });
 
@@ -82,12 +158,14 @@ test("initial and changed reduced-motion finish once; preference reversal never 
   for (const initial of [true, false]) {
     matches = initial;
     const f = fixture(); let ready = 0;
+    const original = f.frame.style.cssText;
     const motion = startCheckoutMotion(f.frame, f.opening, () => { ready++; });
     assert.equal(ready, initial ? 1 : 0);
     matches = true; media.dispatchEvent(new Event("change"));
     assert.equal(ready, 1);
     matches = false; media.dispatchEvent(new Event("change"));
     assert.equal(f.frame.style.position, "");
+    assert.equal(f.frame.style.cssText, original);
     assert.equal(ready, 1);
     motion.dispose(); f.clean();
   }
@@ -97,14 +175,17 @@ test("disposed epochs cannot reveal or alter a replacement opening, including re
   const f = fixture(); let ready = 0;
   const completions: Array<() => void> = [];
   t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
+  const original = f.frame.style.cssText;
   const old = startCheckoutMotion(f.frame, f.opening, () => { ready++; });
   old.dispose();
+  assert.equal(f.frame.style.cssText, original);
   const next = startCheckoutMotion(f.frame, { ...f.opening, id: 2 }, () => { ready++; });
-  completions[0](); old.finish();
+  completions[0](); old.finish(); old.dispose();
   assert.equal(ready, 0);
   assert.equal(f.frame.style.left, "1100px");
   completions[1]();
   assert.equal(ready, 1);
+  assert.equal(f.frame.style.cssText, original);
   next.dispose();
   const removed = startCheckoutMotion(f.frame, { ...f.opening, id: 3 }, () => { ready++; });
   f.frame.remove(); completions[2]();

@@ -219,6 +219,10 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
   outline-offset: 2px;
 }
 
+/* State owns source paint, not the tween. Opacity preserves layout and the dialog owner's
+   invoker focus/restoration ordering; never transition it or leave a duplicate painted source. */
+[data-ui-sale] button[aria-controls="checkout-dialog"][aria-expanded="true"] { opacity: 0; pointer-events: none; }
+
 /* Keep normal layout measurable while the actual checkout frame expands. Includes late portals. */
 [data-ui-checkout-dialog][data-ui-checkout-opening] > * { visibility: hidden; pointer-events: none; }
 
