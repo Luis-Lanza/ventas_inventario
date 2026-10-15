@@ -18,8 +18,8 @@ Forecast: 430–680 authored diff lines including tests and replacements; no cod
 Delivery strategy: ask-on-risk; no PR requested. Resolve oversized delivery strategy before any future authorized commit. RDD is on (global); inspect the normalized candidate before reporting implementation complete.
 
 ## Tasks
-- [x] T1 — Add controlled Inventory table/gallery presentation and screen state with behavior tests. **Implemented and focused checks passed; commit authorized**. Retain other browser presentations and all request/selection contracts.
-- [x] T2 — Integrate Inventory-scoped Sales-family styling and viewport behavior. **Implemented and focused checks passed; commit authorized**. Shared toolbar on ivory, independent rows/cards, responsive gallery, bounded scrolling with persistent controls, unchanged operation surface.
+- [x] T1 — Add controlled Inventory table/gallery presentation and screen state with behavior tests. **Verified; work-unit commit `8774c47`**. Retain other browser presentations and all request/selection contracts.
+- [x] T2 — Integrate Inventory-scoped Sales-family styling and viewport behavior. **Verified; work-unit commit `8774c47`**. Shared toolbar on ivory, independent rows/cards, responsive gallery, bounded scrolling with persistent controls, unchanged operation surface.
 - [x] T3 — Verify interaction regressions and candidate review. **Automated verification and native review complete; Windows visual acceptance pending**. Focused/full checks, typecheck, build and native review when offered; disclose Windows/browser visual checks not performed.
 
 ## Acceptance and verification
@@ -44,7 +44,7 @@ Commands:
 - T3 correction writer `mva6gea8-6-21an`: test-only helper +12/-6 preserves cascade order and all assertions/cleanup. Observed RED 41/43 then GREEN 43/43; full suite 687/687 (zero skipped), typecheck/build/diff check passed. Parent spot-checked exact diff.
 - Revised seven-file source candidate +297/-66 (363 authored lines), reliability review `review-e6964f92f9c94899` approved and exact acknowledgement returned authority burned for target `sha256:7be04825177d9605a22d027bd5f3321ba66f983f7d18b9130294f830b65785fa`. No further STATUS for consumed reviews.
 - Final assessment remains unassessable due untracked task file; required independent final verifier `mva6mviw-7-fcdc` completed: npm test 687/687, zero failed/cancelled/skipped; test typecheck, production build (82 modules) and diff check all passed. Git scope unchanged before/after; all assertions and cleanup retained. This satisfies the conservative assessment verification plan.
-- Remaining warnings: expected invalid-dialog React diagnostics and existing test diagnostics; mixed static/dynamic Tauri imports and build bundle >500 kB. No failed automated checks remain. User authorized commit and push to the feature branch. The cohesive implementation unit includes behavior, styling and regression tests. Commit identity will be recorded after creation; PR/merge not authorized.
+- Remaining warnings: expected invalid-dialog React diagnostics and existing test diagnostics; mixed static/dynamic Tauri imports and build bundle >500 kB. No failed automated checks remain. User authorized commit and push to the feature branch. The cohesive implementation unit includes behavior, styling and regression tests. Implementation work-unit commit: `8774c47` (`feat(inventory): align table and gallery with Sales design`), including tests and tracking document; 363 source/test diff lines, 414 including passive task documentation. PR/merge not authorized.
 - Windows/native/browser geometry verification remains pending; this Linux session has no established browser automation or controlled IPC fixtures.
 
 ## Next step
