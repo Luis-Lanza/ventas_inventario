@@ -6,7 +6,7 @@ import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { createInventoryFlow, initialInventoryState, projectedBalance, stockEntryPrices, type InventoryProduct, type InventoryState } from "./inventory-flow.ts";
-import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } from "../catalog/product-browser.ts";
+import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, type CatalogViewMode } from "../catalog/product-browser.ts";
 
 export const inventoryScreenDescription = "Operaciones de entrada de stock y conteo físico.";
 type Product = InventoryBrowseProduct;
@@ -42,6 +42,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
   const onAlertCueChange = props?.onAlertCueChange;
   const [state, dispatch] = useReducer(createInventoryFlow, initialInventoryState);
   const [browser, browserDispatch] = useReducer(createProductBrowserFlow<InventoryBrowseProduct>, { ...initialProductBrowserState, stock_state: props.initialStockState ?? "all" });
+  const [viewMode, setViewMode] = useState<CatalogViewMode>("table");
   const [alertState, setAlertState] = useState<LoadState>("loading");
   const [catalogPassword, setCatalogPassword] = useState("");
   const mounted = useRef(true);
@@ -134,7 +135,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     createElement("div", { "data-ui-inventory-layout": true },
       createElement(Panel, { label: "Operación de inventario" } as never,
         !state.product && browser.status === "results" ? createElement("p", { "data-ui-inventory-intro": true }, "Seleccioná un producto para comenzar.") : null,
-        !state.product ? createElement(ProductBrowser<InventoryBrowseProduct>, { state: browser, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage, onSelect: (product) => { setCatalogPassword(""); dispatch(catalog.select(product)); }, actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending }) as never : null,
+        !state.product ? createElement(ProductBrowser<InventoryBrowseProduct>, { state: browser, presentation: "inventory", inventoryViewMode: viewMode, onInventoryViewModeChange: setViewMode, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage, onSelect: (product) => { setCatalogPassword(""); dispatch(catalog.select(product)); }, actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending }) as never : null,
         state.product ? createElement("div", { "data-ui-inventory-operation": true, "aria-busy": pending || undefined },
           createElement("div", { "data-ui-inventory-selection": true },
             createElement("div", { "data-ui-inventory-identity": true }, createElement("strong", null, state.product.name), state.product.sku !== undefined ? createElement("span", { "data-ui-kind": "sku" }, `SKU: ${state.product.sku}`) : null),

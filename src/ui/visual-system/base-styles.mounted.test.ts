@@ -39,6 +39,16 @@ async function mountBaseStyles(width?: number, browseWidth?: number, height = 90
   return style;
 }
 
+function activateForcedColors(style: HTMLStyleElement) {
+  // jsdom does not evaluate forced-colors queries. Unwrap every matching block
+  // in place so declarations retain their original cascade order.
+  style.textContent = Array.from(style.sheet!.cssRules).map((rule) =>
+    rule.type === 4 && (rule as CSSMediaRule).conditionText === "(forced-colors: active)"
+      ? Array.from((rule as CSSMediaRule).cssRules).map((child) => child.cssText).join("\n")
+      : rule.cssText,
+  ).join("\n");
+}
+
 function styleOf(element: Element, property: string) {
   let value = getComputedStyle(element).getPropertyValue(property).trim();
   for (let depth = 0; depth < 3; depth += 1) {
@@ -121,10 +131,7 @@ for (const forced of [false, true]) {
   test(`checkout container keeps a scoped 3px + 2px focus ring${forced ? " in forced colors" : ""}`, async () => {
     const style = await mountBaseStyles();
     try {
-      if (forced) {
-        const rule = Array.from(style.sheet!.cssRules).find((rule) => rule.cssText.startsWith("@media (forced-colors: active)")) as CSSMediaRule;
-        style.textContent += Array.from(rule.cssRules).map((rule) => rule.cssText).join("\n");
-      }
+      if (forced) activateForcedColors(style);
       style.textContent = style.textContent!.replaceAll('[data-ui-checkout-dialog][data-ui-dialog-layout="checkout"]:focus', '[data-ui-checkout-dialog][data-ui-dialog-layout="checkout"][data-test-checkout-focus]');
       render(createElement("div", null,
         createElement("div", { "data-testid": "checkout-focus", "data-ui-checkout-dialog": true, "data-ui-dialog-layout": "checkout", "data-test-checkout-focus": true }),
@@ -346,8 +353,7 @@ for (const width of [1440, 1200, 960]) {
 test("checkout currency keeps a whole-group focus ring in forced colors", async () => {
   const style = await mountBaseStyles();
   try {
-    const forced = Array.from(style.sheet!.cssRules).find((rule) => rule.cssText.startsWith("@media (forced-colors: active)")) as CSSMediaRule;
-    style.textContent += Array.from(forced.cssRules).map((rule) => rule.cssText).join("\n");
+    activateForcedColors(style);
     style.textContent = style.textContent!.replaceAll(":focus-visible", '[data-ui-focus-visible="true"]');
     render(createElement("div", { "data-ui-sales-checkout": true }, createElement(Field, {
       kind: "money", label: "Importe enfocado", control: createElement("input", { defaultValue: "35,50", "data-ui-focus-visible": "true" }),

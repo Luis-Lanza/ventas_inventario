@@ -96,6 +96,108 @@ test("loads operational Inventory browse while the Catalog session is locked", a
   assert.equal(screen.queryByText("No registrado"), null);
 });
 
+test("Inventory retains its local view, submitted filters and page through selection and operation reset without browsing again", async () => {
+  const calls: unknown[] = [];
+  const zeroStock = { ...product, available_quantity: 0 };
+  mockIPC((command, payload) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") {
+      calls.push(payload);
+      const request = payload?.request as { page: number };
+      return { ...browse([zeroStock]), page: request.page, total: 21, total_pages: 2 };
+    }
+    if (command === "confirm_stock_entry_command") return success("inventory-view-request");
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const view = render(createElement(InventoryScreen));
+  const user = userEvent.setup({ document });
+  await screen.findByText("Filter");
+  assert.equal(screen.getByRole("button", { name: "Vista de tabla" }).getAttribute("aria-pressed"), "true");
+  await user.type(screen.getByRole("searchbox", { name: "Buscar producto" }), "filter");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Categoría" }), "1");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Estado del stock" }), "out_of_stock");
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  await user.click(screen.getByRole("button", { name: "Siguiente" }));
+  assert.ok(await screen.findByText("Página 2 de 2"));
+  assert.deepEqual(calls, [
+    { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } },
+    { request: { query: "filter", category_id: 1, stock_state: "out_of_stock", activity: "active", page: 1, page_size: 20 } },
+    { request: { query: "filter", category_id: 1, stock_state: "out_of_stock", activity: "active", page: 2, page_size: 20 } },
+  ]);
+  await user.click(screen.getByRole("button", { name: "Vista de galería" }));
+  const assertBrowser = () => {
+    assert.equal(screen.getByRole("button", { name: "Vista de galería" }).getAttribute("aria-pressed"), "true");
+    assert.equal(screen.getByRole("button", { name: "Vista de tabla" }).getAttribute("aria-pressed"), "false");
+    assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filter");
+    assert.equal((screen.getByRole("combobox", { name: "Categoría" }) as HTMLSelectElement).value, "1");
+    assert.equal((screen.getByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement).value, "out_of_stock");
+    assert.ok(screen.getByText("Página 2 de 2"));
+    assert.ok(screen.getByText("Sin stock: 0"));
+    assert.equal(calls.length, 3);
+  };
+  assertBrowser();
+  await user.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+  assert.ok(screen.getByText("Stock actual: 0"));
+  await user.click(screen.getByRole("button", { name: "Nueva operación" }));
+  assertBrowser();
+  await user.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+  await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  assert.ok(await screen.findByText("Operación guardada. Stock actual: 11."));
+  await user.click(screen.getByRole("button", { name: "Nueva operación" }));
+  assertBrowser();
+  view.unmount();
+  render(createElement(InventoryScreen));
+  await screen.findByText("Filter");
+  assert.equal(screen.getByRole("button", { name: "Vista de tabla" }).getAttribute("aria-pressed"), "true");
+});
+
+test("Inventory view changes preserve pending, empty and error feedback and ignore an obsolete browse response", async () => {
+  let resolveInitial!: (value: ReturnType<typeof browse>) => void;
+  let resolveSearch!: (value: ReturnType<typeof browse>) => void;
+  let attempts = 0;
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") {
+      attempts += 1;
+      if (attempts === 1) return new Promise((resolve) => { resolveInitial = resolve; });
+      if (attempts === 2) return new Promise((resolve) => { resolveSearch = resolve; });
+      if (attempts === 3) return browse([]);
+      throw new Error("Local browse unavailable");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const user = userEvent.setup({ document });
+  await user.click(screen.getByRole("button", { name: "Vista de galería" }));
+  assert.ok(screen.getByText("Buscando productos…"));
+  assert.equal(attempts, 1);
+  await user.type(screen.getByRole("searchbox"), "cuaderno{Enter}");
+  assert.equal(attempts, 2);
+  await user.click(screen.getByRole("button", { name: "Vista de tabla" }));
+  assert.ok(screen.getByText("Buscando productos…"));
+  await act(async () => resolveSearch(browse([{ ...product, name: "Cuaderno" }])));
+  assert.ok(screen.getByText("Cuaderno"));
+  await user.click(screen.getByRole("button", { name: "Vista de galería" }));
+  await act(async () => resolveInitial(browse()));
+  assert.ok(screen.getByText("Cuaderno"));
+  assert.equal(screen.queryByText("Filter"), null);
+  assert.equal(attempts, 2);
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  assert.ok(await screen.findByText("No encontramos productos para “cuaderno”."));
+  await user.click(screen.getByRole("button", { name: "Vista de tabla" }));
+  assert.ok(screen.getByText("No encontramos productos para “cuaderno”."));
+  assert.equal(screen.queryByRole("list", { name: "Resultados del catálogo" }), null);
+  assert.equal(attempts, 3);
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  const error = await screen.findByRole("alert");
+  await user.click(screen.getByRole("button", { name: "Vista de galería" }));
+  assert.equal(screen.getByRole("alert"), error);
+  assert.match(error.textContent ?? "", /No se pudo buscar en el catálogo local/);
+  assert.equal(screen.queryByRole("list", { name: "Resultados del catálogo" }), null);
+  assert.equal(attempts, 4);
+});
+
 test("shows the selection intro only alongside results, not initial, loading, empty or error feedback", async () => {
   const initialMarkup = renderToStaticMarkup(createElement(InventoryScreen));
   assert.equal(initialMarkup.split("Seleccioná un producto para comenzar.").length - 1, 1);
@@ -146,15 +248,15 @@ test("automatically loads active products and keeps a short result in the explic
   assert.equal(screen.getByRole("main").hasAttribute("data-ui-density"), false);
   const operation = screen.getByRole("region", { name: "Operación de inventario" });
   const browser = within(operation).getByLabelText("Buscar producto").closest("form")!.parentElement!;
-  assert.equal(browser.getAttribute("data-ui-product-browser"), "true");
+  assert.equal(browser.getAttribute("data-ui-product-browser"), "inventory");
   const results = within(operation).getByRole("list", { name: "Resultados del catálogo" }).parentElement!;
   assert.equal(results.getAttribute("data-ui-catalog-results"), "true");
   assert.equal(within(results).getAllByRole("listitem").length, 3);
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] > \[data-ui-panel\]:first-child:has\(> \[data-ui-product-browser\]\) \{[^}]*display:\s*flex;[^}]*min-block-size:\s*0;[^}]*flex-direction:\s*column/);
   assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser\] \{[^}]*min-block-size:\s*0;[^}]*flex:\s*1 1 auto/);
-  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-catalog-results\] \{[^}]*min-block-size:\s*0;[^}]*flex:\s*1 1 auto/);
-  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*min-block-size:\s*0;[^}]*flex:\s*1 1 auto;[^}]*overflow-y:\s*auto/);
+  assert.match(css, /\[data-ui-product-browser="inventory"\] > \[data-ui-inventory-results\] \{[^}]*min-block-size:\s*0;[^}]*flex:\s*1 1 auto;[^}]*overflow-y:\s*auto/);
+  assert.match(css, /\[data-ui-product-browser="inventory"\] \[data-ui-product-browser-list\] \{[^}]*align-content: start;[^}]*grid-auto-rows: max-content/);
   assert.match(css, /\[data-ui-product-browser-pages\] \{[^}]*flex:\s*0 0 auto/);
   assert.deepEqual(calls, [{ request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } }]);
   view.unmount();
@@ -175,7 +277,7 @@ test("keeps long Inventory results in the same viewport structure without a row-
   assert.equal(results.getAttribute("data-ui-catalog-results"), "true");
   assert.equal(within(results).getAllByRole("listitem").length, 4);
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
-  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*min-block-size:\s*0;[^}]*overflow-y:\s*auto/);
+  assert.match(css, /\[data-ui-product-browser="inventory"\] > \[data-ui-inventory-results\] \{[^}]*min-block-size:\s*0;[^}]*overflow-y:\s*auto/);
   assert.doesNotMatch(css, /main\[data-ui-inventory\]\[data-ui-density="sparse"\]/);
 });
 
@@ -192,6 +294,12 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   const list = within(operation).getByRole("list", { name: "Resultados del catálogo" });
   const results = list.parentElement!;
   assert.equal(results.previousElementSibling?.tagName, "FORM");
+  assert.equal(results.getAttribute("role"), "region");
+  assert.equal(results.getAttribute("aria-label"), "Productos de inventario");
+  assert.equal(results.tabIndex, 0);
+  results.focus();
+  assert.equal(document.activeElement, results);
+  assert.equal(results.contains(screen.getByRole("region", { name: "Alertas de stock" })), false);
   const pages = within(operation).getByRole("navigation", { name: "Páginas de productos" });
   assert.equal(results.nextElementSibling, pages);
   assert.ok(within(pages).getByText("Página 1 de 5"));
@@ -211,16 +319,14 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.match(css, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0,\s*1\.85fr\) minmax\(260px,\s*1fr\)/s);
   assert.match(css, /\[data-ui-inventory-layout\] \{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/s);
   assert.match(css, /\[data-ui-product-browser-pages\] \{[^}]*flex:\s*0 0 auto/s);
-  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{[^}]*inline-size:\s*min\(100%,\s*48rem\)[^}]*max-inline-size:\s*100%/s);
+  assert.match(css, /\[data-ui-product-browser="inventory"\] > \[data-ui-inventory-toolbar\] \{[^}]*inline-size:\s*100%;[^}]*max-inline-size:\s*100%/s);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-product-browser\] > form, \[data-ui-product-browser-list\] > li \{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
-  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain/);
-  assert.match(css, /\[data-ui-product-browser-list\] \{[^}]*--product-browser-row-block-size:/);
-  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*min-block-size:\s*0;[^}]*overflow-y:\s*auto/);
-  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] > li \{[^}]*grid-template-columns:\s*minmax\(0, 2fr\)/);
-  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \[data-ui-badge\] \{[^}]*white-space:\s*normal/);
+  assert.match(css, /\[data-ui-product-browser="inventory"\] > \[data-ui-inventory-results\] \{[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;[^}]*padding: 5px/);
+  assert.match(css, /\[data-ui-product-browser="inventory"\] \[data-ui-product-browser-list\] > li \{[^}]*border-radius: 32px/);
+  assert.match(css, /\[data-ui-product-browser="inventory"\] \[data-ui-badge\] \{[^}]*white-space:\s*normal/);
 });
 
-test("keeps the browse controls in submit order with a panel-width four-control layout and narrow fallback", async () => {
+test("keeps the browse controls and presentation toggle in submit order with the existing layout guards", async () => {
   mockIPC((command) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
     if (command === "browse_products_command") return browse();
@@ -229,18 +335,15 @@ test("keeps the browse controls in submit order with a panel-width four-control 
   render(createElement(InventoryScreen));
   const operation = screen.getByRole("region", { name: "Operación de inventario" });
   const form = within(operation).getByRole("searchbox", { name: "Buscar producto" }).closest("form")!;
-  assert.deepEqual([...form.children].map((child) => child.tagName === "BUTTON" ? child.textContent?.trim() : child.querySelector("label")?.textContent), ["Buscar producto", "Categoría", "Estado del stock", "Buscar"]);
+  assert.deepEqual([...form.children].map((child) => child.tagName === "BUTTON" ? child.textContent?.trim() : child.getAttribute("aria-label") ?? child.querySelector("label")?.textContent), ["Buscar producto", "Categoría", "Estado del stock", "Presentación de inventario", "Buscar"]);
   assert.equal((within(form).getByRole("button", { name: "Buscar" }) as HTMLButtonElement).type, "submit");
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] \{ container: inventory-browse \/ inline-size; \}/);
-  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{ inline-size: min\(100%, 48rem\); max-inline-size: 100%; \}/);
-  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-field\]:nth-child\(3\) \{ grid-column: 1 \/ -1; \}/);
-  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \*,[\s\S]*form :is\(input, select, button\) \{ min-inline-size: 0; \}/);
-  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form :is\(input, select\) \{ inline-size: 100%; \}/);
-  // Structural guard only: jsdom cannot measure a WebView's panel width or prove one visual row.
-  assert.match(css, /@container inventory-browse \(min-width: 36rem\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 11\.5rem\) minmax\(0, 7\.5rem\) minmax\(0, auto\)/);
-  assert.match(css, /@container inventory-browse \(min-width: 36rem\)[\s\S]*form > \[data-ui-field\]:nth-child\(3\) \{ grid-column: 3; \}[\s\S]*form > \[data-ui-action\] \{ grid-column: 4; grid-row: 1; \}/);
-  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-action\] \{ grid-column: auto; grid-row: auto; \}[\s\S]*\[data-ui-product-browser\] > form, \[data-ui-product-browser-list\] > li \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.match(css, /\[data-ui-inventory-toolbar\] :is\(input, select, button\) \{ min-inline-size: 0; max-inline-size: 100%/);
+  // Structural fallback only: jsdom cannot measure geometry or prove no clipping.
+  assert.match(css, /\[data-ui-product-browser="inventory"\] > \[data-ui-inventory-toolbar\] \{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(css, /@container inventory-browse \(min-width: 46rem\)[\s\S]*\[data-ui-inventory-toolbar\] > \[data-ui-action\] \{ grid-column: 4; grid-row: 1/);
+  assert.match(css, /\[data-ui-product-browser="inventory"\] \[data-ui-action\] \{[^}]*min-block-size: var\(--size-control-default\)/);
 });
 
 test("keeps browse first and read-only alerts second across desktop and compact layout", async () => {
@@ -261,8 +364,7 @@ test("keeps browse first and read-only alerts second across desktop and compact 
   assert.equal(within(alerts).queryAllByRole("button").length, 0);
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \{ grid-template-columns: minmax\(0, 1fr\); grid-template-rows: minmax\(min-content, 1fr\) max-content; \}/);
-  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-catalog-results\] \{[^}]*min-block-size:\s*auto;[^}]*flex:\s*0 0 auto/);
-  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*min-block-size:\s*auto;[^}]*flex:\s*0 0 auto;[^}]*overflow-y:\s*visible/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-product-browser="inventory"\] > \[data-ui-inventory-results\] \{[^}]*min-block-size:\s*auto;[^}]*flex:\s*0 0 auto;[^}]*overflow-y:\s*visible/);
   assert.match(css, /\[data-ui-shell-content\] \{[^}]*overflow: auto/);
   assert.match(css, /--size-shell-sidebar: 208px/);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*--size-shell-sidebar: 176px/);

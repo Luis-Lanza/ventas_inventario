@@ -139,6 +139,49 @@ for (const mode of ["table", "gallery"] as const) {
   });
 }
 
+test("Inventory controls its presentation without submitting and preserves product facts and zero-stock selection", async () => {
+  const products = [page.products[0], { ...page.products[0], product_id: 2, sku: "FLT-0", available_quantity: 0 }, { ...page.products[0], product_id: 3, sku: "FLT-1", available_quantity: 1 }];
+  const state = { ...initialProductBrowserState, status: "results" as const, query: "filter", category_id: 1, stock_state: "alerts" as const, result: { ...page, products, total: 3 } };
+  const selected: unknown[] = [];
+  const modes: string[] = [];
+  let submissions = 0;
+  const props = {
+    presentation: "inventory" as const, state, allowUnavailableSelection: true,
+    onQueryChange: () => {}, onCategoryChange: () => {}, onStockStateChange: () => {},
+    onSubmit: (event: { preventDefault(): void }) => { event.preventDefault(); submissions += 1; },
+    onPageChange: () => {}, onSelect: (product: typeof products[number]) => selected.push(product),
+    onInventoryViewModeChange: (mode: "table" | "gallery") => modes.push(mode),
+  };
+  const view = render(createElement(ProductBrowser<typeof products[number]>, { ...props, inventoryViewMode: "table" }));
+  const toolbar = screen.getByRole("searchbox").closest("form")!;
+  const toggle = within(toolbar).getByRole("group", { name: "Presentación de inventario" });
+  assert.equal(within(toggle).getByRole("button", { name: "Vista de tabla" }).getAttribute("aria-pressed"), "true");
+  const galleryButton = within(toggle).getByRole("button", { name: "Vista de galería" });
+  galleryButton.focus();
+  await userEvent.keyboard("{Enter}");
+  assert.deepEqual(modes, ["gallery"]);
+  assert.equal(submissions, 0);
+  assert.equal(document.activeElement, galleryButton);
+  // The browser remains controlled until its owner supplies the new mode.
+  assert.equal(galleryButton.getAttribute("aria-pressed"), "false");
+  for (const mode of ["table", "gallery"] as const) {
+    view.rerender(createElement(ProductBrowser<typeof products[number]>, { ...props, inventoryViewMode: mode }));
+    assert.equal(screen.getByRole("searchbox").closest("form"), toolbar);
+    assert.equal(within(toggle).getByRole("button", { name: "Vista de tabla" }).getAttribute("aria-pressed"), String(mode === "table"));
+    assert.equal(galleryButton.getAttribute("aria-pressed"), String(mode === "gallery"));
+    const rows = within(screen.getByRole("list", { name: "Resultados del catálogo" })).getAllByRole("listitem");
+    for (const [index, stock] of ["Disponible: 4", "Sin stock: 0", "Stock bajo: 1"].entries()) {
+      for (const fact of ["Filter", products[index].sku, "Filters", "Bs 25,00", stock]) assert.ok(within(rows[index]).getByText(fact));
+      assert.ok(within(rows[index]).getByRole("img", { name: "Sin imagen" }));
+      await userEvent.click(within(rows[index]).getByRole("button", { name: `Seleccionar Filter (SKU: ${products[index].sku})` }));
+      assert.equal(selected.at(-1), products[index]);
+    }
+    assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filter");
+    assert.equal((screen.getByRole("combobox", { name: "Categoría" }) as HTMLSelectElement).value, "1");
+    assert.equal((screen.getByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement).value, "alerts");
+  }
+});
+
 test("uses generic singular and plural product counts", () => {
   const props = {
     presentation: "sales" as const,
