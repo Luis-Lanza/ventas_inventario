@@ -759,6 +759,9 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-sales-catalog-toolbar] > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding-block-end: var(--space-3); border-block-end: 1px solid var(--color-border); }
 [data-ui-sales-catalog-toolbar] h2 { margin: 0; }
 [data-ui-sales-catalog-toolbar] [data-ui-action] { border-radius: 999px; }
+[data-ui-sales-catalog-toolbar] [data-ui-field-control] > :is(input, select) {
+  border-radius: 999px; border-color: var(--color-border); background: var(--color-surface-elevated);
+}
 [data-ui-product-browser="sales"] [data-ui-sale-search] { grid-template-columns: minmax(0, 1fr); }
 [data-ui-sale-search] [data-ui-field] { margin: 0; }
 [data-ui-sales-catalog-status] { padding-block-start: var(--space-3); border-block-start: 1px solid var(--color-border); color: var(--color-text); font-size: var(--type-caption-size); }
@@ -783,7 +786,7 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-sales-table-thumbnail] [data-ui-product-thumbnail] { inline-size: 100%; block-size: 100%; }
 [data-ui-sales-product-attributes] { display: flex; min-inline-size: 0; flex-wrap: wrap; gap: 0 var(--space-2); color: var(--color-text-muted); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
 [data-ui-sales-product-attributes] > span { overflow-wrap: anywhere; }
-[data-ui-sales-view-toggle] { display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-panel); background: var(--color-surface-subtle); }
+[data-ui-sales-view-toggle] { display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-1); border-radius: 999px; background: var(--color-surface-subtle); }
 [data-ui-sales-view-toggle] > button { display: inline-flex; align-items: center; gap: var(--space-2); min-block-size: var(--size-control-default); padding-inline: var(--space-3); white-space: nowrap; }
 [data-ui-sales-view-toggle] > button[aria-pressed="true"] { background: var(--color-action); border-color: var(--color-action); color: var(--color-text-inverse); }
 [data-ui-sales-view-toggle] svg { inline-size: 1.125rem; block-size: 1.125rem; }

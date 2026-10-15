@@ -381,14 +381,17 @@ for (const width of [1440, 1200, 960, 600]) {
   });
 }
 
-for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [600, 340]]) {
-  test(`Sales catalog surfaces and full-size wrapping controls stay isolated at ${width}px/${browseWidth}px`, async () => {
+for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [600, 340]]) for (const salesViewMode of ["table", "gallery"] as const) {
+  test(`Sales ${salesViewMode} catalog surfaces and full-size wrapping controls stay isolated at ${width}px/${browseWidth}px`, async () => {
     const style = await mountBaseStyles(width, browseWidth);
+    // jsdom cannot resolve border-color/padding shorthand variables. Supply
+    // existing token literals for those rendered cascade witnesses only.
+    style.textContent = style.textContent!.replaceAll("var(--color-border)", "#e4ddd2").replaceAll("var(--color-border-strong)", "#8d8177").replaceAll("var(--space-1)", "4px");
     try {
       const product: CatalogProductBrowseResult = { product_id: 1, revision: 1, category_id: 1, sku: "LONG-SKU", name: "A long product identity", category_name: "Filters", available_quantity: 1, purchase_price_centavos: null, sale_price_centavos: 12550, list_price_centavos: 12550, catalog_unit_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_code: null, attribute_values: [] };
       render(createElement("div", null, createElement("section", { "data-ui-panel": true, "data-ui-sales-catalog": true },
         createElement(ProductBrowser, {
-          presentation: "sales", salesViewMode: "table",
+          presentation: "sales", salesViewMode,
           state: { ...initialProductBrowserState, status: "results", result: { products: [product], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 } },
           onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: () => {}, onPageChange: () => {}, onSelect: () => {}, actionLabel: "Agregar",
         })), catalogBrowser("table"), catalogBrowser("gallery"),
@@ -418,16 +421,59 @@ for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [600, 
         assert.notEqual(styleOf(shared, "padding-block"), "5px");
         assert.notEqual(styleOf(shared, "scroll-padding-block"), "8px");
       }
-      const row = outer.querySelector("[data-ui-sales-product]")!;
-      assert.equal(styleOf(row, "background"), "#fffcf7");
-      assert.equal(styleOf(row, "border-radius"), "32px");
-      assert.equal(styleOf(row, "grid-template-columns"), browseWidth >= 640 ? "3rem minmax(0, 1fr) auto" : "3rem minmax(0, 1fr)");
-      const actions = row.querySelector("[data-ui-product-action]")!;
-      assert.equal(styleOf(actions, "display"), "flex");
-      assert.equal(styleOf(actions, "flex-wrap"), "wrap");
-      assert.equal(styleOf(actions, "min-inline-size"), "0px");
+      const controls = [...toolbar.querySelectorAll("input, select")];
+      const toggle = toolbar.querySelector('[role="group"][aria-label="Presentación de ventas"]')!;
+      // Approved Sales references: white/light-bordered field capsules and a
+      // warm outer toggle capsule. These are rendered cascade, not pixel tests.
+      assert.deepEqual([
+        ...controls.map((control) => [styleOf(control, "border-radius"), styleOf(control, "background"), styleOf(control, "border-color")]),
+        [styleOf(toggle, "border-radius"), styleOf(toggle, "background")],
+      ], [["999px", "#fff", "rgb(228, 221, 210)"], ["999px", "#fff", "rgb(228, 221, 210)"], ["999px", "#eee7dc"]]);
+      for (const control of controls) {
+        assert.equal(styleOf(control, "padding-inline"), "12px");
+        assert.equal(styleOf(control, "min-inline-size"), "0px");
+        assert.equal(styleOf(control, "border-top-width"), "1px");
+        assert.equal(styleOf(control, "border-top-style"), "solid");
+        control.setAttribute("data-ui-focus-visible", "true");
+        assert.equal(styleOf(control, "outline-width"), "3px");
+        assert.equal(styleOf(control, "outline-offset"), "2px");
+      }
+      assert.equal(styleOf(toggle, "padding"), "4px");
+      assert.equal(styleOf(toggle, "gap"), "4px");
+      assert.equal(styleOf(toggle, "flex-wrap"), "wrap");
+      const selectedView = toggle.querySelector('[aria-pressed="true"]')!;
+      assert.equal(selectedView.getAttribute("aria-label"), salesViewMode === "table" ? "Vista de tabla" : "Vista de galería");
+      assert.equal(styleOf(selectedView, "background"), "#3d3042");
+      const submit = toolbar.querySelector('button[type="submit"]')!;
+      assert.equal(styleOf(submit, "background"), "#fffcf7");
+      assert.equal(submit.getAttribute("data-ui-action"), "secondary");
+      for (const shared of document.querySelectorAll('[data-ui-product-browser]:not([data-ui-product-browser="sales"])')) {
+        for (const control of shared.querySelectorAll("input, select")) {
+          assert.equal(styleOf(control, "border-radius"), "6px");
+          assert.equal(styleOf(control, "background"), "#fffcf7");
+          assert.equal(styleOf(control, "border-top-color"), "rgb(141, 129, 119)");
+          assert.equal(styleOf(control, "min-height"), "44px");
+          assert.equal(styleOf(control, "padding-inline"), "12px");
+          control.setAttribute("data-ui-focus-visible", "true");
+          assert.equal(styleOf(control, "outline-width"), "3px");
+          assert.equal(styleOf(control, "outline-offset"), "2px");
+        }
+        assert.equal(shared.querySelector("[data-ui-sales-view-toggle]"), null);
+      }
       assert.equal(styleOf(outer.querySelector("form")!, "grid-template-columns"), browseWidth >= 640 ? "minmax(0, 1.6fr) minmax(0, 1fr) auto" : "minmax(0, 1fr)");
-      assert.equal(styleOf(actions, "grid-column"), browseWidth >= 640 ? "3" : "1 / -1");
+      if (salesViewMode === "table") {
+        const row = outer.querySelector("[data-ui-sales-product]")!;
+        assert.equal(styleOf(row, "background"), "#fffcf7");
+        assert.equal(styleOf(row, "border-radius"), "32px");
+        assert.equal(styleOf(row, "grid-template-columns"), browseWidth >= 640 ? "3rem minmax(0, 1fr) auto" : "3rem minmax(0, 1fr)");
+        const actions = row.querySelector("[data-ui-product-action]")!;
+        assert.equal(styleOf(actions, "display"), "flex");
+        assert.equal(styleOf(actions, "flex-wrap"), "wrap");
+        assert.equal(styleOf(actions, "min-inline-size"), "0px");
+        assert.equal(styleOf(actions, "grid-column"), browseWidth >= 640 ? "3" : "1 / -1");
+        assert.equal(styleOf(row.querySelector("[data-ui-product-identity]")!, "overflow-wrap"), "anywhere");
+        assert.equal(styleOf(row.querySelector("[data-ui-money]")!, "white-space"), "nowrap");
+      }
       for (const button of outer.querySelectorAll("button")) {
         assert.equal(styleOf(button, "min-height"), "44px");
         assert.notEqual(styleOf(button, "inline-size"), "44px");
@@ -437,8 +483,6 @@ for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [600, 
         assert.equal(styleOf(button, "outline-offset"), "2px");
       }
       for (const control of outer.querySelectorAll("input, select")) assert.equal(styleOf(control, "min-height"), "44px");
-      assert.equal(styleOf(row.querySelector("[data-ui-product-identity]")!, "overflow-wrap"), "anywhere");
-      assert.equal(styleOf(row.querySelector("[data-ui-money]")!, "white-space"), "nowrap");
       const catalog = document.querySelector('[data-ui-product-browser="catalog"]')!;
       assert.equal(catalog.querySelector("[data-ui-sales-catalog-toolbar]"), null);
       assert.notEqual(styleOf(catalog.querySelector("li")!, "border-radius"), "32px");
