@@ -140,9 +140,11 @@ export function SaleScreen(props: SaleScreenProps) {
   }
 
   const discardDraft = () => {
-    if (!draftDispatch({ type: "discard" })) return;
+    if (!draftDispatch({ type: "discard" })) return false;
+    setCheckoutOpening(null);
     setCheckoutDetail(null);
     browserDispatch({ type: "browse_started", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: ++searchSequence.current });
+    return true;
   };
   const total = formatBs(draftTotalCentavos(state.lines));
   const totalUnits = draftTotalUnits(state.lines);
@@ -170,7 +172,7 @@ export function SaleScreen(props: SaleScreenProps) {
       createElement(Field, { kind: "quantity", label: `Cantidad de ${line.product_name}`, error: state.feedback === "Ingresá una cantidad entera mayor que cero." ? state.feedback : undefined, control: createElement("input", { min: 1, value: line.quantity, disabled: pending, onChange: (event) => draftDispatch({ type: "line_quantity_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
       createElement(Field, { kind: "money", label: "Precio de venta (Bs)", error: state.price_errors[line.product_id], control: createElement("input", { id: `sale-final-price-${line.product_id}`, ref: index === 0 ? checkoutInitialFocusRef : undefined, value: line.final_price_input, disabled: pending, onChange: (event) => draftDispatch({ type: "line_final_price_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
       createElement("p", { "data-ui-sale-subtotal": true }, createElement("span", { "data-ui-money": true }, `Subtotal: ${formatBs(draftLineSubtotalCentavos(line))}`)))));
-  const checkoutContent = createElement("div", {
+  const checkoutContent = (onDiscard: () => void) => createElement("div", {
     "data-ui-checkout-content": true,
     "data-ui-sales-checkout": true,
     "data-ui-density": state.lines.length === 1 ? "sparse" : undefined,
@@ -189,7 +191,7 @@ export function SaleScreen(props: SaleScreenProps) {
         createElement(Field, { kind: "money", label: "Pago QR", error: paymentErrors.qr_applied_centavos, control: createElement("input", { ref: qrRef, value: state.payment.qr_applied_centavos, disabled: pending, onChange: (event) => draftDispatch({ type: "payment_changed", field: "qr_applied_centavos", value: event.target.value }) }) } as never)),
       state.feedback && !(notifications && routineOutcome) && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
       createElement("div", { "data-ui-sale-actions": true },
-        createElement(Action, { variant: "tertiary", disabled: pending, onClick: discardDraft }, "Descartar borrador")),
+        createElement(Action, { variant: "tertiary", disabled: pending, onClick: onDiscard }, "Descartar borrador")),
     checkoutDetail ? createElement(SalesProductDetail, { key: checkoutDetail.product_id, product: checkoutDetail, thumbnails: checkoutDetailThumbnails, loadOriginal: catalogProductImageCommands.salesOriginal, triggerRef: checkoutDetailTriggerRef, onClose: () => setCheckoutDetail(null) }) : null));
   const summaryLines = state.lines.map((line) => createElement("li", { key: line.product_id, "data-ui-sale-summary-line": true },
     createElement("strong", null, line.product_name),
@@ -225,5 +227,5 @@ export function SaleScreen(props: SaleScreenProps) {
       setCheckoutDetail(null);
       void browsePage("", null, 1);
     } }) : null,
-    createElement(CheckoutDialog, { opening: checkoutOpening, retire: !!persistedDetails, onClosingChange: closingChanged, invokerRef: checkoutTriggerRef, open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending: state.confirmation === "pending", confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => !checkoutDetail && !pending && !locked() && setCheckoutOpen(false), onConfirm: confirm, children: checkoutContent }));
+    createElement(CheckoutDialog, { opening: checkoutOpening, retire: !!persistedDetails, onClosingChange: closingChanged, invokerRef: checkoutTriggerRef, open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending: state.confirmation === "pending", confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => !checkoutDetail && !pending && !locked() && setCheckoutOpen(false), onConfirm: confirm, restoreFocusFallback: () => draftRef.current?.querySelector<HTMLInputElement>('input[type="search"]') ?? null, children: (close) => checkoutContent(() => close(discardDraft)) }));
 }

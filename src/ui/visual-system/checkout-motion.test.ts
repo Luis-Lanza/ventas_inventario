@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { gsap } from "gsap";
-import { startCheckoutMotion, type CheckoutOpening } from "./checkout-motion.ts";
+import { captureCheckoutOpening, startCheckoutMotion, type CheckoutOpening } from "./checkout-motion.ts";
 
 function fixture() {
   const trigger = document.createElement("button"), frame = document.createElement("div");
@@ -42,6 +42,33 @@ test("reverse samples fresh actual frame and current button surface, never the c
   motion.dispose();
   assert.equal(f.frame.style.cssText, original);
   f.clean();
+});
+
+test("discard snapshot survives natural-height reset while disabled destination and style cleanup remain live", (t) => {
+  const f = fixture();
+  t.after(() => f.clean());
+  f.frame.style.setProperty("height", "600px", "important");
+  const declarations = () => Array.from(f.frame.style).sort().map((property) => [property, f.frame.style.getPropertyValue(property), f.frame.style.getPropertyPriority(property)]);
+  const before = declarations();
+  const snapshot = captureCheckoutOpening(f.frame, 1);
+  f.frame.getBoundingClientRect = () => ({ left: 200, top: 100, width: 500, height: 120 } as DOMRect);
+  const trigger = f.opening.trigger as HTMLButtonElement;
+  trigger.disabled = true;
+  trigger.getBoundingClientRect = () => ({ left: 700, top: 500, width: 180, height: 40 } as DOMRect);
+  let complete!: () => void;
+  t.mock.method(gsap, "to", (target: unknown, vars: gsap.TweenVars) => {
+    assert.equal(target, f.frame);
+    assert.deepEqual([vars.left, vars.top, vars.width, vars.height], [700, 500, 180, 40]);
+    complete = vars.onComplete as () => void;
+    return {} as gsap.core.Tween;
+  });
+  let retired = 0;
+  const motion = startCheckoutMotion(f.frame, f.opening, () => retired++, "close", snapshot);
+  assert.deepEqual([f.frame.style.left, f.frame.style.top, f.frame.style.width, f.frame.style.height], ["100px", "40px", "900px", "600px"]);
+  assert.equal(retired, 0);
+  complete(); motion.dispose(); complete();
+  assert.equal(retired, 1);
+  assert.deepEqual(declarations(), before);
 });
 
 for (const reason of ["complete", "resize", "deadline", "exception", "initial-reduce", "mid-reduce", "invalid", "detached", "dispose"] as const) {

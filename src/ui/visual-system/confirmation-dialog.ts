@@ -5,7 +5,7 @@ import { Action } from "./controls.ts";
 export type DialogPurpose = "restore" | "cancellation" | "routine";
 export type DialogLayout = "default" | "checkout";
 export type DestructivePurpose = Exclude<DialogPurpose, "routine">;
-export type CheckoutPresentation = { frameRef: RefCallback<HTMLDivElement>; ready: boolean; closing?: boolean; onBack?: () => void };
+export type CheckoutPresentation = { frameRef: RefCallback<HTMLDivElement>; ready: boolean; closing?: boolean; onBack?: () => void; restoreFocusFallback?: () => HTMLElement | null };
 export type ConfirmationDialogProps = {
   open: boolean;
   purpose: DialogPurpose;
@@ -166,7 +166,16 @@ function DialogFrame({
       // null). Ordinary checkout retirement and all default callers keep their policy.
       const checkoutReplacement = !!presentation && replacement;
       if (kind !== "persisted-sale" && !checkoutReplacement
-        && (current === previousDialogRef.current || (current !== container && !replacement))) restore(invokerRef.current);
+        && (current === previousDialogRef.current || (current !== container && !replacement))) {
+        const invoker = invokerRef.current;
+        if (!presentation?.restoreFocusFallback) restore(invoker);
+        else {
+          // Checkout may discard its cart: a disabled source remains geometry, not focus.
+          const root = owner.documentElement;
+          const fallback = isEligible(invoker, root) ? invoker : presentation.restoreFocusFallback();
+          if (isEligible(fallback, root)) restore(fallback);
+        }
+      }
       dialogs.delete(container);
       if (!container.isConnected) {
         invokerRef.current = null;

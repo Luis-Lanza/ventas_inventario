@@ -249,7 +249,7 @@ for (const family of ["checkout", "cancellation", "default-layout", "catalog-edi
       layout: family === "default-layout" ? "default" : "checkout",
       dialogDataAttribute: family === "catalog-edit" ? "catalog-edit-dialog" : undefined,
       // Even a supplied checkout seam must not change another family's policy.
-      checkoutPresentation: { ready: true, frameRef() {} },
+      checkoutPresentation: { ready: true, frameRef() {}, restoreFocusFallback() { throw Error("replacement and non-checkout callers must not resolve checkout fallback"); } },
     });
     const tree = (replaced: boolean) => createElement("div", null,
       retiring(!replaced), replaced ? createElement(PersistedSaleDialog, { onNewSale() {} }) : null);

@@ -159,6 +159,55 @@ test("Volver cancels business immediately but retains one actual frame and focus
   assert.deepEqual(session.getSnapshot().payment, before.payment);
 });
 
+test("discard empties the session synchronously but contracts the pre-reset live frame to the disabled real trigger", async (t) => {
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
+  const session = createSaleSession(() => UUID);
+  const tweens: gsap.TweenVars[] = [];
+  t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { tweens.push(vars); return {} as gsap.core.Tween; });
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", function (this: HTMLElement) {
+    return { left: 100, top: 40, width: 900, height: this.querySelector('[data-ui-sale-cart-row]') ? 600 : 180 } as DOMRect;
+  });
+  render(createElement(SaleScreen, { session }));
+  fireEvent.click(await screen.findByRole("button", { name: "Agregar" }));
+  const trigger = screen.getByRole("button", { name: "Revisar y cobrar" }) as HTMLButtonElement;
+  trigger.focus(); fireEvent.click(trigger);
+  act(() => tweens[0].onComplete!());
+  const frame = screen.getByRole("dialog");
+  const search = screen.getByRole("searchbox");
+  let restored = 0, triggerFocus = 0;
+  search.addEventListener("focus", () => restored++);
+  trigger.addEventListener("focus", () => triggerFocus++);
+  fireEvent.change(search, { target: { value: "old query" } });
+  fireEvent.submit(search.closest("form")!);
+  await waitFor(() => assert.equal(screen.getByRole("button", { name: "Buscar" }).hasAttribute("disabled"), false));
+  fireEvent.change(screen.getByRole("textbox", { name: "Efectivo recibido" }), { target: { value: "100" } });
+  trigger.getBoundingClientRect = () => ({ left: 700, top: 500, width: 180, height: 40 } as DOMRect);
+  trigger.style.borderRadius = "999px";
+  trigger.style.backgroundColor = "rgb(1, 2, 3)";
+  const discard = screen.getByRole("button", { name: "Descartar borrador" });
+  fireEvent.click(discard);
+  assert.equal(session.getSnapshot().checkoutOpen, false);
+  assert.deepEqual(session.getSnapshot().lines, []);
+  assert.deepEqual(session.getSnapshot().payment, { amount_tendered_centavos: "", qr_applied_centavos: "" });
+  assert.equal((search as HTMLInputElement).value, "");
+  assert.equal(trigger.disabled, true);
+  assert.ok(screen.getByRole("dialog") === frame, "actual frame retained after discard");
+  assert.equal(frame.style.height, "600px", "start comes from before content shrink");
+  assert.deepEqual([tweens[1].left, tweens[1].top, tweens[1].width, tweens[1].height], [700, 500, 180, 40]);
+  assert.equal(tweens[1].borderRadius, "20px");
+  assert.equal(tweens[1].backgroundColor, "rgb(1, 2, 3)");
+  assert.equal(document.activeElement, frame);
+  assert.deepEqual([restored, triggerFocus], [0, 0]);
+  fireEvent.click(discard); fireEvent.keyDown(frame, { key: "Escape" });
+  assert.equal(tweens.length, 2);
+  act(() => tweens[1].onComplete!());
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(document.activeElement, search);
+  assert.deepEqual([restored, triggerFocus], [1, 0]);
+  act(() => { tweens[0].onComplete!(); tweens[1].onComplete!(); });
+  assert.deepEqual([restored, triggerFocus], [1, 0]);
+});
+
 test("nested checkout detail refuses Volver without cancelling or starting reverse presentation", async (t) => {
   mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
   const session = createSaleSession(() => UUID);

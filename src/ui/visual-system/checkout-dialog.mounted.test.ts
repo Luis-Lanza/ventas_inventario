@@ -208,6 +208,84 @@ for (const reason of ["complete", "denied", "pending", "Escape", "initial-reduce
   });
 }
 
+for (const reason of ["accepted", "rejected", "pending", "initial-reduce", "mid-reduce", "source-gone", "unmount", "replacement", "inert-fallback", "disabled-fallback", "hidden-fallback", "detached-fallback"] as const) {
+  test(`inner discard ${reason} uses the retained lifecycle without delaying the action`, (t) => {
+    const trigger = opener(), search = document.createElement("input");
+    document.body.append(search);
+    t.after(() => { trigger.remove(); search.remove(); Reflect.deleteProperty(window, "matchMedia"); });
+    let matches = reason === "initial-reduce";
+    const media = new window.EventTarget();
+    Object.defineProperty(media, "matches", { get: () => matches });
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: () => media });
+    t.mock.method(HTMLElement.prototype, "getBoundingClientRect", () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect));
+    const completions: Array<() => void> = [];
+    t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
+    let actions = 0, restored = 0, disabledFocus = 0;
+    search.addEventListener("focus", () => restored++);
+    trigger.addEventListener("focus", () => disabledFocus++);
+    const opening = { id: 1, trigger, rect: { left: 700, top: 500, width: 180, height: 40 }, radius: "20px", surface: { backgroundColor: "white", borderColor: "black", boxShadow: "none" } };
+    let rendered: ReturnType<typeof render>;
+    let props: Parameters<typeof CheckoutDialog>[0] = {
+      open: true, opening, title: "Revisar y cobrar", description: "Revisá la venta.", confirmLabel: "Confirmar venta", invokerRef: { current: trigger },
+      pending: reason === "pending", restoreFocusFallback: () => search,
+      onCancel: () => { throw Error("discard is not Volver"); }, onConfirm() {},
+      children: (close) => createElement("div", { "data-ui-sales-checkout": true }, createElement("button", { onClick: () => close(() => {
+        actions++;
+        if (reason === "rejected") return false;
+        trigger.disabled = true;
+        if (reason === "source-gone") trigger.remove();
+        if (reason === "inert-fallback") search.setAttribute("inert", "");
+        if (reason === "disabled-fallback") search.disabled = true;
+        if (reason === "hidden-fallback") search.hidden = true;
+        if (reason === "detached-fallback") search.remove();
+        props = { ...props, open: false, opening: null };
+        rendered.rerender(createElement(CheckoutDialog, props));
+        return true;
+      }) }, "Descartar borrador")),
+    };
+    rendered = render(createElement(CheckoutDialog, props));
+    if (!matches) act(() => completions[0]());
+    const frame = screen.getByRole("dialog"), discard = screen.getByRole("button", { name: "Descartar borrador" });
+    fireEvent.click(discard);
+    if (reason === "rejected" || reason === "pending") {
+      assert.equal(actions, reason === "pending" ? 0 : 1);
+      assert.equal(screen.getByRole("dialog"), frame);
+      assert.equal(completions.length, 1);
+      assert.deepEqual([restored, disabledFocus], [0, 0]);
+      assert.equal(trigger.disabled, false);
+      return;
+    }
+    assert.equal(actions, 1, "business action already completed without animation completion");
+    if (reason === "initial-reduce" || reason === "source-gone") {
+      assert.equal(screen.queryByRole("dialog"), null);
+      assert.equal(restored, 1);
+      return;
+    }
+    assert.equal(screen.getByRole("dialog"), frame);
+    assert.equal(document.activeElement, frame);
+    assert.equal(restored, 0);
+    const complete = completions.at(-1)!;
+    fireEvent.click(discard);
+    assert.equal(actions, 1);
+    if (reason === "unmount") rendered.unmount();
+    else if (reason === "replacement") {
+      props = { ...props, retire: true };
+      rendered.rerender(createElement("div", null, createElement(CheckoutDialog, props), createElement(PersistedSaleDialog, { onNewSale() {} })));
+      const receipt = screen.getByRole("dialog");
+      act(() => complete());
+      assert.ok(receipt.contains(document.activeElement));
+      assert.deepEqual([restored, disabledFocus], [0, 0]);
+      return;
+    } else if (reason === "mid-reduce") act(() => { matches = true; media.dispatchEvent(new Event("change")); });
+    else act(() => complete());
+    assert.equal(screen.queryByRole("dialog"), null);
+    const focus = document.activeElement;
+    act(() => { complete(); completions[0](); });
+    assert.equal(document.activeElement, focus);
+    assert.deepEqual([restored, disabledFocus], [reason.endsWith("-fallback") ? 0 : 1, 0]);
+  });
+}
+
 test("pending checkout contains focus and blocks Escape and activation", async () => {
   let cancels = 0;
   let confirms = 0;

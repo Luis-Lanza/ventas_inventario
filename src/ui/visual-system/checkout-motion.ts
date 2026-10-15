@@ -29,7 +29,7 @@ export function captureCheckoutOpening(trigger: HTMLElement, id: number): Checko
     surface: { backgroundColor: style?.backgroundColor ?? "transparent", borderColor: style?.borderColor ?? "transparent", boxShadow: style?.boxShadow ?? "none" } };
 }
 
-export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening, ready: () => void, direction: "open" | "close" = "open") {
+export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening, ready: () => void, direction: "open" | "close" = "open", closingFrame?: CheckoutOpening) {
   const owner = frame.ownerDocument, view = owner.defaultView;
   let live = true, terminal = false;
   let context: gsap.Context | undefined;
@@ -64,14 +64,14 @@ export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening
   try {
     const target = frame.getBoundingClientRect();
     const style = view?.getComputedStyle(frame);
-    const current = { rect: target, radius: style?.borderRadius,
+    const current = closingFrame ?? { rect: target, radius: style?.borderRadius,
       surface: { backgroundColor: style?.backgroundColor, borderColor: style?.borderColor, boxShadow: style?.boxShadow } };
     const source = direction === "close" ? captureCheckoutOpening(opening.trigger, opening.id) : opening;
     const from = direction === "close" ? current : source;
     const to = direction === "close" ? source : current;
     const valid = (rect: CheckoutOpening["rect"]) => [rect.left, rect.top, rect.width, rect.height].every(Number.isFinite) && rect.width > 0 && rect.height > 0;
     if (!view || reduced?.matches || !frame.isConnected || !opening.trigger.isConnected
-      || opening.trigger.ownerDocument !== owner || !valid(source.rect) || !valid(target)
+      || opening.trigger.ownerDocument !== owner || !valid(source.rect) || !valid(current.rect)
       || (style?.writingMode && style.writingMode !== "horizontal-tb")
       || !frame.querySelector(":scope > [data-ui-sales-checkout]")
       || !frame.querySelector(":scope > [data-ui-dialog-actions]")) {
