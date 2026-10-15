@@ -7,7 +7,7 @@ import userEvent from "@testing-library/user-event";
 
 import { CheckoutDialog } from "./checkout-dialog.ts";
 import { PersistedSaleSummaryView } from "../sales/persisted-summary.ts";
-import { Action } from "./controls.ts";
+import { Action, Field } from "./controls.ts";
 import type { CatalogProductBrowseResult } from "../../commands/catalog.ts";
 import { ProductBrowser, initialProductBrowserState, type CatalogViewMode } from "../catalog/product-browser.ts";
 
@@ -255,6 +255,118 @@ for (const [width, height] of [[1440, 900], [1200, 800], [1200, 640], [960, 640]
     } finally { style.remove(); }
   });
 }
+
+// Real Field markup exercises the prefix/input boundary. These are cascade and
+// keyboard checks only: jsdom cannot prove painted corners or narrow-window fit.
+for (const width of [1440, 1200, 960]) {
+  for (const state of ["normal", "error", "disabled"] as const) {
+    test(`checkout internal fields stay continuous and isolated at ${width}, ${state}`, async () => {
+      const style = await mountBaseStyles(width);
+      // Activate the production focus selectors explicitly; jsdom does not reliably
+      // invalidate :has(:focus-visible). Keyboard reachability is checked separately.
+      // Resolve shorthand color tokens for jsdom's CSS parser (not browser paint).
+      const colors = ["--color-border", "--color-focus", "--color-danger"];
+      const resolved = colors.map((token) => [token, styleOf(document.documentElement, token)]);
+      for (const [token, value] of resolved) style.textContent = style.textContent!.replaceAll(`var(${token})`, value);
+      style.textContent = style.textContent!.replaceAll(":focus-visible", '[data-ui-focus-visible="true"]');
+      const field = (kind: "quantity" | "money", label: string) => createElement(Field, {
+        kind, label, error: state === "error" ? "Revisá el importe" : undefined,
+        control: createElement("input", { defaultValue: kind === "quantity" ? "1" : "35,50", disabled: state === "disabled", "data-ui-focus-visible": state === "normal" ? "true" : undefined }),
+      });
+      try {
+        render(createElement("div", null,
+          createElement("div", { "data-ui-sales-checkout": true },
+            createElement("section", { "data-ui-sales-checkout-cart": true },
+              createElement("div", { "data-ui-sale-cart-row": true },
+                createElement("div", { "data-ui-sale-price-facts": true }, "Venta: Bs 35,50 · ",
+                  createElement("span", { "data-ui-sales-minimum-price": true }, "Mín.: Bs 30,00")),
+                createElement("div", { "data-ui-sale-cart-controls": true }, field("quantity", "Cantidad"), field("money", "Precio de venta (Bs)")))),
+            createElement("div", { "data-ui-sales-checkout-settlement": true },
+              createElement("p", { "data-ui-checkout-total": true }, "Total actual: Bs 35,50"),
+              createElement("section", null, field("money", "Efectivo recibido"), field("money", "Pago QR")))),
+          createElement("section", { "data-testid": "other-fields" }, field("quantity", "Otra cantidad"), field("money", "Otro importe"))));
+        const checkout = document.querySelector("[data-ui-sales-checkout]")!;
+        const quantity = screen.getByRole("spinbutton", { name: "Cantidad" });
+        assert.equal(styleOf(quantity, "border-radius"), "16px");
+        const facts = checkout.querySelector("[data-ui-sale-price-facts]")!;
+        assert.equal(styleOf(facts, "border-radius"), "16px");
+        assert.equal(styleOf(facts.querySelector("span")!, "background"), "transparent");
+        assert.match(facts.textContent!, /Venta: Bs 35,50 · Mín\.: Bs 30,00/);
+        for (const label of ["Precio de venta (Bs)", "Efectivo recibido", "Pago QR"]) {
+          const input = screen.getByRole("textbox", { name: label }) as HTMLInputElement;
+          const group = input.parentElement!;
+          const prefix = group.querySelector("span")!;
+          assert.equal(input.value, "35,50");
+          assert.equal(input.disabled, state === "disabled");
+          assert.equal(styleOf(group, "border-radius"), "16px");
+          assert.equal(styleOf(group, "min-inline-size"), "0px");
+          assert.equal(styleOf(input, "min-inline-size"), "0px");
+          assert.equal(styleOf(input, "inline-size"), "0px");
+          assert.equal(styleOf(input, "text-align"), "start");
+          assert.equal(styleOf(input, "border-left-width"), "0px");
+          assert.equal(styleOf(prefix, "border-right-width"), "0px");
+          assert.equal(styleOf(prefix, "background"), "transparent");
+          assert.equal(styleOf(input, "background"), "transparent");
+          assert.notEqual(styleOf(group, "overflow"), "hidden");
+          if (state === "error") {
+            assert.equal(input.getAttribute("aria-invalid"), "true");
+            assert.equal(styleOf(group, "border-top-width"), "2px");
+            assert.equal(styleOf(group, "border-top-color"), "rgb(163, 63, 70)");
+            assert.equal(styleOf(group, "background"), "#f5e2e2");
+            assert.ok(document.getElementById(input.getAttribute("aria-describedby")!)?.textContent);
+          } else if (state === "disabled") {
+            assert.equal(styleOf(group, "background"), "#eee7dc");
+            assert.equal(styleOf(input, "color"), "#817982");
+          } else {
+            assert.equal(styleOf(group, "background"), "#fffcf7");
+            await userEvent.setup({ document }).click(input);
+            assert.equal(document.activeElement, input);
+            assert.equal(styleOf(group, "outline-width"), "3px");
+            assert.equal(styleOf(group, "outline-offset"), "2px");
+            assert.equal(styleOf(input, "outline-style"), "none");
+          }
+        }
+        if (state !== "disabled") {
+          quantity.focus();
+          await userEvent.setup({ document }).tab();
+          assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Precio de venta (Bs)" }));
+        }
+        const other = screen.getByTestId("other-fields");
+        assert.equal(styleOf(other.querySelector("input")!, "border-radius"), "6px");
+        assert.equal(styleOf(other.querySelector('[data-ui-money]')!, "text-align"), "end");
+        assert.equal(styleOf(other.querySelector("span")!, "background"), "#eee7dc");
+        for (const selector of ["[data-ui-sale-cart-row]", "[data-ui-checkout-total]", "[data-ui-sales-checkout-settlement] > section"]) {
+          assert.equal(styleOf(checkout.querySelector(selector)!, "border-radius"), "24px");
+        }
+      } finally { style.remove(); }
+    });
+  }
+}
+
+test("checkout currency keeps a whole-group focus ring in forced colors", async () => {
+  const style = await mountBaseStyles();
+  try {
+    const forced = Array.from(style.sheet!.cssRules).find((rule) => rule.cssText.startsWith("@media (forced-colors: active)")) as CSSMediaRule;
+    style.textContent += Array.from(forced.cssRules).map((rule) => rule.cssText).join("\n");
+    style.textContent = style.textContent!.replaceAll(":focus-visible", '[data-ui-focus-visible="true"]');
+    render(createElement("div", { "data-ui-sales-checkout": true }, createElement(Field, {
+      kind: "money", label: "Importe enfocado", control: createElement("input", { defaultValue: "35,50", "data-ui-focus-visible": "true" }),
+    })));
+    const input = screen.getByRole("textbox", { name: "Importe enfocado" });
+    const group = input.parentElement!;
+    assert.equal(styleOf(group, "outline-width"), "3px");
+    assert.equal(styleOf(group, "outline-style"), "solid");
+    assert.equal(styleOf(group, "outline-offset"), "2px");
+    const systemColors = document.createElement("span");
+    systemColors.style.outlineColor = "Highlight";
+    systemColors.style.borderColor = "CanvasText";
+    group.append(systemColors);
+    assert.equal(styleOf(group, "outline-color"), styleOf(systemColors, "outline-color"));
+    assert.equal(styleOf(group, "border-top-color"), styleOf(systemColors, "border-top-color"));
+    assert.equal(styleOf(input, "outline-width"), "0px");
+    assert.notEqual(styleOf(group, "overflow"), "hidden");
+  } finally { style.remove(); }
+});
 
 test("Catalog table columns shrink and wrap while the results region retains optional horizontal scrolling", async () => {
   const style = await mountBaseStyles();

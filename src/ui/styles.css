@@ -869,10 +869,10 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-sales-checkout] [data-ui-sale-product] { display: flex; flex-wrap: wrap; min-inline-size: 0; grid-column: 1; gap: var(--space-2); overflow-wrap: anywhere; }
 [data-ui-sales-checkout] [data-ui-sale-product] > strong { flex-basis: 100%; }
 [data-ui-sales-checkout] [data-ui-sale-product] :is([data-ui-sku], [data-ui-sales-stock-snapshot]) { padding: var(--space-1) var(--space-2); border-radius: 999px; background: var(--color-surface-subtle); }
-[data-ui-sales-checkout] [data-ui-sale-price-facts] { display: flex; min-inline-size: 0; grid-column: 1 / -1; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-text-muted); font-size: var(--type-caption-size); }
+[data-ui-sales-checkout] [data-ui-sale-price-facts] { display: flex; min-inline-size: 0; grid-column: 1 / -1; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface); color: var(--color-text-muted); font-size: var(--type-caption-size); }
 [data-ui-sales-checkout] [data-ui-sales-purchase-price-reference] { grid-column: 1 / -1; overflow-wrap: anywhere; color: var(--color-text-muted); font-size: var(--type-caption-size); }
 .sale-price-fact-accessible { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; }
-[data-ui-sales-checkout] [data-ui-sales-minimum-price] { padding-inline: var(--space-2); border-radius: var(--radius-control); background: var(--color-surface-subtle); }
+[data-ui-sales-checkout] [data-ui-sales-minimum-price] { background: transparent; }
 [data-ui-sales-checkout] [data-ui-sale-cart-primary] [data-ui-sales-cart-actions] { display: flex; flex-wrap: wrap; grid-column: 2; grid-row: 1; justify-content: flex-end; gap: var(--space-2); }
 [data-ui-sales-checkout] [data-ui-sales-stock-snapshot] { color: var(--color-text-muted); font-size: var(--type-caption-size); }
 [data-ui-sales-nested-detail] { z-index: 101; }
@@ -880,6 +880,42 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-sales-checkout] [data-ui-sale-cart-controls] [data-ui-field] { min-inline-size: 0; margin: 0; }
 [data-ui-sales-checkout] [data-ui-sale-cart-controls] [data-ui-field-control] { inline-size: 100%; min-inline-size: 0; max-inline-size: 100%; }
 [data-ui-sales-checkout] [data-ui-sale-cart-controls] [data-ui-field="money"] [data-ui-field-control] > input { inline-size: 0; min-inline-size: 0; max-inline-size: 100%; flex: 1 1 0; }
+/* One continuous field owns the currency border and focus ring; no clipping.
+   Native controls retain validation, disabled state and keyboard semantics. */
+[data-ui-sales-checkout] [data-ui-field-control="quantity"] > input { border-radius: 16px; }
+[data-ui-sales-checkout] [data-ui-field-control="quantity"] > input:not([aria-invalid="true"]) { border-color: var(--color-border); }
+[data-ui-sales-checkout] [data-ui-field-control="money"] {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-surface);
+}
+[data-ui-sales-checkout] [data-ui-field-control="money"] > span {
+  flex: 0 0 auto;
+  padding-inline: var(--space-3) var(--space-2);
+  border: 0;
+  border-radius: 16px 0 0 16px;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+[data-ui-sales-checkout] [data-ui-field-control="money"] > input,
+[data-ui-sales-checkout] [data-ui-field-control="money"] > input[aria-invalid="true"] {
+  inline-size: 0;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  flex: 1 1 0;
+  padding-inline: 0 var(--space-3);
+  border: 0;
+  border-radius: 0 16px 16px 0;
+  background: transparent;
+  text-align: start;
+}
+[data-ui-sales-checkout] [data-ui-field-control="money"]:has(> input:disabled) { background: var(--color-disabled-surface); }
+[data-ui-sales-checkout] [data-ui-field-control="money"]:has(> input:disabled) > span { color: var(--color-disabled-text); }
+[data-ui-sales-checkout] [data-ui-field-control="money"]:has(> input[aria-invalid="true"]) { border: 2px solid var(--color-danger); background: var(--color-danger-surface); }
+[data-ui-sales-checkout] [data-ui-field-control="money"]:has(> input:focus-visible) { outline-width: 3px; outline-style: solid; outline-color: var(--color-focus); outline-offset: 2px; }
+[data-ui-sales-checkout] [data-ui-field-control="money"] > input:focus-visible { outline-style: none; outline-width: 0; }
 [data-ui-sales-checkout] [data-ui-sale-subtotal] { grid-column: 1 / -1; min-inline-size: 0; margin: 0; padding-block-start: var(--space-4); border-block-start: 1px solid var(--color-border); text-align: start; overflow-wrap: anywhere; font-weight: var(--weight-semibold); }
 [data-ui-sale-actions] { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 
@@ -1203,6 +1239,8 @@ html:has([data-ui-persisted-summary]), body:has([data-ui-persisted-summary]),
   [data-ui-action]:not(:disabled):not([aria-busy="true"]):active { transform: none; }
 }
 @media (forced-colors: active) {
+  [data-ui-sales-checkout] [data-ui-field-control="money"] { border-color: CanvasText; }
+  [data-ui-sales-checkout] [data-ui-field-control="money"]:has(> input:focus-visible) { outline-color: Highlight; }
   button, input, select, textarea, [role="button"], [data-ui-status], [data-ui-panel], [data-ui-confirmation-dialog], [data-ui-form-dialog], [data-ui-checkout-dialog], [data-ui-catalog-edit-dialog], [data-ui-aligned-data] :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
   [data-ui-sales-checkout-item], [data-ui-sales-checkout-settlement], [data-ui-sales-checkout] [data-ui-checkout-total] { border-color: CanvasText; forced-color-adjust: auto; }
   [data-ui-persisted-summary], [data-ui-summary-identity], [data-ui-summary-rail], .sale-summary-items, .sale-summary-items :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
