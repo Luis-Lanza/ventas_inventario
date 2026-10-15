@@ -238,6 +238,33 @@ test("connected invokers restore after cancel, parent close, and real unmount", 
   invoker.remove();
 });
 
+for (const family of ["checkout", "cancellation", "default-layout", "catalog-edit", "form"] as const) {
+  test(`${family} synchronous receipt replacement preserves its scoped restoration policy`, () => {
+    const invoker = opener();
+    let restores = 0;
+    invoker.addEventListener("focus", () => { restores++; });
+    const retiring = (open: boolean) => family === "form" ? formDialog({ open }) : dialog({
+      open,
+      purpose: family === "cancellation" ? "cancellation" : "routine",
+      layout: family === "default-layout" ? "default" : "checkout",
+      dialogDataAttribute: family === "catalog-edit" ? "catalog-edit-dialog" : undefined,
+      // Even a supplied checkout seam must not change another family's policy.
+      checkoutPresentation: { ready: true, frameRef() {} },
+    });
+    const tree = (replaced: boolean) => createElement("div", null,
+      retiring(!replaced), replaced ? createElement(PersistedSaleDialog, { onNewSale() {} }) : null);
+    const view = render(tree(false));
+    assert.equal(restores, 0);
+    view.rerender(tree(true));
+    const receipt = screen.getByRole("dialog", { name: "Venta confirmada" });
+    assert.equal(document.querySelectorAll('[role="dialog"]').length, 1);
+    assert.ok(receipt.contains(document.activeElement));
+    assert.equal(restores, family === "checkout" ? 0 : 1, "only the checkout presentation suppresses invoker restoration for a connected replacement");
+    view.unmount();
+    invoker.remove();
+  });
+}
+
 test("replacement dialog ownership prevents stale cleanup focus theft", async () => {
   const oldInvoker = opener("Anterior");
   const old = render(dialog());

@@ -14,6 +14,76 @@ function fixture() {
   return { frame, opening, clean() { frame.remove(); trigger.remove(); } };
 }
 
+test("reverse samples fresh actual frame and current button surface, never the captured opening endpoint", (t) => {
+  const f = fixture();
+  const trigger = f.opening.trigger;
+  trigger.getBoundingClientRect = () => ({ left: 700, top: 500, width: 180, height: 40 } as DOMRect);
+  trigger.style.cssText = "border-radius:999px;background-color:rgb(1, 2, 3);border-color:rgb(4, 5, 6);box-shadow:rgb(7, 8, 9) 0px 1px 2px";
+  f.frame.getBoundingClientRect = () => ({ left: 80, top: 20, width: 800, height: 550 } as DOMRect);
+  let complete!: () => void, retired = 0;
+  t.mock.method(gsap, "to", (target: unknown, vars: gsap.TweenVars) => {
+    assert.ok(target === f.frame);
+    assert.deepEqual([vars.left, vars.top, vars.width, vars.height], [700, 500, 180, 40]);
+    assert.equal(vars.borderRadius, "20px");
+    assert.equal(vars.backgroundColor, "rgb(1, 2, 3)");
+    assert.equal(vars.borderColor, "rgb(4, 5, 6)");
+    assert.equal(vars.boxShadow, "rgb(7, 8, 9) 0px 1px 2px");
+    assert.equal(vars.duration, 0.22);
+    complete = vars.onComplete as () => void; return {} as gsap.core.Tween;
+  });
+  const original = f.frame.style.cssText;
+  const motion = startCheckoutMotion(f.frame, f.opening, () => { retired++; assert.equal(f.frame.style.visibility, "hidden"); }, "close");
+  assert.deepEqual([f.frame.style.left, f.frame.style.top, f.frame.style.width, f.frame.style.height], ["80px", "20px", "800px", "550px"]);
+  assert.equal(f.frame.style.transform, "");
+  assert.equal(trigger.style.width, "");
+  complete(); motion.finish();
+  assert.equal(retired, 1);
+  assert.equal(f.frame.style.visibility, "hidden", "no expanded-frame flash before React retirement");
+  motion.dispose();
+  assert.equal(f.frame.style.cssText, original);
+  f.clean();
+});
+
+for (const reason of ["complete", "resize", "deadline", "exception", "initial-reduce", "mid-reduce", "invalid", "detached", "dispose"] as const) {
+  test(`reverse ${reason} retires at most once and preserves owned mixed priorities`, async (t) => {
+    const f = fixture();
+    let matches = reason === "initial-reduce";
+    const media = new window.EventTarget();
+    Object.defineProperty(media, "matches", { get: () => matches });
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: () => media });
+    t.after(() => { Reflect.deleteProperty(window, "matchMedia"); f.clean(); });
+    f.opening.trigger.getBoundingClientRect = () => ({ left: 700, top: 500, width: reason === "invalid" ? NaN : 180, height: 40 } as DOMRect);
+    if (reason === "detached") f.opening.trigger.remove();
+    f.frame.style.setProperty("width", "777px", "important");
+    f.frame.style.setProperty("visibility", "visible", "important");
+    f.frame.style.setProperty("border-top-color", "red", "important");
+    f.frame.style.setProperty("border-right-color", "blue");
+    const declarations = () => Array.from(f.frame.style).sort().map((property) => [property, f.frame.style.getPropertyValue(property), f.frame.style.getPropertyPriority(property)]);
+    const original = declarations();
+    let complete: (() => void) | undefined, retired = 0, tweens = 0;
+    t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => {
+      tweens++;
+      if (reason === "exception") throw Error("GSAP unavailable");
+      complete = vars.onComplete as () => void; return {} as gsap.core.Tween;
+    });
+    const motion = startCheckoutMotion(f.frame, f.opening, () => { retired++; }, "close");
+    if (reason === "complete") complete!();
+    if (reason === "resize") window.dispatchEvent(new Event("resize"));
+    if (reason === "deadline") await new Promise((resolve) => setTimeout(resolve, 390));
+    if (reason === "mid-reduce") { matches = true; media.dispatchEvent(new Event("change")); }
+    if (reason === "dispose") motion.dispose();
+    assert.equal(retired, reason === "dispose" ? 0 : 1);
+    if (reason === "initial-reduce" || reason === "invalid" || reason === "detached") assert.equal(tweens, 0);
+    matches = false; media.dispatchEvent(new Event("change"));
+    complete?.(); motion.finish(); motion.dispose();
+    assert.equal(retired, reason === "dispose" ? 0 : 1);
+    assert.deepEqual(declarations(), original);
+    f.frame.style.visibility = "collapse";
+    motion.dispose(); complete?.();
+    assert.equal(f.frame.style.visibility, "collapse", "stale cleanup cannot overwrite a new owner");
+  });
+}
+
 test("actual frame starts outside its final bounds and restores preexisting styles before readiness", (t) => {
   const f = fixture();
   let complete: (() => void) | undefined, ready = 0;

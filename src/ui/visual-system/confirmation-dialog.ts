@@ -5,7 +5,7 @@ import { Action } from "./controls.ts";
 export type DialogPurpose = "restore" | "cancellation" | "routine";
 export type DialogLayout = "default" | "checkout";
 export type DestructivePurpose = Exclude<DialogPurpose, "routine">;
-export type CheckoutPresentation = { frameRef: RefCallback<HTMLDivElement>; ready: boolean };
+export type CheckoutPresentation = { frameRef: RefCallback<HTMLDivElement>; ready: boolean; closing?: boolean; onBack?: () => void };
 export type ConfirmationDialogProps = {
   open: boolean;
   purpose: DialogPurpose;
@@ -161,7 +161,12 @@ function DialogFrame({
       const current = currentDialog(owner);
       const replacement = [...owner.querySelectorAll<HTMLElement>('[role="dialog"]')]
         .some((node) => node !== container && node.isConnected);
-      if (kind !== "persisted-sale" && (current === previousDialogRef.current || (current !== container && !replacement))) restore(invokerRef.current);
+      // A checkout replacement can be connected before its passive effect registers
+      // ownership. Do not restore Cobrar in that gap (both current/previous may be
+      // null). Ordinary checkout retirement and all default callers keep their policy.
+      const checkoutReplacement = !!presentation && replacement;
+      if (kind !== "persisted-sale" && !checkoutReplacement
+        && (current === previousDialogRef.current || (current !== container && !replacement))) restore(invokerRef.current);
       dialogs.delete(container);
       if (!container.isConnected) {
         invokerRef.current = null;
@@ -178,6 +183,7 @@ function DialogFrame({
       id: dialogId ?? (purpose === "routine" ? "checkout-dialog" : undefined),
       ref: attachFrame, role: "dialog", tabIndex: -1,
       "data-ui-checkout-opening": !ready || undefined,
+      "data-ui-checkout-closing": presentation?.closing || undefined,
       "aria-modal": "true", "aria-labelledby": titleId, "aria-describedby": descriptionId,
       "aria-busy": pending || undefined,
       "data-ui-confirmation-dialog": kind === "confirmation" && purpose !== "routine" || undefined,
@@ -204,11 +210,13 @@ export function ConfirmationDialog({
   if (!(typeof description === "string" && description.trim()) && !isValidElement(description)) {
     throw new TypeError("ConfirmationDialog requires a valid description");
   }
+  const onBack = purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog"
+    ? checkoutPresentation?.onBack ?? onCancel : onCancel;
   return createElement(DialogFrame, {
     open, purpose, layout, title, description, pending, initialFocusRef, invokerRef, checkoutPresentation, dialogId, dialogDataAttribute,
     kind: "confirmation", onCancel, children,
     actions: createElement("div", { "data-ui-dialog-actions": true },
-      createElement(Action, { variant: "secondary", disabled: pending, onClick: () => { if (!pending) onCancel(); } }, "Volver"),
+      createElement(Action, { variant: "secondary", disabled: pending, onClick: () => { if (!pending) onBack(); } }, "Volver"),
       createElement(Action, { variant: purpose === "routine" ? "primary" : "destructive", pending, pendingLabel, disabled: confirmDisabled, onClick: () => { if (!pending && !confirmDisabled) onConfirm(); } }, confirmLabel)),
   });
 }

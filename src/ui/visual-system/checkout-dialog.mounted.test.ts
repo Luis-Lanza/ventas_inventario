@@ -7,6 +7,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CheckoutDialog } from "./checkout-dialog.ts";
+import { PersistedSaleDialog } from "./confirmation-dialog.ts";
 
 const style = document.createElement("style");
 style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
@@ -103,6 +104,107 @@ for (const mode of ["initial", "changed", "invalid", "exception"] as const) {
     assert.equal(screen.getByRole("dialog").hasAttribute("data-ui-checkout-opening"), false);
     assert.equal(document.activeElement, first.current);
     assert.equal(focused, 1);
+  });
+}
+
+for (const reason of ["complete", "denied", "pending", "Escape", "initial-reduce", "mid-reduce", "replacement", "reopen", "unmount"] as const) {
+  test(`Volver presentation ${reason} respects cancellation, ownership and epoch isolation`, (t) => {
+    const trigger = opener();
+    t.after(() => trigger.remove());
+    let matches = reason === "initial-reduce";
+    const media = new window.EventTarget();
+    Object.defineProperty(media, "matches", { get: () => matches });
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: () => media });
+    t.after(() => Reflect.deleteProperty(window, "matchMedia"));
+    t.mock.method(HTMLElement.prototype, "getBoundingClientRect", () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect));
+    const completions: Array<() => void> = [];
+    t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
+    let cancels = 0, confirms = 0, restored = 0;
+    trigger.addEventListener("focus", () => { restored++; });
+    const reports: boolean[] = [];
+    const initialFocusRef = createRef<HTMLInputElement>();
+    const opening = { id: 1, trigger, rect: { left: 700, top: 500, width: 180, height: 40 }, radius: "20px", surface: { backgroundColor: "white", borderColor: "black", boxShadow: "none" } };
+    let rendered: ReturnType<typeof render>;
+    let props: Parameters<typeof CheckoutDialog>[0] = {
+      open: true, opening, title: "Revisar y cobrar", description: "Revisá la venta.", confirmLabel: "Confirmar venta", invokerRef: { current: trigger }, initialFocusRef,
+      pending: reason === "pending",
+      onClosingChange: (value) => reports.push(value),
+      onCancel: () => {
+        cancels++;
+        if (reason === "denied") return false;
+        props = { ...props, open: false, opening: null };
+        rendered.rerender(createElement("div", null, createElement(CheckoutDialog, props)));
+        return true;
+      },
+      onConfirm: () => { confirms++; },
+      children: createElement("div", { "data-ui-sales-checkout": true }, createElement("input", { ref: initialFocusRef, "aria-label": "Precio" })),
+    };
+    rendered = render(createElement("div", null, createElement(CheckoutDialog, props)));
+    if (!matches) act(() => completions.at(-1)!());
+    const frame = screen.getByRole("dialog");
+    const price = screen.getByRole("textbox", { name: "Precio" });
+    fireEvent.click(frame.parentElement!); // Backdrop is inert in every phase.
+    assert.equal(cancels, 0);
+    if (reason === "Escape") fireEvent.keyDown(frame, { key: "Escape" });
+    else fireEvent.click(screen.getByRole("button", { name: "Volver" }));
+    if (reason === "denied" || reason === "pending") {
+      assert.equal(cancels, reason === "denied" ? 1 : 0);
+      assert.ok(screen.getByRole("dialog") === frame);
+      assert.equal(frame.hasAttribute("data-ui-checkout-closing"), false);
+      assert.equal(completions.length, 1);
+      assert.deepEqual(reports, []);
+      return;
+    }
+    assert.equal(cancels, 1);
+    if (reason === "initial-reduce" || reason === "Escape") {
+      assert.equal(screen.queryByRole("dialog"), null);
+      assert.equal(completions.length, reason === "Escape" ? 1 : 0);
+      assert.equal(restored, 1);
+      return;
+    }
+    assert.ok(screen.getByRole("dialog") === frame);
+    assert.equal(getComputedStyle(price).visibility, "hidden");
+    assert.notEqual(getComputedStyle(price).display, "none");
+    assert.equal(price.style.transform, "");
+    assert.ok(document.activeElement === frame);
+    assert.equal(restored, 0);
+    const oldCompletion = completions.at(-1)!;
+    fireEvent.click(frame.querySelector('[data-ui-dialog-actions] button:last-child')!);
+    fireEvent.click(frame.querySelector('[data-ui-dialog-actions] button')!);
+    fireEvent.keyDown(frame, { key: "Escape" });
+    assert.deepEqual([cancels, confirms], [1, 0]);
+    if (reason === "replacement") {
+      props = { ...props, retire: true, children: createElement("p", null, "Replaced") };
+      rendered.rerender(createElement("div", null,
+        createElement(CheckoutDialog, props), createElement(PersistedSaleDialog, { onNewSale() {} })));
+      const receipt = screen.getByRole("dialog", { name: "Venta confirmada" });
+      assert.equal(document.querySelectorAll('[role="dialog"]').length, 1);
+      assert.ok(receipt.contains(document.activeElement));
+      const receiptFocus = document.activeElement;
+      act(() => oldCompletion());
+      assert.ok(document.activeElement === receiptFocus);
+      assert.equal(restored, 0, "receipt replacement must not restore the checkout invoker");
+      assert.equal(cancels, 1);
+      return;
+    } else if (reason === "reopen") {
+      props = { ...props, open: true, opening: { ...opening, id: 2 } };
+      rendered.rerender(createElement("div", null, createElement(CheckoutDialog, props)));
+      act(() => oldCompletion());
+      assert.equal(screen.getByRole("dialog").hasAttribute("data-ui-checkout-opening"), true);
+      assert.equal(restored, 0);
+      act(() => completions.at(-1)!());
+      assert.ok(document.activeElement === price);
+      return;
+    } else if (reason === "unmount") rendered.unmount();
+    else if (reason === "mid-reduce") act(() => { matches = true; media.dispatchEvent(new Event("change")); });
+    else act(() => oldCompletion());
+    assert.equal(screen.queryByRole("dialog"), null);
+    const focusAtRetirement = document.activeElement;
+    act(() => { oldCompletion(); matches = false; media.dispatchEvent(new Event("change")); });
+    assert.equal(cancels, 1);
+    assert.ok(document.activeElement === focusAtRetirement, "stale completion never restores focus again");
+    assert.equal(restored, 1);
+    if (reason !== "unmount") assert.deepEqual(reports, [true, false]);
   });
 }
 

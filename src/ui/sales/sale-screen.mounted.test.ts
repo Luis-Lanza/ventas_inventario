@@ -119,6 +119,69 @@ test("checkout captures the clicked button before session opening; navigation re
   assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Precio de venta (Bs)" }));
 });
 
+test("Volver cancels business immediately but retains one actual frame and focus until presentation retirement", async (t) => {
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
+  const session = createSaleSession(() => UUID);
+  const completions: Array<() => void> = [];
+  t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect));
+  render(createElement(SaleScreen, { session }));
+  fireEvent.click(await screen.findByRole("button", { name: "Agregar" }));
+  const trigger = screen.getByRole("button", { name: "Revisar y cobrar" });
+  trigger.focus(); fireEvent.click(trigger);
+  act(() => completions[0]());
+  const frame = screen.getByRole("dialog");
+  fireEvent.change(screen.getByRole("textbox", { name: "Efectivo recibido" }), { target: { value: "100" } });
+  const before = session.getSnapshot();
+  fireEvent.click(screen.getByRole("button", { name: "Volver" }));
+  assert.equal(session.getSnapshot().checkoutOpen, false);
+  assert.deepEqual(session.getSnapshot().lines, before.lines);
+  assert.deepEqual(session.getSnapshot().payment, before.payment);
+  assert.ok(screen.getByRole("dialog") === frame, "same actual frame survives business cancellation");
+  assert.equal(document.querySelectorAll('[role="dialog"]').length, 1);
+  assert.equal(trigger.getAttribute("aria-expanded"), "true");
+  assert.equal((trigger as HTMLButtonElement).disabled, false, "closing preserves the real source's enabled surface");
+  assert.equal(document.querySelector('[data-ui-sale-layout]')?.hasAttribute("inert"), true);
+  assert.equal(getComputedStyle(trigger).opacity, "0");
+  assert.ok(document.activeElement === frame, "DialogFrame owns closing focus");
+  assert.equal(frame.hasAttribute("data-ui-checkout-closing"), true);
+  for (const shiftKey of [true, false]) { fireEvent.keyDown(frame, { key: "Tab", shiftKey }); assert.ok(document.activeElement === frame, "closing Tab stays on frame"); }
+  fireEvent.click(frame.querySelector('[data-ui-dialog-actions] button:last-child')!);
+  fireEvent.click(frame.querySelector('[data-ui-dialog-actions] button')!);
+  fireEvent.click(trigger);
+  assert.equal(session.getSnapshot().checkoutOpen, false);
+  assert.equal(session.getSnapshot().confirmation, before.confirmation);
+  act(() => completions.at(-1)!());
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(trigger.getAttribute("aria-expanded"), "false");
+  assert.notEqual(getComputedStyle(trigger).opacity, "0");
+  assert.ok(document.activeElement === trigger, "retirement restores invoker focus");
+  assert.deepEqual(session.getSnapshot().payment, before.payment);
+});
+
+test("nested checkout detail refuses Volver without cancelling or starting reverse presentation", async (t) => {
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
+  const session = createSaleSession(() => UUID);
+  const completions: Array<() => void> = [];
+  t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect));
+  render(createElement(SaleScreen, { session }));
+  fireEvent.click(await screen.findByRole("button", { name: "Agregar" }));
+  fireEvent.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
+  act(() => completions[0]());
+  const checkout = screen.getByRole("dialog");
+  fireEvent.click(within(checkout).getByRole("button", { name: "Ver detalles" }));
+  const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
+  fireEvent.click(within(checkout).getByRole("button", { name: "Volver" }));
+  assert.equal(session.getSnapshot().checkoutOpen, true);
+  assert.equal(checkout.hasAttribute("data-ui-checkout-closing"), false);
+  assert.equal(completions.length, 1);
+  assert.ok(detail.contains(document.activeElement));
+  fireEvent.keyDown(detail, { key: "Escape" });
+  assert.equal(session.getSnapshot().checkoutOpen, true);
+  assert.equal(screen.queryByRole("dialog", { name: "Filtro aceite" }), null);
+});
+
 for (const [radius, width, expected] of [["6px", 210, "6px"], ["999px", 32, "16px"]] as const) {
   test(`used source radius ${expected} and cancel restoration do not depend on tween completion`, async (t) => {
     mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);

@@ -1,10 +1,10 @@
-import { createElement, type FormEvent, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { createElement, useCallback, type FormEvent, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { browseSalesProducts, catalogProductImageCommands, type SalesBrowseProduct } from "../../commands/catalog.ts";
 import { confirmSale, type ConfirmSaleRequest, type ConfirmSaleResponse } from "../../commands/confirm-sale.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
-import type { CheckoutOpening } from "../visual-system/checkout-motion.ts";
+import { captureCheckoutOpening, type CheckoutOpening } from "../visual-system/checkout-motion.ts";
 import { CheckoutDialog } from "../visual-system/checkout-dialog.ts";
 import { draftLineSubtotalCentavos, draftTotalCentavos, draftTotalUnits, effectiveDraftUnitPriceCentavos, formatBs } from "./sale-flow.ts";
 import { createSaleSession, type SaleSession, type SaleSessionEdit } from "./sale-session.ts";
@@ -24,24 +24,20 @@ export function SaleScreen(props: SaleScreenProps) {
   const { routineOutcome, paymentErrors, checkoutOpen } = state;
   const [checkoutOpening, setCheckoutOpening] = useState<CheckoutOpening | null>(null);
   const openingSequence = useRef(0);
+  const closingRef = useRef(false);
+  const [checkoutClosing, setCheckoutClosing] = useState(false);
+  const closingChanged = useCallback((closing: boolean) => {
+    closingRef.current = closing;
+    setCheckoutClosing(closing);
+  }, []);
   const setCheckoutOpen = (open: boolean) => {
     if (!open) setCheckoutOpening(null);
     return session.edit({ type: "checkout_changed", open });
   };
   useEffect(() => { if (!checkoutOpen) setCheckoutOpening(null); }, [checkoutOpen]);
   const openCheckout = (event: { currentTarget: HTMLButtonElement }) => {
-    const trigger = event.currentTarget;
-    const rect = trigger.getBoundingClientRect();
-    const style = trigger.ownerDocument.defaultView?.getComputedStyle(trigger);
-    const computedRadius = style?.borderRadius ?? "0px";
-    // This project uses a uniform px pill. Tween its used radius (24px at 48px high),
-    // not 999px, which would stay clamped then suddenly change near the end.
-    const radius = /^\d+(?:\.\d+)?px$/.test(computedRadius)
-      ? `${Math.min(Number.parseFloat(computedRadius), rect.width / 2, rect.height / 2)}px` : computedRadius;
-    const candidate = Object.freeze({ id: ++openingSequence.current, trigger,
-      rect: Object.freeze({ left: rect.left, top: rect.top, width: rect.width, height: rect.height }), radius,
-      surface: Object.freeze({ backgroundColor: style?.backgroundColor ?? "transparent",
-        borderColor: style?.borderColor ?? "transparent", boxShadow: style?.boxShadow ?? "none" }) });
+    if (closingRef.current) return;
+    const candidate = captureCheckoutOpening(event.currentTarget, ++openingSequence.current);
     setCheckoutOpening(candidate);
     if (!setCheckoutOpen(true)) setCheckoutOpening(null);
   };
@@ -59,7 +55,7 @@ export function SaleScreen(props: SaleScreenProps) {
   const checkoutDetailTriggerRef = useRef<HTMLElement | null>(null);
   const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null), checkoutInitialFocusRef = useRef<HTMLInputElement>(null), checkoutTriggerRef = useRef<HTMLButtonElement>(null);
   const searchSequence = useRef(0), browseThumbnailAttempt = useRef(0), browserRef = useRef(browser), mounted = useRef(true), focusSearchOnDraftMount = useRef(false);
-  const locked = () => session.getSnapshot().confirmation === "pending";
+  const locked = () => closingRef.current || session.getSnapshot().confirmation === "pending";
   browserRef.current = browser;
   useEffect(() => {
     mounted.current = true;
@@ -100,7 +96,7 @@ export function SaleScreen(props: SaleScreenProps) {
     focusSearchOnDraftMount.current = false;
     searchInput.focus();
   }, [persistedDetails]);
-  const draftDispatch = (action: SaleSessionEdit) => session.edit(action);
+  const draftDispatch = (action: SaleSessionEdit) => !closingRef.current && session.edit(action);
 
   async function browsePage(query: string, category_id: number | null, page: number) {
     const attempt = Math.max(++searchSequence.current, browser.request_id + 1);
@@ -122,6 +118,7 @@ export function SaleScreen(props: SaleScreenProps) {
   }
 
   async function confirm() {
+    if (closingRef.current) return;
     const attempt = session.beginConfirmation();
     if (attempt.kind === "blocked") return;
     if (attempt.kind === "validation") {
@@ -150,7 +147,7 @@ export function SaleScreen(props: SaleScreenProps) {
   const total = formatBs(draftTotalCentavos(state.lines));
   const totalUnits = draftTotalUnits(state.lines);
   const lineCount = `${state.lines.length} ${state.lines.length === 1 ? "línea" : "líneas"}`;
-  const pending = state.confirmation === "pending";
+  const pending = state.confirmation === "pending" || checkoutClosing;
   const addProduct = (product: SalesBrowseProduct) => draftDispatch({ type: "add_product", product });
   const cartItems = state.lines.map((line, index) => createElement("li", { key: line.product_id, "data-ui-sale-cart-row": true, "data-ui-sales-checkout-item": true },
     createElement("div", { "data-ui-sale-cart-primary": true },
@@ -205,7 +202,7 @@ export function SaleScreen(props: SaleScreenProps) {
     createElement("header", { "data-ui-sale-header": true },
       createElement("h1", { id: "sale-heading" }, "Ventas"),
       createElement("p", null, "Búsqueda y venta de productos en mostrador")),
-    createElement("div", { "data-ui-sale-layout": true },
+    createElement("div", { "data-ui-sale-layout": true, inert: checkoutClosing ? "" : undefined },
       createElement("section", { "aria-label": "Catálogo de productos", "data-ui-panel": true, "data-ui-sales-catalog": true },
         createElement(ProductBrowser<SalesBrowseProduct>, { state: browser, presentation: "sales", salesViewMode, onSalesViewModeChange: (mode) => { setSalesViewMode(mode); writeSalesViewMode(mode); }, thumbnails: browseThumbnails, loadSalesOriginal: catalogProductImageCommands.salesOriginal, loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: addProduct, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
       createElement(Panel, { label: "Resumen de venta" } as never,
@@ -221,12 +218,12 @@ export function SaleScreen(props: SaleScreenProps) {
             createElement("p", { "data-ui-quantity": true }, `Cantidad de unidades: ${totalUnits}`),
             createElement("p", { "data-ui-money": true }, `Subtotal: ${total}`),
             createElement("p", { "data-ui-type": "total" }, `Total: ${total}`)),
-          createElement("button", { ref: checkoutTriggerRef, type: "button", "data-ui-action": "primary", "aria-controls": "checkout-dialog", "aria-expanded": checkoutOpen, disabled: pending || state.lines.length === 0, onClick: openCheckout } , "Revisar y cobrar")))),
+          createElement("button", { ref: checkoutTriggerRef, type: "button", "data-ui-action": "primary", "aria-controls": "checkout-dialog", "aria-expanded": checkoutOpen || checkoutClosing, disabled: state.confirmation === "pending" || state.lines.length === 0, onClick: openCheckout } , "Revisar y cobrar")))),
     persistedDetails ? createElement(PersistedSaleSummaryView, { details: persistedDetails, onNewSale: () => {
       if (!draftDispatch({ type: "new_sale" })) return;
       focusSearchOnDraftMount.current = true;
       setCheckoutDetail(null);
       void browsePage("", null, 1);
     } }) : null,
-    createElement(CheckoutDialog, { opening: checkoutOpening, invokerRef: checkoutTriggerRef, open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending, confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => { if (!checkoutDetail && !pending && !locked()) setCheckoutOpen(false); }, onConfirm: confirm, children: checkoutContent }));
+    createElement(CheckoutDialog, { opening: checkoutOpening, retire: !!persistedDetails, onClosingChange: closingChanged, invokerRef: checkoutTriggerRef, open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending: state.confirmation === "pending", confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => !checkoutDetail && !pending && !locked() && setCheckoutOpen(false), onConfirm: confirm, children: checkoutContent }));
 }
