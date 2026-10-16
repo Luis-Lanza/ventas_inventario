@@ -133,8 +133,9 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
       createElement("h1", { id: "inventory-heading" }, "Inventario"),
       createElement("p", null, inventoryScreenDescription)),
     createElement("div", { "data-ui-inventory-layout": true },
-      createElement(Panel, { label: "Operación de inventario" } as never,
-        !state.product && browser.status === "results" ? createElement("p", { "data-ui-inventory-intro": true }, "Seleccioná un producto para comenzar.") : null,
+      createElement(state.product ? Panel : "section", (state.product
+        ? { label: "Operación de inventario" }
+        : { "data-ui-panel": true, "aria-label": "Operación de inventario" }) as never,
         !state.product ? createElement(ProductBrowser<InventoryBrowseProduct>, { state: browser, presentation: "inventory", inventoryViewMode: viewMode, onInventoryViewModeChange: setViewMode, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage, onSelect: (product) => { setCatalogPassword(""); dispatch(catalog.select(product)); }, actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending }) as never : null,
         state.product ? createElement("div", { "data-ui-inventory-operation": true, "aria-busy": pending || undefined },
           createElement("div", { "data-ui-inventory-selection": true },

@@ -247,7 +247,9 @@ test("automatically loads active products and keeps a short result in the explic
   await screen.findByRole("list", { name: "Resultados del catálogo" });
   assert.equal(screen.getByRole("main").hasAttribute("data-ui-density"), false);
   const operation = screen.getByRole("region", { name: "Operación de inventario" });
-  const browser = within(operation).getByLabelText("Buscar producto").closest("form")!.parentElement!;
+  const browser = within(operation).getByLabelText("Buscar producto").closest("[data-ui-product-browser]")!;
+  assert.equal(within(operation).getAllByRole("heading", { name: "Operación de inventario" }).length, 1);
+  assert.equal(within(operation).getAllByText("Seleccioná un producto para comenzar.").length, 1);
   assert.equal(browser.getAttribute("data-ui-product-browser"), "inventory");
   const results = within(operation).getByRole("list", { name: "Resultados del catálogo" }).parentElement!;
   assert.equal(results.getAttribute("data-ui-catalog-results"), "true");
@@ -293,7 +295,7 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
   const list = within(operation).getByRole("list", { name: "Resultados del catálogo" });
   const results = list.parentElement!;
-  assert.equal(results.previousElementSibling?.tagName, "FORM");
+  assert.equal(results.previousElementSibling?.getAttribute("data-ui-inventory-toolbar"), "true");
   assert.equal(results.getAttribute("role"), "region");
   assert.equal(results.getAttribute("aria-label"), "Productos de inventario");
   assert.equal(results.tabIndex, 0);
@@ -326,7 +328,7 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.match(css, /\[data-ui-product-browser="inventory"\] \[data-ui-badge\] \{[^}]*white-space:\s*normal/);
 });
 
-test("keeps the browse controls and presentation toggle in submit order with the existing layout guards", async () => {
+test("keeps presentation in the header and browse fields in submit order with wrapping guards", async () => {
   mockIPC((command) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
     if (command === "browse_products_command") return browse();
@@ -335,14 +337,17 @@ test("keeps the browse controls and presentation toggle in submit order with the
   render(createElement(InventoryScreen));
   const operation = screen.getByRole("region", { name: "Operación de inventario" });
   const form = within(operation).getByRole("searchbox", { name: "Buscar producto" }).closest("form")!;
-  assert.deepEqual([...form.children].map((child) => child.tagName === "BUTTON" ? child.textContent?.trim() : child.getAttribute("aria-label") ?? child.querySelector("label")?.textContent), ["Buscar producto", "Categoría", "Estado del stock", "Presentación de inventario", "Buscar"]);
+  assert.deepEqual([...form.children].map((child) => child.tagName === "BUTTON" ? child.textContent?.trim() : child.getAttribute("aria-label") ?? child.querySelector("label")?.textContent), ["Buscar producto", "Categoría", "Estado del stock", "Buscar"]);
+  const toggle = within(operation).getByRole("group", { name: "Presentación de inventario" });
+  assert.equal(toggle.closest("form"), null);
+  assert.equal(toggle.closest("header")?.parentElement, form.parentElement);
   assert.equal((within(form).getByRole("button", { name: "Buscar" }) as HTMLButtonElement).type, "submit");
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] \{ container: inventory-browse \/ inline-size; \}/);
   assert.match(css, /\[data-ui-inventory-toolbar\] :is\(input, select, button\) \{ min-inline-size: 0; max-inline-size: 100%/);
   // Structural fallback only: jsdom cannot measure geometry or prove no clipping.
-  assert.match(css, /\[data-ui-product-browser="inventory"\] > \[data-ui-inventory-toolbar\] \{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
-  assert.match(css, /@container inventory-browse \(min-width: 46rem\)[\s\S]*\[data-ui-inventory-toolbar\] > \[data-ui-action\] \{ grid-column: 4; grid-row: 1/);
+  assert.match(css, /\[data-ui-inventory-toolbar\] > form \{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(css, /@container inventory-browse \(min-width: 46rem\)[\s\S]*\[data-ui-inventory-toolbar\] > form \{[^}]*grid-template-columns: minmax\(0, 1\.8fr\) repeat\(2, minmax\(0, 1fr\)\) auto/);
   assert.match(css, /\[data-ui-product-browser="inventory"\] \[data-ui-action\] \{[^}]*min-block-size: var\(--size-control-default\)/);
 });
 

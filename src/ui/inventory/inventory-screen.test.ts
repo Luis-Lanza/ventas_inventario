@@ -25,6 +25,15 @@ test("Inventory CSS separates browse surfaces, fixes gallery tracks and preserve
   assert.doesNotMatch(css, /\[data-ui-inventory[^}]*\{[^}]*(?:animation:|transition:)/);
 });
 
+test("Inventory toolbar and alerts use rounded Sales-family surfaces without changing operation panels", async () => {
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-product-browser="inventory"\] > \[data-ui-inventory-toolbar\] \{[^}]*gap: var\(--space-4\);[^}]*padding: var\(--space-4\);[^}]*border: 1px solid var\(--color-border\);[^}]*border-radius: 32px;[^}]*background: var\(--color-surface\)/);
+  assert.match(css, /\[data-ui-inventory-toolbar\] > header \{[^}]*flex-wrap: wrap;[^}]*padding-block-end: var\(--space-3\);[^}]*border-block-end: 1px solid var\(--color-border\)/);
+  assert.match(css, /\[data-ui-inventory-layout\] > \[data-ui-panel\]:last-child \{ border-radius: 32px; \}/);
+  assert.match(css, /--radius-panel:\s*8px/);
+  assert.doesNotMatch(css, /\[data-ui-inventory-toolbar\] > \[data-ui-(?:field|action|inventory-view-toggle)\]/);
+});
+
 test("describes stock entry and physical-count workflows for accessible navigation", () => {
   assert.match(inventoryScreenDescription, /entrada de stock/i);
   assert.match(inventoryScreenDescription, /conteo físico/i);

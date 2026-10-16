@@ -9,7 +9,7 @@ Implement the Inventory listing only, following the approved Velay mockups and a
 - No modal, stock-flow, IPC, Rust, schema, thumbnail loading or Sales/Catalog behavior changes.
 - Use placeholders because Inventory browse DTO lacks image metadata.
 - Preserve keyboard focus, reduced-motion support and visible loading/error/empty states. No search-triggered entrance animation; no speculative GSAP checkout adapter reuse.
-- User explicitly authorized committing and pushing to `feat/inventory-listing-parity`. PR and merge remain unauthorized.
+- User explicitly authorized committing and pushing the initial delivery to `feat/inventory-listing-parity`. PR and merge remain unauthorized. After Windows screenshots, user authorized the toolbar/alerts visual correction only; do not assume a new push authorization.
 
 ## Route and review workload
 Branch: `feat/inventory-listing-parity` (clean `master` at start).
@@ -21,6 +21,9 @@ Delivery strategy: ask-on-risk; no PR requested. Resolve oversized delivery stra
 - [x] T1 — Add controlled Inventory table/gallery presentation and screen state with behavior tests. **Verified; work-unit commit `8774c47`**. Retain other browser presentations and all request/selection contracts.
 - [x] T2 — Integrate Inventory-scoped Sales-family styling and viewport behavior. **Verified; work-unit commit `8774c47`**. Shared toolbar on ivory, independent rows/cards, responsive gallery, bounded scrolling with persistent controls, unchanged operation surface.
 - [x] T3 — Verify interaction regressions and candidate review. **Automated verification and native review complete; Windows visual acceptance pending**. Focused/full checks, typecheck, build and native review when offered; disclose Windows/browser visual checks not performed.
+
+- [x] T4 — Correct toolbar composition and alerts geometry from Windows feedback. **Implemented and writer checks passed; no commit authorized**. Delegate one bounded writer: Inventory-only heading/toggle header, divider and broad search/filter form in rounded light panel; outlined active toggle matching accepted screenshot; alerts radius 32px. Results remain independent and inline operations unchanged.
+- [x] T5 — Verify corrected visual contracts and regressions. **Automated checks and native review complete; Windows visual acceptance pending**. Full tests, typecheck/build, native review and honest rendered-Windows validation limitation.
 
 ## Acceptance and verification
 Agreed user-facing seams: rendered ProductBrowser controls and mounted Inventory screen interactions, preserving existing Sales/Catalog mounted contracts.
@@ -47,5 +50,21 @@ Commands:
 - Remaining warnings: expected invalid-dialog React diagnostics and existing test diagnostics; mixed static/dynamic Tauri imports and build bundle >500 kB. No failed automated checks remain. User authorized commit and push to the feature branch. The cohesive implementation unit includes behavior, styling and regression tests. Implementation work-unit commit: `8774c47` (`feat(inventory): align table and gallery with Sales design`), including tests and tracking document; 363 source/test diff lines, 414 including passive task documentation. PR/merge not authorized.
 - Windows/native/browser geometry verification remains pending; this Linux session has no established browser automation or controlled IPC fixtures.
 
+## Windows correction scope and evidence
+Windows screenshots rejected the original search composition and alert corners: `/tmp/screenshot-2026-10-15_20-26-05.png` (Inventory), `/tmp/screenshot-2026-10-15_20-26-10.png` (accepted Sales reference). Initial automated checks remain valid but do not establish visual acceptance.
+User authorized both corrections. Preserve initial completed tasks; append T4/T5 rather than claiming the previous visual match was accepted.
+Route: delegated writer (non-trivial multi-file markup/CSS/tests), single writer. Correction forecast: approximately 150–250 authored lines; preserve readable code/tests without size-only reductions. No new animations or behavior.
+- Inventory-only toolbar wrapper contains header (one heading/intro and view group), divider, existing form with search/category/stock/submit. Toggle is outside form; results/pagination outside toolbar.
+- Surface/border/padding match Sales family; panel and alerts radius 32px, capsules 999px. Outlined active Inventory toggle follows supplied screenshot; current Sales source differs, so do not change Sales selectors or tests.
+- Preserve accessible section names, keyboard focus, request counts, filters/page, result scroll containment and operation reset.
+- Verify DOM and CSS cascade structurally; do not claim actual browser geometry from jsdom.
+
+## Correction implementation evidence
+- Writer `mva8hmtq-9-25lj`: seven allowed source/test files, +115/-26 (141 authored lines), no scope expansion. Parent spot-checked header/form ownership and browse-only accessible section diff.
+- Observed RED: missing toolbar heading then rounded surface contracts. GREEN: focused 116/116, full 692/692 (zero skipped), test typecheck, production build82 modules and diff check pass.
+- No new warning categories; existing React/SSR/localStorage/invalid-dialog and build mixed-import/chunk-size diagnostics remain.
+- Assessment: medium risk, large runtime writer; writer self-verification stands, no separate verifier required. Native reliability review `review-e85fe1f5f1ff8643` approved and exact acknowledgement returned authority burned for target `sha256:5a1869a29cd80f91ea8163dd78742868c4abbd5c9ade2667beed449c757fc03a` (163 diff lines including task tracking). No further bound STATUS.
+- No source writes in flight. No staging, commits or push. Windows rendering/geometry remains unverified.
+
 ## Next step
-User visual/functional acceptance on Windows: compare both modes with Sales, desktop/narrow/short windows, dense/sparse results, keyboard focus and alert access. Modal remains deferred, with dirty dismissal and post-save destination unresolved. Commit and feature-branch push authorized; PR/merge require separate authorization. Parent owns this task document and its Engram mirror.
+Correction is implemented and automatically verified; request explicit commit/push authorization to deliver it for matching Windows screenshots and visual acceptance. Do not claim visual parity is accepted yet. Modal remains deferred. Parent owns this task document and its Engram mirror.

@@ -60,6 +60,55 @@ function styleOf(element: Element, property: string) {
   return value;
 }
 
+for (const mode of ["table", "gallery"] as const) {
+  for (const forced of [false, true]) {
+    test(`Inventory ${mode} has an outlined active view and rounded alerts${forced ? " in forced colors" : ""} (cascade only)`, async () => {
+      const style = await mountBaseStyles();
+      try {
+        if (forced) activateForcedColors(style);
+        render(createElement("div", null,
+          createElement("div", { "data-ui-inventory-layout": true },
+            createElement("section", { "data-ui-panel": true },
+              createElement(ProductBrowser, { presentation: "inventory", inventoryViewMode: mode,
+                state: initialProductBrowserState, onQueryChange() {}, onCategoryChange() {},
+                onStockStateChange() {}, onSubmit() {}, onPageChange() {} })),
+            createElement("section", { "data-ui-panel": true, "aria-label": "Alertas de stock" })),
+          createElement("section", { "data-ui-panel": true, "aria-label": "Otro panel" })));
+        const toolbar = document.querySelector("[data-ui-inventory-toolbar]")!;
+        assert.equal(styleOf(toolbar, "border-radius"), "32px");
+        assert.equal(styleOf(toolbar, "background"), "#fffcf7");
+        // Padding geometry is covered by the source contract; jsdom does not
+        // reliably apply variable-valued padding shorthands over reset rules.
+        assert.equal(styleOf(toolbar, "gap"), "16px");
+        assert.equal(styleOf(toolbar, "flex-shrink"), "0");
+        const header = toolbar.querySelector("header")!;
+        assert.equal(styleOf(header, "border-block-end"), "1px solid var(--color-border)");
+        assert.equal(styleOf(header, "flex-wrap"), "wrap");
+        for (const control of toolbar.querySelectorAll("input, select")) {
+          assert.equal(styleOf(control, "border-radius"), "999px");
+          assert.equal(styleOf(control, "background"), "#fff");
+        }
+        const active = screen.getByRole("button", { name: mode === "table" ? "Vista de tabla" : "Vista de galería" });
+        assert.equal(styleOf(active, "background"), "#fffcf7");
+        // jsdom cannot resolve variable-valued color declarations reliably.
+        // Match the rendered active node against the stylesheet in source order.
+        const declarations = Array.from(style.sheet!.cssRules).filter((rule): rule is CSSStyleRule =>
+          rule.type === 1 && active.matches((rule as CSSStyleRule).selectorText));
+        for (const property of ["color", "border-color"]) {
+          assert.equal(declarations.filter(rule => rule.style.getPropertyValue(property)).at(-1)?.style.getPropertyValue(property).toLowerCase(), forced && property === "border-color" ? "canvastext" : "var(--color-action)");
+        }
+        assert.equal(styleOf(active, "border-radius"), "999px");
+        if (forced) {
+          assert.equal(styleOf(active, "outline").toLowerCase(), "2px solid highlight");
+          assert.equal(styleOf(active, "outline-offset"), "-4px");
+        }
+        assert.equal(styleOf(screen.getByRole("region", { name: "Alertas de stock" }), "border-radius"), "32px");
+        assert.equal(styleOf(screen.getByRole("region", { name: "Otro panel" }), "border-radius"), "8px");
+      } finally { style.remove(); }
+    });
+  }
+}
+
 test("only the expanded Sales checkout source loses paint without layout or focus suppression", async () => {
   const style = await mountBaseStyles();
   try {
