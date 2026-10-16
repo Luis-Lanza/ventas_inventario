@@ -153,6 +153,7 @@ export interface ProductBrowserProps<T extends ProductBrowserProduct = ProductBr
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onPageChange: (page: number) => void;
   onSelect?: (product: T) => void;
+  onInventorySelect?: (product: T, opener: HTMLButtonElement) => void;
   actionLabel?: string;
   searchLabel?: string;
   initialMessage?: string;
@@ -224,11 +225,14 @@ export function ProductBrowser<T extends ProductBrowserProduct>(props: ProductBr
     page && state.status !== "error" && page.products.length ? createElement("div", catalogPresentation && !galleryPresentation ? { "data-ui-catalog-table-scroll": true, role: "region", tabIndex: 0, "aria-label": "Resultados de productos; desplazamiento horizontal disponible" } : { "data-ui-catalog-results": true, "data-ui-inventory-results": inventoryPresentation || undefined, role: inventoryPresentation ? "region" : undefined, tabIndex: inventoryPresentation ? 0 : undefined, "aria-label": inventoryPresentation ? "Productos de inventario" : undefined }, createElement("ul", { "aria-label": "Resultados del catálogo", "data-ui-product-browser-list": true, "data-ui-sale-list": true, "data-ui-inventory-gallery": inventoryGalleryPresentation || undefined, "data-ui-inventory-table": inventoryPresentation && !inventoryGalleryPresentation || undefined, "data-ui-catalog-gallery": galleryPresentation || undefined, "data-ui-catalog-table": catalogPresentation && !galleryPresentation || undefined, "data-ui-sales-gallery": salesGalleryPresentation || undefined, "data-ui-sales-table": salesPresentation && !salesGalleryPresentation || undefined }, page.products.map((product) => {
       const selected = props.disabledProductIds?.has(product.product_id) ?? false;
       const actionText = salesPresentation && selected ? "Agregado" : props.actionLabel ?? "Seleccionar";
-      const action = props.onSelect ? createElement(Action, {
+      const action = (props.onSelect || inventoryPresentation && props.onInventorySelect) ? createElement(Action, {
         variant: "secondary",
         "aria-label": actionText === "Seleccionar" ? `Seleccionar ${product.name} (SKU: ${product.sku})` : undefined,
         disabled: props.disabled || selected || !props.allowUnavailableSelection && product.available_quantity < 1,
-        onClick: () => props.onSelect?.(product),
+        onClick: (event) => {
+          if (inventoryPresentation && props.onInventorySelect) props.onInventorySelect(product, event.currentTarget);
+          else props.onSelect?.(product);
+        },
       }, actionText) : null;
       const thumbnail = props.thumbnails?.[product.product_id];
       const safeThumbnail = thumbnail && thumbnail.length <= 2_796_227 && /^data:image\/jpeg;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(thumbnail) ? createElement("img", { src: thumbnail, alt: product.name, loading: "lazy", "data-ui-product-thumbnail": true }) : null;

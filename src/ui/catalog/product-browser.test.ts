@@ -12,6 +12,24 @@ import { SalesProductDetail, ProductBrowser, createProductBrowserFlow, initialPr
 
 const page = { products: [{ product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 4, catalog_unit_price_centavos: 2500, sale_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, purchase_price_centavos: null, primary_location_code: null, revision: 1, attribute_values: [] } satisfies ProductBrowseResult], categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
 
+test("Inventory selection reports the actual clicked button without changing other selection consumers", async () => {
+  let selected: unknown;
+  let opener: HTMLButtonElement | undefined;
+  let fallback = 0;
+  const view = render(createElement(ProductBrowser, {
+    state: { ...initialProductBrowserState, status: "results", result: page }, presentation: "inventory",
+    onQueryChange() {}, onCategoryChange() {}, onSubmit() {}, onPageChange() {},
+    onSelect() { fallback++; },
+    onInventorySelect(product, button) { selected = product; opener = button; },
+  }));
+  const button = screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" });
+  fireEvent.click(button);
+  assert.equal(selected, page.products[0]);
+  assert.equal(opener, button);
+  assert.equal(fallback, 0);
+  view.unmount();
+});
+
 function browserContractDiagnostics(source: string) {
   const config = ts.readConfigFile("tsconfig.json", ts.sys.readFile);
   assert.equal(config.error, undefined);

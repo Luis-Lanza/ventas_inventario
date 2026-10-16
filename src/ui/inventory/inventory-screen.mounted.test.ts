@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { createElement } from "react";
+import { StrictMode, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { mockIPC as installIPC } from "@tauri-apps/api/mocks";
 import { invoke } from "@tauri-apps/api/core";
@@ -46,6 +46,124 @@ async function searchAndSelect() {
   await user.keyboard("{Enter}");
   return user;
 }
+
+test("selection opens a named modal over the same inert browser; direct dismissal preserves loaded alerts and focus", async () => {
+  let loads = 0;
+  const cues: Array<string | null> = [];
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") { loads++; return { kind: "alerts", alerts: [{ product_id: 2, product_name: "Correa", quantity: 0, classification: "out_of_stock" }] }; }
+    if (command === "browse_products_command") return browse();
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen, { onAlertCueChange: (cue) => cues.push(cue) }));
+  const opener = await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" });
+  const browser = screen.getByRole("searchbox").closest("[data-ui-product-browser]");
+  await userEvent.click(opener);
+  const modal = screen.getByRole("dialog", { name: "Operación de inventario" });
+  assert.equal(browser?.isConnected, true);
+  assert.ok(browser?.closest("[inert]"));
+  assert.ok(within(modal).getByText("Stock actual: 8"));
+  await userEvent.type(within(modal).getByRole("spinbutton"), "4");
+  await userEvent.keyboard("{Escape}");
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(screen.getByRole("searchbox").closest("[data-ui-product-browser]"), browser);
+  assert.equal(document.activeElement, opener);
+  assert.ok(screen.getByText("Correa"));
+  assert.equal(cues.at(-1), "1 alerta de stock");
+  assert.equal(loads, 1);
+  await userEvent.click(opener);
+  assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "");
+  await userEvent.click(screen.getByRole("button", { name: "Nueva operación" }));
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.ok(screen.getByText("Correa"));
+  assert.equal(loads, 1);
+  assert.equal(screen.queryByText(/Operación guardada/), null);
+});
+
+test("StrictMode replay accepts the live browse and save, locks all dismissal, and publishes before alert refresh resolves", async () => {
+  let resolveSave!: (value: ReturnType<typeof success>) => void;
+  let resolveAlerts!: (value: unknown) => void;
+  let saves = 0;
+  let alerts = 0;
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") {
+      alerts++;
+      return alerts <= 2 ? { kind: "alerts", alerts: [] } : new Promise((done) => { resolveAlerts = done; });
+    }
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_stock_entry_command") { saves++; return new Promise((done) => { resolveSave = done; }); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(StrictMode, null, createElement(ActionNotificationProvider, null, createElement(InventoryScreen))));
+  const opener = await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" });
+  await userEvent.click(opener);
+  const modal = screen.getByRole("dialog");
+  await userEvent.type(within(modal).getByRole("spinbutton"), "3");
+  assert.equal(screen.queryByText("Operación guardada. Stock actual: 11."), null);
+  const confirm = within(modal).getByRole("button", { name: "Confirmar operación" });
+  act(() => { fireEvent.click(confirm); fireEvent.click(confirm); });
+  await waitFor(() => assert.equal(saves, 1));
+  assert.equal(modal.getAttribute("aria-busy"), "true");
+  for (const control of modal.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button")) assert.equal(control.disabled, true);
+  await userEvent.keyboard("{Escape}");
+  fireEvent.mouseDown(modal.parentElement!);
+  fireEvent.click(within(modal).getByRole("button", { name: "Nueva operación" }));
+  assert.equal(screen.getByRole("dialog"), modal);
+  assert.equal(screen.queryByText("Operación guardada. Stock actual: 11."), null);
+  await act(async () => resolveSave(success("strict-save")));
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(document.activeElement, opener);
+  assert.ok(screen.getByText("Cargando alertas de stock…"));
+  const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+  assert.ok(within(host).getByText("Operación guardada. Stock actual: 11."));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1);
+  const advisory = "Saldo proyectado desactualizado. Revisá el stock actual.";
+  assert.ok(within(host).getByText(advisory));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="warning"]').length, 1);
+  assert.equal(screen.getAllByText("Operación guardada. Stock actual: 11.").length, 1);
+  assert.equal(screen.getAllByText(advisory).length, 1);
+  assert.equal(document.querySelectorAll('[data-ui-feedback="success"], [data-ui-feedback="advisory"]').length, 0);
+  await act(async () => resolveAlerts({ kind: "error", code: "persistence_failure", message: "private diagnostics" }));
+  assert.ok(within(host).getByText("Operación guardada. Stock actual: 11."));
+  assert.ok(within(host).getByText(advisory));
+  assert.equal(screen.queryByText(/private diagnostics/), null);
+  assert.equal(screen.queryByRole("dialog"), null);
+});
+
+test("provider-free persisted success and stale advisory survive pending/failed alerts, then clear for a new discarded draft", async () => {
+  let resolveAlerts!: (value: unknown) => void;
+  let alerts = 0;
+  let saves = 0;
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return ++alerts === 1 ? { kind: "alerts", alerts: [] } : new Promise((done) => { resolveAlerts = done; });
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_stock_entry_command") { saves++; return { ...success("fallback-save"), resulting_quantity: 13 }; }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const user = await searchAndSelect();
+  await user.type(screen.getByRole("spinbutton"), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  const assertOutcome = () => {
+    assert.equal(screen.queryByRole("dialog"), null);
+    assert.equal(screen.getByText("Operación guardada. Stock actual: 13.").getAttribute("role"), "status");
+    assert.equal(screen.getByText("Saldo proyectado desactualizado. Revisá el stock actual.").getAttribute("role"), "status");
+  };
+  assertOutcome();
+  assert.ok(screen.getByText("Cargando alertas de stock…"));
+  await act(async () => resolveAlerts({ kind: "error", code: "persistence_failure", message: "Native" }));
+  assert.ok(screen.getByText("Las alertas de stock no están disponibles."));
+  assertOutcome();
+  await user.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+  assert.equal(screen.queryByText(/Operación guardada/), null);
+  assert.equal(screen.queryByText("Saldo proyectado desactualizado. Revisá el stock actual."), null);
+  await user.type(screen.getByRole("spinbutton"), "2");
+  await user.click(screen.getByRole("button", { name: "Nueva operación" }));
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(screen.queryByText(/Operación guardada/), null);
+  assert.equal(screen.queryByText("Saldo proyectado desactualizado. Revisá el stock actual."), null);
+  assert.equal(saves, 1);
+});
 
 test("rejects array payloads at the restricted Inventory mock boundary while preserving supported forwarding", async () => {
   const calls: Array<{ command: string; payload: unknown }> = [];
@@ -143,8 +261,7 @@ test("Inventory retains its local view, submitted filters and page through selec
   await user.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
-  assert.ok(await screen.findByText("Operación guardada. Stock actual: 11."));
-  await user.click(screen.getByRole("button", { name: "Nueva operación" }));
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
   assertBrowser();
   view.unmount();
   render(createElement(InventoryScreen));
@@ -405,10 +522,10 @@ test("renders Spanish selection, whole-unit projection, pending lock, and succes
   render(createElement(InventoryScreen, {}));
   screen.getByRole("heading", { name: "Inventario", level: 1 });
   const user = await searchAndSelect();
-  assert.ok(screen.getByText("Filter"));
+  assert.ok(within(screen.getByRole("dialog")).getByText("Filter"));
   assert.ok(screen.getByText("SKU: FLT"));
   assert.ok(screen.getByText("Stock actual: 8"));
-  const operation = screen.getByRole("region", { name: "Operación de inventario" });
+  const operation = screen.getByRole("dialog", { name: "Operación de inventario" });
   const alerts = screen.getByRole("region", { name: "Alertas de stock" });
   assert.equal(within(operation).queryByRole("searchbox"), null);
   assert.ok(within(operation).getByRole("group", { name: "Operación" }));
@@ -428,9 +545,12 @@ test("renders Spanish selection, whole-unit projection, pending lock, and succes
   assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
   await user.click(saving);
   assert.equal(confirmations, 1);
-  resolve(success(requestId));
-  assert.ok(await screen.findByText("Operación guardada. Stock actual: 11."));
-  assert.ok(screen.getByText("Saldo proyectado desactualizado. Revisá el stock actual."));
+  assert.equal(screen.queryByText(/Operación guardada/), null);
+  await act(async () => resolve({ ...success(requestId), previous_quantity: 8, resulting_quantity: 17 }));
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(screen.queryByText("Saldo proyectado: 11"), null);
+  assert.ok(screen.getByText("Operación guardada. Stock actual: 17."));
+  assert.equal(screen.queryByText("Saldo proyectado desactualizado. Revisá el stock actual."), null);
 });
 
 test("keeps entry and count control rows before one-sided descriptions", async () => {
@@ -506,7 +626,7 @@ test("requests the owning App to refresh sidebar alerts after a successful mutat
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
   await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "18,00");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
-  await screen.findByText("Operación guardada. Stock actual: 11.");
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
   assert.equal(ownerRefreshes, 1);
 });
 
@@ -573,11 +693,11 @@ test("shows loading/no-results, physical-count validation, and exact prioritized
   await user.type(screen.getByRole("spinbutton", { name: "Conteo físico (unidades enteras)" }), "0");
   await user.type(screen.getByLabelText("Contraseña del catálogo"), "current-password");
   assert.ok(screen.getByText("Saldo proyectado: 0"));
-  assert.ok(within(screen.getByRole("region", { name: "Operación de inventario" })).getByRole("textbox", { name: "Motivo" }));
+  assert.ok(within(screen.getByRole("dialog", { name: "Operación de inventario" })).getByRole("textbox", { name: "Motivo" }));
   assert.ok(within(screen.getByRole("region", { name: "Alertas de stock" })).getByText("Correa"));
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   await waitFor(() => assert.equal(physicalCount, 0));
-  assert.equal((physicalCountChoice as HTMLInputElement).checked, true);
+  assert.equal(screen.queryByRole("dialog"), null);
   const items = within(screen.getByRole("region", { name: "Alertas de stock" })).getAllByRole("listitem");
   assert.match(items[0].textContent ?? "", /Correa.*Sin stock: 0/);
   assert.match(items[1].textContent ?? "", /Bujía.*Stock bajo: 1/);
@@ -615,17 +735,17 @@ test("requires an accessible Catalog password for physical counts and never expo
   const error = await screen.findByRole("alert");
   assert.match(error.textContent ?? "", /La contraseña del catálogo no es correcta/);
   assert.doesNotMatch(document.body.textContent ?? "", /catalog-secret|native secret/);
-  assert.equal(password.value, "");
-  await user.type(password, "current-secret");
+  const retryPassword = screen.getByLabelText("Contraseña del catálogo") as HTMLInputElement;
+  assert.equal(retryPassword.value, "");
+  await user.type(retryPassword, "current-secret");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
-  await screen.findByText("Operación guardada. Stock actual: 11.");
-  assert.equal(password.value, "");
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
   assert.deepEqual(requests.map(({ catalog_password, ...rest }) => rest), [
     { request_id: requests[0].request_id, product_id: 1, count: 0, reason: "Recuento" },
     { request_id: requests[1].request_id, product_id: 1, count: 0, reason: "Recuento" },
   ]);
   assert.deepEqual(requests.map((request) => request.catalog_password), ["catalog-secret", "current-secret"]);
-  await user.click(screen.getByRole("button", { name: "Nueva operación" }));
+  assert.equal(requests[1].request_id, requests[0].request_id);
   await user.click(await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
   await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
   assert.equal((screen.getByLabelText("Contraseña del catálogo") as HTMLInputElement).value, "");
@@ -650,8 +770,8 @@ test("locks both operation cards while a physical count is pending", async () =>
   assert.equal((screen.getByRole("radio", { name: /Entrada de stock/ }) as HTMLInputElement).disabled, true);
   assert.equal((screen.getByRole("radio", { name: /Conteo físico/ }) as HTMLInputElement).disabled, true);
   assert.equal((screen.getByRole("spinbutton", { name: "Conteo físico (unidades enteras)" }) as HTMLInputElement).disabled, true);
-  resolve(success("count-request"));
-  assert.ok(await screen.findByText("Operación guardada. Stock actual: 11."));
+  await act(async () => resolve(success("count-request")));
+  assert.equal(screen.queryByRole("dialog"), null);
 });
 
 test("renders category and stock filters through the paged inventory browse contract", async () => {
@@ -718,12 +838,11 @@ test("retries an exact inventory envelope and replaces its identity after edits 
   await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "30,00");
   await user.type(screen.getByRole("textbox", { name: "Nota (opcional)" }), "Conteo de depósito");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
-  await screen.findByText("Operación guardada. Stock actual: 11.");
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
   assert.notEqual(requests[2].request_id, requests[1].request_id);
   assert.equal(requests[2].note, "Conteo de depósito");
   assert.equal(requests[2].sale_price_centavos, 3000);
 
-  await user.click(screen.getByRole("button", { name: "Nueva operación" }));
   await user.click(await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
   await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "18,00");
@@ -754,7 +873,7 @@ for (const [price, centavos] of [["0.50", 50], ["0.01", 1]] as const) {
     await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
     await waitFor(() => assert.equal(requests.length, 1));
     assert.deepEqual(requests[0], { request_id: requests[0].request_id, product_id: 1, quantity: 3, unit_purchase_price_centavos: centavos, sale_price_centavos: centavos, minimum_sale_price_centavos: centavos, note: null });
-    await screen.findByText("Operación guardada. Stock actual: 11.");
+    await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
   });
 }
 
@@ -770,7 +889,7 @@ test("omits blank optional prices from the stock-entry IPC request", async () =>
   const user = await searchAndSelect();
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
-  await screen.findByText("Operación guardada. Stock actual: 11.");
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
   assert.ok(request);
   assert.equal("unit_purchase_price_centavos" in request, false);
   assert.equal("sale_price_centavos" in request, false);
@@ -844,7 +963,7 @@ test("uses All Stock for normal Inventory entry and Alerts for stock-alert cue n
   assert.deepEqual(browseRequests.at(-1), { request: { query: null, category_id: null, stock_state: "alerts", activity: "active", page: 1, page_size: 20 } });
 });
 
-test("shared inventory outcomes have one owner; dismissal preserves fields, advisory and retry envelope", async () => {
+test("notification dismissal preserves the failed draft and retry identity; persisted success closes once and retains its advisory", async () => {
   installUuid("notice-request-1", "notice-request-2", "notice-request-3");
   const requests: Array<Record<string, unknown>> = [];
   mockIPC((command, payload) => {
@@ -863,23 +982,27 @@ test("shared inventory outcomes have one owner; dismissal preserves fields, advi
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
   assert.ok(await within(host).findByText("No se pudo guardar la operación de inventario. Reintentá."));
-  const operation = screen.getByRole("region", { name: "Operación de inventario" });
-  assert.equal(within(operation).queryByText("No se pudo guardar la operación de inventario. Reintentá."), null);
+  const operation = screen.getByRole("dialog", { name: "Operación de inventario" });
+  assert.equal(within(operation.querySelector<HTMLElement>("[data-ui-inventory-operation]")!).queryByText("No se pudo guardar la operación de inventario. Reintentá."), null);
   await user.click(within(host).getByRole("button", { name: /Cerrar notificación/ }));
   assert.equal((quantity as HTMLInputElement).value, "3");
   await user.click(within(operation).getByRole("button", { name: "Reintentar" }));
   assert.ok(await within(host).findByText("Operación guardada. Stock actual: 11."));
   assert.equal(within(operation).queryByText("Operación guardada. Stock actual: 11."), null);
   assert.deepEqual(requests[1], requests[0]);
-  assert.ok(within(operation).getByText("Saldo proyectado desactualizado. Revisá el stock actual."));
-  await user.click(within(host).getByRole("button", { name: /Cerrar notificación/ }));
-  assert.ok(within(operation).getByText("Saldo proyectado desactualizado. Revisá el stock actual."));
-  assert.equal((quantity as HTMLInputElement).value, "3");
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.ok(within(host).getByText("Saldo proyectado desactualizado. Revisá el stock actual."));
+  await user.click(within(host).getByRole("button", { name: "Cerrar notificación: Éxito" }));
+  assert.ok(within(host).getByText("Saldo proyectado desactualizado. Revisá el stock actual."));
+  assert.equal(screen.queryByRole("button", { name: "Confirmar operación" }), null);
+  assert.equal(requests.length, 2);
+  await user.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+  assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "");
+  await user.type(screen.getByRole("spinbutton"), "3");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
-  await within(host).findByText("Operación guardada. Stock actual: 11.");
-  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
-  await waitFor(() => assert.equal(within(host).getAllByText("Operación guardada. Stock actual: 11.").length, 2));
-  assert.notEqual(requests[2].request_id, requests[3].request_id);
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+  assert.notEqual(requests[2].request_id, requests[1].request_id);
+  assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1);
 });
 
 test("a duplicate click and an unmounted inventory completion never publish", async () => {
@@ -917,7 +1040,9 @@ test("accepted save notifies even when the subsequent read-only alert refresh fa
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   assert.ok(await within(screen.getByRole("region", { name: "Notificaciones de acciones" })).findByText("Operación guardada. Stock actual: 11."));
   assert.ok(await within(screen.getByRole("region", { name: "Alertas de stock" })).findByText("Las alertas de stock no están disponibles."));
-  assert.equal(document.querySelectorAll("[data-ui-action-notice]").length, 1);
+  assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1);
+  assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 0);
+  assert.equal(screen.queryByRole("dialog"), null);
 });
 
 for (const code of ["invalid_price", "persisted_data_invalid"] as const) {
@@ -932,7 +1057,7 @@ for (const code of ["invalid_price", "persisted_data_invalid"] as const) {
     const user = await searchAndSelect();
     await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
     await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
-    assert.ok(await within(screen.getByRole("region", { name: "Operación de inventario" })).findByText("No se pudo guardar la operación de inventario. Reintentá."));
+    assert.ok(await within(screen.getByRole("dialog", { name: "Operación de inventario" })).findByText("No se pudo guardar la operación de inventario. Reintentá."));
     assert.equal(document.querySelectorAll("[data-ui-action-notice]").length, 0);
   });
 }
@@ -948,7 +1073,7 @@ test("shared host does not migrate request-conflict recovery guidance", async ()
   const user = await searchAndSelect();
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
-  assert.ok(await within(screen.getByRole("region", { name: "Operación de inventario" })).findByText(/El ID de solicitud/));
+  assert.ok(await within(screen.getByRole("dialog", { name: "Operación de inventario" })).findByText(/El ID de solicitud/));
   assert.equal(document.querySelectorAll("[data-ui-action-notice]").length, 0);
 });
 

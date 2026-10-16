@@ -1312,6 +1312,30 @@ html:has([data-ui-persisted-summary]), body:has([data-ui-persisted-summary]),
   [data-ui-focus-visible="true"] { outline-color: Highlight; }
 }
 
+/* Inventory owns one native body scroll; heading and actions never enter that scroll. */
+[data-ui-dialog-backdrop]:has([data-ui-inventory-dialog]) { padding: 16px; overscroll-behavior: contain; }
+html:has([data-ui-inventory-dialog]), body:has([data-ui-inventory-dialog]),
+[data-ui-shell-content]:has([data-ui-inventory-dialog]) { overflow: hidden; }
+body:has([data-ui-inventory-dialog]) [data-ui-shell-content] { overflow: hidden; }
+[data-ui-inventory-dialog] { display: flex; flex-direction: column; gap: var(--space-3); inline-size: min(960px, 100%); min-inline-size: 0; max-block-size: calc(100dvh - 32px); overflow: hidden; padding: var(--space-5); border: 1px solid var(--color-border-strong); border-radius: 32px; background: var(--color-surface-elevated); box-shadow: var(--elevation-modal); }
+[data-ui-inventory-dialog] > :is(h2, p) { flex: 0 0 auto; margin: 0; overflow-wrap: anywhere; }
+[data-ui-inventory-dialog] > p { color: var(--color-text-muted); }
+[data-ui-inventory-dialog-body] { min-block-size: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+[data-ui-inventory-dialog] [data-ui-inventory-selection] { border-radius: 24px; }
+[data-ui-inventory-dialog] [data-ui-inventory-identity] { flex-basis: 100%; }
+[data-ui-inventory-dialog] [data-ui-inventory-fields] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+[data-ui-inventory-dialog] [data-ui-field]:not([data-ui-field="money"]) { grid-column: 1 / -1; }
+[data-ui-inventory-dialog] [data-ui-dialog-actions] { flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-4); padding-block-start: var(--space-3); }
+[data-ui-inventory-dialog] [data-ui-action] { border-radius: 999px; }
+@media (max-width: 640px) {
+  [data-ui-inventory-dialog] { padding: var(--space-3); border-radius: 24px; }
+  [data-ui-inventory-dialog] [data-ui-inventory-fields] { grid-template-columns: minmax(0, 1fr); }
+  [data-ui-inventory-dialog] [data-ui-inventory-choice-list] { grid-template-columns: minmax(0, 1fr); }
+}
+@media (forced-colors: active) {
+  [data-ui-inventory-dialog] { border-color: CanvasText; forced-color-adjust: auto; }
+}
+
 [data-ui-movement-ledger] { display: grid; align-content: start; gap: var(--space-5); }
 [data-ui-report-header] { display: grid; gap: var(--space-1); }
 [data-ui-report-header] :is(h1, p) { margin: 0; }
