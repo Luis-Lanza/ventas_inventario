@@ -645,9 +645,10 @@ test("production CSS declares the desktop and compact shell width contracts", as
   assert.match(source, /\[data-ui-shell-navigation\] button\[aria-current="page"\] \[data-ui-inventory-cue\]\s*\{[^}]*color:\s*inherit/s);
   assert.match(source, /@media \(max-width: 960px\)[\s\S]*--size-shell-sidebar:\s*176px/);
   assert.match(source, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0, 1\.85fr\) minmax\(260px,\s*1fr\)/);
-  assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(12rem,\s*2fr\) minmax\(10rem,\s*1fr\) minmax\(9rem,\s*1fr\) auto auto/);
+  assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(source, /@container catalog-browse \(min-width: 68rem\) \{\s*\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(12rem,\s*2fr\) minmax\(10rem,\s*1\.2fr\) minmax\(8rem,\s*1fr\) auto auto/);
   assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-catalog-toolbar-item="views"\] \{[^}]*display:\s*flex/);
-  assert.match(source, /@media \(max-width: 960px\)[\s\S]*\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(source, /@container catalog-browse \(min-width: 34rem\) \{\s*\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.doesNotMatch(source, /data-ui-catalog-layout[^}]*grid-template-columns:\s*minmax\(280px,\s*4fr\) minmax\(0,\s*7fr\)/);
   assert.doesNotMatch(source, /@media \(max-width: 1199px\) and \(min-width: 961px\)/);
   assert.match(source, /@media \(max-width: 960px\)[\s\S]*data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
@@ -659,8 +660,10 @@ test("production CSS declares the desktop and compact shell width contracts", as
   assert.match(source, /\[data-ui-product-browser="sales"\] \[data-ui-sale-list\] > li\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s);
   assert.match(source, /data-ui-product-browser-pages[^}]*flex:\s*0 0 auto/);
   assert.doesNotMatch(source, /data-ui-catalog-search-actions/);
-  assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\]\[data-ui-catalog-gallery="true"\][^}]*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/);
-  assert.match(source, /@media \(max-width: 960px\)[\s\S]*\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\]\[data-ui-catalog-gallery="true"\][^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\]\[data-ui-catalog-gallery="true"\] \{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  for (const [minimum, columns] of [[34, 2], [52, 3], [68, 4]]) {
+    assert.match(source, new RegExp(`@container catalog-browse \\(min-width: ${minimum}rem\\) \\{[^@]*?\\[data-ui-catalog-gallery="true"\\] \\{[^}]*grid-template-columns:\\s*repeat\\(${columns}, minmax\\(0, 1fr\\)\\)`));
+  }
   assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-catalog-toolbar-item="views"\] > button[^}]*min-block-size:\s*var\(--size-control-default\)/);
   assert.doesNotMatch(source, /data-ui-catalog-master[^}]*max-block-size:\s*(?:520|208)px/);
 });

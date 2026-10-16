@@ -17,14 +17,38 @@ async function mountBaseStyles(width?: number, browseWidth?: number, height = 90
   const style = document.createElement("style");
   style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   document.head.append(style);
+  // jsdom can retain a lower-specificity overflow longhand over a winning
+  // shorthand. Expand declarations in place, retaining selector specificity,
+  // declaration order and !important; this checks cascade, not native scrolling.
+  const expandOverflow = (rules: CSSRuleList): void => {
+    for (const rule of Array.from(rules)) {
+      if (rule.type === 1) {
+        const declaration = (rule as CSSStyleRule).style;
+        if (!declaration.getPropertyValue("overflow")) continue;
+        declaration.cssText = Array.from(declaration).map((property) => {
+          const value = declaration.getPropertyValue(property);
+          const priority = declaration.getPropertyPriority(property) ? " !important" : "";
+          if (property !== "overflow") return `${property}: ${value}${priority};`;
+          const [x, y = x] = value.trim().split(/\s+/);
+          return `overflow: ${value}${priority}; overflow-x: ${x}${priority}; overflow-y: ${y}${priority};`;
+        }).join(" ");
+      } else if ("cssRules" in rule) {
+        expandOverflow((rule as CSSGroupingRule).cssRules);
+      }
+    }
+  };
+  expandOverflow(style.sheet!.cssRules);
+  style.textContent = Array.from(style.sheet!.cssRules, rule => rule.cssText).join("\n");
   if (width !== undefined) {
     // jsdom does not evaluate viewport media queries. Activate width/height rules
     // in source order to check declarations/cascade, not layout or wheel routing.
     const activeRules = (rules: CSSRuleList): string[] => Array.from(rules).flatMap((rule) => {
       if (rule.type === 1) return [rule.cssText];
-      if (rule.cssText.startsWith("@container sales-browse") && browseWidth !== undefined) {
+      const container = rule.cssText.match(/^@container (sales-browse|catalog-browse)\b/)?.[1];
+      const containerWidth = container === "catalog-browse" ? browseWidth ?? width : browseWidth;
+      if (container && containerWidth !== undefined) {
         const minimum = Number(rule.cssText.match(/min-width:\s*(\d+)rem/)?.[1]) * 16;
-        return browseWidth >= minimum ? activeRules((rule as CSSMediaRule).cssRules) : [];
+        return containerWidth >= minimum ? activeRules((rule as CSSMediaRule).cssRules) : [];
       }
       if (rule.type !== 4) return [];
       const media = rule as CSSMediaRule;
@@ -563,9 +587,9 @@ test("Catalog table columns shrink and wrap while the results region retains opt
     const price = document.querySelector('[data-testid="catalog-table-price"]')!;
     const stock = document.querySelector('[data-testid="catalog-table-stock"] [data-ui-badge]')!;
     assert.equal(styleOf(scrollRegion, "overflow-x"), "auto");
-    assert.equal(styleOf(table, "min-inline-size"), "0px");
-    assert.equal(styleOf(table, "flex-grow"), "1");
-    assert.equal(styleOf(row, "min-inline-size"), "0px");
+    assert.equal(styleOf(table, "min-block-size"), "auto");
+    assert.equal(styleOf(table, "flex-grow"), "0");
+    assert.equal(styleOf(row, "min-inline-size"), "720px");
     assert.match(styleOf(row, "grid-template-columns"), /minmax\(0, 2fr\)/);
     assert.equal(styleOf(identity, "min-inline-size"), "0px");
     assert.equal(styleOf(identity, "overflow-wrap"), "anywhere");
@@ -591,7 +615,7 @@ function catalogBrowser(mode: CatalogViewMode) {
   });
 }
 
-for (const width of [961, 960, 600]) {
+for (const width of [1440, 961, 960, 600, 340]) {
   test(`Catalog table wrapper alone owns both scroll axes at ${width}px; Gallery and Edit retain scrolling`, async () => {
     const style = await mountBaseStyles(width);
     try {
@@ -609,12 +633,17 @@ for (const width of [961, 960, 600]) {
       assert.equal(styleOf(wrapper, "overflow-x"), "auto");
       assert.equal(styleOf(wrapper, "overflow-y"), "auto");
       if (width >= 961) assert.equal(styleOf(wrapper, "min-block-size"), "0px");
-      assert.equal(styleOf(table, "overscroll-behavior"), "auto");
       const gallery = document.querySelector('[data-ui-catalog-gallery="true"]')!;
       assert.equal(gallery.closest("[data-ui-catalog-table-scroll]"), null);
-      assert.equal(styleOf(gallery, "overflow-y"), "auto");
-      assert.equal(styleOf(gallery, "overscroll-behavior"), "contain");
-      assert.equal(styleOf(gallery, "grid-template-columns"), `repeat(${width >= 961 ? 5 : 2}, minmax(0, 1fr))`);
+      assert.equal(styleOf(gallery, "overflow-y"), "visible");
+      assert.equal(styleOf(gallery, "overflow-x"), "visible");
+      const galleryViewport = gallery.closest('[data-ui-catalog-results]')!;
+      assert.ok(galleryViewport);
+      assert.equal(styleOf(galleryViewport, "overflow-y"), "auto");
+      assert.equal(styleOf(galleryViewport, "overflow-x"), "auto");
+      assert.equal(styleOf(galleryViewport, "overscroll-behavior"), "contain");
+      const columns = width >= 1088 ? 4 : width >= 832 ? 3 : width >= 544 ? 2 : 1;
+      assert.equal(styleOf(gallery, "grid-template-columns"), columns === 1 ? "minmax(0, 1fr)" : `repeat(${columns}, minmax(0, 1fr))`);
       const edit = document.querySelector("[data-ui-catalog-edit-content]")!;
       assert.equal(styleOf(edit, "min-block-size"), "0px");
       assert.equal(styleOf(edit, "overflow-y"), "auto");
@@ -852,7 +881,9 @@ for (const [width, browseWidth, columns] of [[1440, 800, 3], [1200, 560, 2], [96
         assert.equal(styleOf(details, "background"), "#fffcf7");
       }
       const shared = document.querySelector('[data-ui-catalog-gallery="true"] [data-ui-catalog-image-placeholder]')!;
-      assert.equal(styleOf(shared, "min-block-size"), width <= 960 ? "96px" : "128px");
+      assert.equal(styleOf(shared, "min-block-size"), "0px");
+      assert.equal(styleOf(shared.parentElement!, "aspect-ratio"), "4 / 3");
+      assert.equal(styleOf(shared, "block-size"), "100%");
       assert.notEqual(styleOf(shared.closest("li")!, "border-radius"), "32px");
     } finally { style.remove(); }
   });

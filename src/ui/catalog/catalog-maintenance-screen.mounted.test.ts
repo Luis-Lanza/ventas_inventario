@@ -728,46 +728,46 @@ test("renders the Catalog controls in the approved toolbar order with a compact 
   render(createElement(CatalogMaintenanceScreen));
   const form = await screen.findByRole("searchbox", { name: "Buscar en el catálogo" }).then((search) => search.closest("form")!);
   const controls = Array.from(form.querySelectorAll(":scope > *"));
-  assert.deepEqual(controls.map((control) => control.getAttribute("data-ui-catalog-toolbar-item")), ["search", "category", "activity", "views", "submit"]);
+  assert.deepEqual(controls.map((control) => control.getAttribute("data-ui-catalog-toolbar-item")), ["search", "category", "activity", "submit", "views"]);
   assert.equal(screen.getByRole("combobox", { name: "Categoría" }) !== null, true);
   assert.equal(screen.getByRole("combobox", { name: "Actividad" }) !== null, true);
-  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
-  assert.match(css, /\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:/);
-  assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.equal(within(form).getByRole("button", { name: "Buscar" }).getAttribute("type"), "submit");
 });
 
 test("contains Catalog results in its desktop workspace while preserving table and gallery presentation", async () => {
   const products = Array.from({ length: 40 }, (_, index) => ({ ...browseProduct, product_id: index + 1, sku: `FIL-${index + 1}` }));
   mockIPC((command) => command === "list_catalog_categories_command" ? { kind: "success", records: [activeCategory] } : command === "browse_products_command" ? { ...browse(products), total_pages: 2 } : (() => { throw new Error(`Unexpected command: ${command}`); })());
   render(createElement(CatalogMaintenanceScreen));
-  const panel = await screen.findByRole("region", { name: "Productos" });
-  const form = within(panel).getByRole("searchbox", { name: "Buscar en el catálogo" }).closest("form")!;
-  const tableViewport = await within(panel).findByRole("region", { name: "Resultados de productos; desplazamiento horizontal disponible" });
+  const productsRegion = await screen.findByRole("region", { name: "Productos" });
+  assert.equal(productsRegion.hasAttribute("data-ui-panel"), false);
+  assert.equal(within(productsRegion).queryByRole("heading", { name: "Productos" }), null);
+  const form = within(productsRegion).getByRole("searchbox", { name: "Buscar en el catálogo" }).closest("form")!;
+  const tableViewport = await within(productsRegion).findByRole("region", { name: "Resultados de productos; desplazamiento horizontal disponible" });
   const table = within(tableViewport).getByRole("list", { name: "Resultados del catálogo" });
   assert.equal(form.querySelector('[data-ui-catalog-toolbar-item="views"]')?.children.length, 2);
   assert.equal(table.getAttribute("data-ui-catalog-table"), "true");
   assert.equal(within(table).getAllByRole("listitem").length, 40);
-  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
-  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-catalog-layout\] \{ min-block-size: 0; flex: 1 1 auto; \}[\s\S]*\[data-ui-catalog-layout\] > \[data-ui-catalog-workspace\] \{ display: flex; min-block-size: 0; flex: 1 1 auto; \}[\s\S]*\[data-ui-catalog-workspace\] > \[data-ui-panel\] \{ display: flex; min-block-size: 0; flex: 1 1 auto; flex-direction: column; \}/);
-  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-catalog-workspace\] \[data-ui-catalog-results\] \{ display: flex; min-block-size: 0; flex: 1 1 auto; flex-direction: column; \}[\s\S]*\[data-ui-catalog-workspace\] \[data-ui-catalog-table-scroll\] \{ min-block-size: 0; \}[\s\S]*\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\] \{ min-block-size: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; \}/);
-  assert.match(css, /\[data-ui-catalog-workspace\] \[data-ui-catalog-table-scroll\] \{[^}]*overflow-x: auto/);
-  assert.match(css, /\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\]\[data-ui-catalog-gallery="true"\] \{[^}]*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
-  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\]\[data-ui-catalog-gallery="true"\][^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  const pages = screen.getByRole("navigation", { name: "Páginas de productos" });
+  assert.equal(tableViewport.contains(form), false);
+  assert.equal(tableViewport.contains(pages), false);
+  await userEvent.click(screen.getByRole("button", { name: "Vista de galería" }));
+  const galleryViewport = within(productsRegion).getByRole("region", { name: "Productos del catálogo" });
+  assert.equal(galleryViewport.tabIndex, 0);
+  assert.equal(galleryViewport.contains(form), false);
+  assert.equal(galleryViewport.nextElementSibling, pages);
+  assert.equal(within(galleryViewport).getAllByRole("listitem").length, 40);
+  assert.equal(within(galleryViewport).getByRole("list").getAttribute("data-ui-catalog-gallery"), "true");
 });
 
-test("keeps Gallery results separated from the toolbar and Table columns readable at narrow widths", async () => {
-  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
-  assert.match(css, /\[data-ui-catalog-gallery="true"\][^{]*\{[^}]*margin-block-start:\s*var\(--space-3\)/);
-  assert.match(css, /data-ui-catalog-table-scroll[^}]*min-inline-size:\s*0[^}]*overflow-x:\s*auto/);
-  assert.match(css, /data-ui-catalog-table="true"[^}]*min-inline-size:\s*0[^}]*flex:\s*1 1 auto/);
-  assert.match(css, /data-ui-catalog-table="true"\]\s*>\s*li\s*\{[^}]*min-inline-size:\s*0[^}]*grid-template-columns:[^}]*minmax\(0,/);
-  assert.match(css, /grid-template-columns:[^}]*minmax\(5rem,\s*\.8fr\)[^}]*minmax\(0,\s*1fr\)\s*minmax\(6rem,\s*\.9fr\)/);
-  assert.match(css, /data-ui-catalog-table-row\]\s*>\s*:nth-child\(3\)\s*\{[^}]*white-space:\s*nowrap/);
-  assert.match(css, /data-ui-catalog-table-row\]\s*>\s*:nth-child\(5\)\s*\[data-ui-badge\][^{]*\{[^}]*white-space:\s*nowrap/);
-  assert.match(css, /\[data-ui-catalog-workspace\]\s+\[data-ui-catalog-table="true"\]\s+\[data-ui-catalog-primary-location\]\s*\{[^}]*overflow-wrap:\s*anywhere/);
-  assert.doesNotMatch(css, /\[data-ui-inventory-primary-location\][^}]*\[data-ui-catalog-primary-location\]/);
-  assert.doesNotMatch(css, /\[data-ui-catalog-workspace\]\s+\[data-ui-catalog-primary-location\]/);
-  assert.doesNotMatch(css, /data-ui-catalog-table="true"[^}]*min-inline-size:\s*67rem/);
+test("single-page Catalog results do not acquire a pagination footer in either mode", async () => {
+  mockIPC((command) => baseIPC(command));
+  render(createElement(CatalogMaintenanceScreen));
+  await screen.findByRole("button", { name: "Editar" });
+  for (const name of ["Vista de galería", "Vista de tabla"]) {
+    await userEvent.click(screen.getByRole("button", { name }));
+    assert.equal(screen.queryByRole("navigation", { name: "Páginas de productos" }), null);
+    assert.equal((screen.getByRole("button", { name: "Editar" }) as HTMLButtonElement).disabled, false);
+  }
 });
 
 test("applies a submitted multi-character catalog query", async () => {
@@ -1615,9 +1615,16 @@ test("focuses validation errors in the routine form and retains stale feedback",
   assert.match(css, /data-ui-catalog-edit-dialog/);
   assert.match(css, /data-ui-catalog-lifecycle-action="active"/);
   assert.match(css, /data-ui-catalog-layout[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-  assert.match(css, /\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(12rem,\s*2fr\) minmax\(10rem,\s*1fr\) minmax\(9rem,\s*1fr\) auto auto/);
+  // Structural responsive checks do not certify rendered geometry or scrolling.
+  assert.match(css, /\[data-ui-product-browser="catalog"\] \{[^}]*container:\s*catalog-browse \/ inline-size/);
+  assert.match(css, /\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(css, /@container catalog-browse \(min-width: 68rem\) \{\s*\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(12rem,\s*2fr\) minmax\(10rem,\s*1\.2fr\) minmax\(8rem,\s*1fr\) auto auto/);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-layout[^}]*grid-template-rows:\s*minmax\(0, 1fr\)/);
-  assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /@container catalog-browse \(min-width: 34rem\) \{\s*\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\[data-ui-catalog-workspace\] \{[^}]*display: flex;[^}]*min-block-size: 0/);
+  assert.match(css, /\[data-ui-catalog-products\] \{[^}]*display: flex;[^}]*min-block-size: 0;[^}]*flex: 1 1 auto;[^}]*flex-direction: column/);
+  assert.match(css, /\[data-ui-catalog-workspace\] :is\(\[data-ui-catalog-table-scroll\], \[data-ui-catalog-results\]\) \{[^}]*min-block-size: 0;[^}]*flex: 1 1 auto;[^}]*overflow: auto/);
+  assert.match(css, /\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\] \{[^}]*overflow: visible/);
   assert.doesNotMatch(css, /@media \(max-width: 1199px\) and \(min-width: 961px\)/);
 });
 

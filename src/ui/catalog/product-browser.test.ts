@@ -325,6 +325,42 @@ test("Catalog Table and Gallery expose the same product facts and explicit Edit 
   assert.equal(within(gallery).getAllByText("Stock bajo: 1").length, 1);
 });
 
+test("Catalog modes retain filters, paging, safe photos and zero-stock editing across controlled presentation changes", async () => {
+  const products = [page.products[0], { ...page.products[0], product_id: 2, sku: "ZERO", available_quantity: 0 }];
+  const state = { ...initialProductBrowserState, status: "results" as const, query: "filter", category_id: 1, activity: "all" as const,
+    result: { ...page, products, page: 2, total: 41, total_pages: 3 } };
+  const selected: ProductBrowseResult[] = [];
+  const pages: number[] = [];
+  const changes: unknown[] = [];
+  const props = { state, presentation: "catalog" as const, showActivity: true, actionLabel: "Editar", allowUnavailableSelection: true,
+    thumbnails: { 1: "data:image/jpeg;base64,/9j/2Q==", 2: "/private/image.jpg" },
+    onQueryChange: (value: string) => changes.push(value), onCategoryChange: (value: number | null) => changes.push(value),
+    onActivityChange: (value: string) => changes.push(value), onSubmit: (event: { preventDefault(): void }) => event.preventDefault(),
+    onPageChange: (value: number) => pages.push(value), onSelect: (product: ProductBrowseResult) => selected.push(product) };
+  const view = render(createElement(ProductBrowser<ProductBrowseResult>, { ...props, catalogViewMode: "table" }));
+  for (const catalogViewMode of ["table", "gallery"] as const) {
+    view.rerender(createElement(ProductBrowser<ProductBrowseResult>, { ...props, catalogViewMode }));
+    assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filter");
+    assert.equal((screen.getByRole("combobox", { name: "Categoría" }) as HTMLSelectElement).value, "1");
+    assert.equal((screen.getByRole("combobox", { name: "Actividad" }) as HTMLSelectElement).value, "all");
+    assert.ok(screen.getByText("Página 2 de 3"));
+    const rows = within(screen.getByRole("list", { name: "Resultados del catálogo" })).getAllByRole("listitem");
+    assert.ok(within(rows[0]).getByRole("img", { name: "Filter" }));
+    assert.ok(within(rows[1]).getByRole("img", { name: "Sin imagen" }));
+    assert.ok(within(rows[1]).getByText("Sin stock: 0"));
+    for (const row of rows) assert.ok(within(row).getByText("Precio de venta"));
+    await userEvent.click(within(rows[1]).getByRole("button", { name: "Editar" }));
+    assert.equal(selected.at(-1), products[1]);
+    await userEvent.click(screen.getByRole("button", { name: "Anterior" }));
+    await userEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+  }
+  assert.deepEqual(pages, [1, 3, 1, 3]);
+  assert.deepEqual(changes, []);
+  await userEvent.selectOptions(screen.getByRole("combobox", { name: "Categoría" }), "");
+  await userEvent.selectOptions(screen.getByRole("combobox", { name: "Actividad" }), "archived");
+  assert.deepEqual(changes, [null, "archived"]);
+});
+
 test("Catalog, Gallery, and Sales display canonical sale price ahead of legacy aliases", () => {
   const canonicalProduct = { ...page.products[0], sale_price_centavos: 3_000, list_price_centavos: 2_500, catalog_unit_price_centavos: 2_000 };
   const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [canonicalProduct] } };
@@ -366,14 +402,23 @@ test("Catalog decoder supplies canonical browser price from a legacy native list
   assert.equal(screen.getByTestId("catalog-table-price").textContent, "Bs 30,00");
 });
 
-test("Catalog toolbar view controls are icon-only, named, and depict table and gallery", () => {
-  const props = { state: { ...initialProductBrowserState, status: "results" as const, result: page }, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
+test("Catalog toolbar view controls have visible labels and keyboard changes never submit search", async () => {
+  let submissions = 0;
+  const modes: string[] = [];
+  const props = { state: { ...initialProductBrowserState, status: "results" as const, result: page }, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => { event.preventDefault(); submissions++; }, onPageChange: () => {}, onCatalogViewModeChange: (mode: "table" | "gallery") => modes.push(mode) };
   render(createElement(ProductBrowser, { ...props, presentation: "catalog", catalogViewMode: "table" }));
   const group = screen.getByRole("group", { name: "Presentación del catálogo" });
   const table = within(group).getByRole("button", { name: "Vista de tabla" });
   const gallery = within(group).getByRole("button", { name: "Vista de galería" });
-  assert.equal(table.textContent, "");
-  assert.equal(gallery.textContent, "");
+  assert.equal(table.textContent, "Vista de tabla");
+  assert.equal(gallery.textContent, "Vista de galería");
+  gallery.focus();
+  await userEvent.keyboard("{Enter}");
+  assert.deepEqual(modes, ["gallery"]);
+  assert.equal(submissions, 0);
+  assert.equal(document.activeElement, gallery);
+  await userEvent.click(screen.getByRole("button", { name: "Buscar" }));
+  assert.equal(submissions, 1);
   assert.equal(table.getAttribute("title"), "Vista de tabla");
   assert.equal(gallery.getAttribute("title"), "Vista de galería");
   assert.equal(within(table).getByRole("img", { hidden: true }).getAttribute("data-ui-icon"), "table");

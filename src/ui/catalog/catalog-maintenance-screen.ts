@@ -5,7 +5,6 @@ import { useActionNotifications } from "../visual-system/action-notifications.ts
 import { Action, Feedback } from "../visual-system/controls.ts";
 import { CatalogEditDialog, CatalogMetadataEditor } from "../visual-system/catalog-edit-dialog.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
-import { Panel } from "../visual-system/structure.ts";
 import { createCatalogEditRequest, createCategorySchemaEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState, type CatalogEditFieldErrors, type CatalogEditForm, type CatalogMaintenanceAction } from "./catalog-maintenance-flow.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, readCatalogViewMode, writeCatalogViewMode, type CatalogViewMode, type ProductBrowserState } from "./product-browser.ts";
 import { LocationManagementScreen } from "./location-management-screen.ts";
@@ -531,8 +530,8 @@ export function CatalogMaintenanceScreen() {
         "div",
         { "data-ui-catalog-workspace": true },
         createElement(
-          Panel,
-          { label: "Productos" } as never,
+          "section",
+          { "aria-label": "Productos", "data-ui-catalog-products": true },
           createElement(ProductBrowser<CatalogProductBrowseResult>, {
             state: browser,
             presentation: "catalog",
