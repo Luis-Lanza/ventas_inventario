@@ -16,8 +16,8 @@ C1 routes to gentle-ai-worker because three nontrivial production files and two 
 C2 requires real runtime/Windows visual evidence; JSDOM cannot certify geometry or scrolling.
 
 ## Tasks
-- [ ] C1 (in progress): Implement Catalog Products listing parity, verify regressions and record local work-unit commit.
-- [ ] C2 (pending): Validate table/gallery and scrolling visually in Windows against approved mockups; record user acceptance or scoped corrections.
+- [x] C1 (done): Implement Catalog Products listing parity, verify regressions and record local work-unit commits 3b2c654 and cb1b4ac.
+- [ ] C2 (in progress; awaiting Windows evidence): Validate table/gallery and scrolling visually against approved mockups; record user acceptance or scoped corrections.
 
 ## Allowed C1 edit surfaces
 - src/ui/catalog/catalog-maintenance-screen.ts
@@ -77,5 +77,13 @@ W9 writer mvbg6ou4-8-aon4 completed: added listing-parity profile with audit sel
 Measured settled candidate435 changed lines including71-line ledger before this evidence update; eight tracked modified files plus task. Native ASSESS initially unassessable due to undeclared untracked ledger, requiring independent verifier. INSPECT requested explicit inclusion of the ledger; no review lineage yet.
 Feature-chain review units: UI and regression contracts277 lines; dependent audit profile87 lines plus task evidence. Do not separate production behavior from its tests. Exact nine-path ownership requires validating the combined slice; this slightly exceeds the heuristic, not a reason to omit tests or manufacture clean-tree acceptance. No publication authorized.
 
+## Review and local delivery evidence
+Independent verifier mvbgcipi-a-l45k:177/177 focused Catalog/shell/styles PASS, W9 68PASS1ownerSKIP, diff-check PASS; no severe issue or broad audit bypass found. Full suite/types/build successes above remain writer evidence, not independently duplicated.
+Native review review-b46ad55495aeb3ed: medium, consolidated review-reliability, APPROVED. Exact acknowledgement returned native-approved-acknowledgement-completed and authority burned for target sha256:265e4838e56ae8de593a98060c1b9b684e404338d7976f45b58085118e13a3c9. Non-blocking informational advisory R3-001 at src/ui/styles.css:683; no correction route opened. Review is not Windows visual certification.
+Feature-chain local units (base21c2f8b):
+- 3b2c654 feat(catalog): align product listing with approved mockups — UI and regression tests,277 authored lines.
+- cb1b4ac test(catalog): admit bounded listing parity audit profile — dependent W9 profile and task evidence,168 authored lines. Combined reviewed slice445 lines; strict acquisition/whole-set acceptance was checked over all nine paths, not an artificially hidden partial candidate.
+C1 complete. No push, PR, merge or release performed. Documentation-only closure records these post-review facts separately.
+
 ## Next step
-Include intended ledger in native candidate; perform independent verification as ASSESS requested and native review under RDD. Record coherent local feature-chain commits only after checks/review route resolve. C1 remains in progress; C2 remains pending until Windows evidence.
+C2 awaits real Windows table/gallery comparison, partial-row width, narrow/short-window adaptation, native scrolling and keyboard/focus visibility. Request publication authorization if the user needs the branch remotely to test; never infer it from local commit permission. Record actual acceptance or scoped corrections before closing C2.
