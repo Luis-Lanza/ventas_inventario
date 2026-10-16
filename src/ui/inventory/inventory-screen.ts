@@ -160,10 +160,15 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
           state.feedback ? notifications && ordinaryFailure
             ? createElement(Action, { variant: "tertiary", onClick: confirm }, "Reintentar")
             : createElement(Feedback, { kind: "error" } as never, createElement("span", null, state.feedback, " ", createElement(Action, { variant: "tertiary", onClick: confirm }, "Reintentar"))) : null) : null),
-      createElement(Panel, { label: "Alertas de stock" } as never,
-        createElement("p", { "data-ui-inventory-alert-description": true }, "Productos en catálogo activo con stock crítico o agotado. Solo lectura."),
-        alertState === "loading" ? createElement(Feedback, { kind: "loading" } as never, "Cargando alertas de stock…")
-          : alertState === "unavailable" ? createElement(Feedback, { kind: "unavailable" } as never, createElement("span", null, "Las alertas de stock no están disponibles. ", createElement(Action, { variant: "tertiary", onClick: refreshAlerts }, "Reintentar")))
-          : sortedAlerts.length === 0 ? createElement(Feedback, { kind: "empty" } as never, "No hay alertas de stock.")
-          : createElement("ul", { "data-ui-inventory-alerts": true }, sortedAlerts.map((alert) => createElement("li", { key: alert.product_id }, createElement(Badge, { kind: alert.classification === "out_of_stock" ? "out-of-stock" : "low-stock", text: alert.classification === "out_of_stock" ? `Sin stock: ${alert.quantity}` : `Stock bajo: ${alert.quantity}` }), createElement("span", null, alert.product_name)))))));
+      createElement("section", { "data-ui-panel": true, "data-ui-inventory-alert-panel": true, "aria-labelledby": "inventory-alert-heading" },
+        createElement("header", null,
+          createElement("h2", { id: "inventory-alert-heading" }, "Alertas de stock"),
+          createElement("p", { "data-ui-inventory-alert-description": true }, "Productos en catálogo activo con stock crítico o agotado. Solo lectura.")),
+        createElement("div", { "data-ui-inventory-alert-body": true },
+          alertState === "loading" ? createElement(Feedback, { kind: "loading" } as never, "Cargando alertas de stock…")
+            : alertState === "unavailable" ? createElement(Feedback, { kind: "unavailable" } as never, createElement("span", null, "Las alertas de stock no están disponibles. ", createElement(Action, { variant: "tertiary", onClick: refreshAlerts }, "Reintentar")))
+            : sortedAlerts.length === 0 ? createElement(Feedback, { kind: "empty" } as never, "No hay alertas de stock.")
+            : createElement("ul", { "data-ui-inventory-alerts": true }, sortedAlerts.map((alert) => createElement("li", { key: alert.product_id },
+              createElement("span", null, alert.product_name),
+              createElement(Badge, { kind: alert.classification === "out_of_stock" ? "out-of-stock" : "low-stock", text: alert.classification === "out_of_stock" ? `Sin stock: ${alert.quantity}` : `Stock bajo: ${alert.quantity}` }))))))));
 }

@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import { mockIPC } from "@tauri-apps/api/mocks";
+import { InventoryScreen } from "../inventory/inventory-screen.ts";
 import userEvent from "@testing-library/user-event";
 
 import { CheckoutDialog } from "./checkout-dialog.ts";
 import { PersistedSaleSummaryView } from "../sales/persisted-summary.ts";
-import { Action, Field } from "./controls.ts";
+import { Action, Badge, Field } from "./controls.ts";
 import type { CatalogProductBrowseResult } from "../../commands/catalog.ts";
 import { ProductBrowser, initialProductBrowserState, type CatalogViewMode } from "../catalog/product-browser.ts";
 
@@ -107,6 +109,57 @@ for (const mode of ["table", "gallery"] as const) {
       } finally { style.remove(); }
     });
   }
+}
+
+for (const forced of [false, true]) {
+  test(`Inventory alerts have a full header divider and soft rounded rows${forced ? " in forced colors" : ""} (cascade only)`, async () => {
+    const style = await mountBaseStyles();
+    try {
+      if (forced) activateForcedColors(style);
+      mockIPC((command) => {
+        if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [
+          { product_id: 1, product_name: "Jabón neutro con nombre largo sin truncar", quantity: 0, classification: "out_of_stock" },
+          { product_id: 2, product_name: "Cuaderno A5", quantity: 1, classification: "low_stock" },
+        ] };
+        if (command === "browse_inventory_products_command") return { products: [], categories: [], page: 1, page_size: 20, total: 0, total_pages: 0 };
+        throw new Error(`Unexpected command: ${command}`);
+      });
+      render(createElement("div", null, createElement(InventoryScreen),
+        createElement("div", { "aria-label": "Shared badges", role: "group" },
+          createElement(Badge, { kind: "out-of-stock", text: "Shared stock" }))));
+      const panel = screen.getByRole("region", { name: "Alertas de stock" });
+      const list = await within(panel).findByRole("list");
+      const declarationsFor = (element: Element) => Array.from(style.sheet!.cssRules).filter((rule): rule is CSSStyleRule =>
+        rule.type === 1 && element.matches((rule as CSSStyleRule).selectorText));
+      const header = within(panel).getByRole("heading", { name: "Alertas de stock" }).closest("header");
+      assert.ok(header);
+      assert.equal(styleOf(panel, "padding"), "0px");
+      assert.equal(styleOf(panel, "border-radius"), "32px");
+      assert.equal(styleOf(header, "border-block-end"), "1px solid var(--color-border)");
+      assert.equal(declarationsFor(header.querySelector("h2")!).some(rule => rule.style.getPropertyValue("border-block-end")), false);
+      // jsdom does not reliably resolve variable-valued padding shorthands.
+      assert.equal(declarationsFor(list.parentElement!).filter(rule => rule.style.getPropertyValue("padding")).at(-1)?.style.getPropertyValue("padding"), "var(--space-5)");
+      for (const row of within(list).getAllByRole("listitem")) {
+        assert.equal(styleOf(row, "border-radius"), "24px");
+        assert.equal(declarationsFor(row).some(rule => rule.style.getPropertyValue("border-inline-start")), false);
+        assert.equal(declarationsFor(row).filter(rule => rule.style.getPropertyValue("border")).at(-1)?.style.getPropertyValue("border"), "1px solid var(--color-border)");
+        assert.equal(styleOf(row, "flex-wrap"), "wrap");
+        assert.equal(styleOf(row, "background"), "#f4efe6");
+        assert.equal(styleOf(row.firstElementChild!, "overflow-wrap"), "anywhere");
+        const badge = row.lastElementChild!;
+        assert.equal(styleOf(badge, "border-radius"), "999px");
+        assert.equal(styleOf(badge, "white-space"), "normal");
+        assert.equal(styleOf(badge, "overflow-wrap"), "anywhere");
+        const rules = Array.from(style.sheet!.cssRules).filter((rule): rule is CSSStyleRule =>
+          rule.type === 1 && badge.matches((rule as CSSStyleRule).selectorText));
+        assert.equal(rules.filter(rule => rule.style.getPropertyValue("border-color")).at(-1)?.style.getPropertyValue("border-color").toLowerCase(), forced ? "canvastext" : "transparent");
+        assert.equal(styleOf(badge, "background"), row === list.firstElementChild ? "#f5e2e2" : "#f5e9d2");
+      }
+      const shared = within(screen.getByRole("group", { name: "Shared badges" })).getByText("Shared stock");
+      assert.match(declarationsFor(shared).filter(rule => rule.style.getPropertyValue("border")).at(-1)?.style.getPropertyValue("border") ?? "", /^1px solid/);
+      assert.notEqual(styleOf(shared, "border-color"), "transparent");
+    } finally { style.remove(); }
+  });
 }
 
 test("only the expanded Sales checkout source loses paint without layout or focus suppression", async () => {

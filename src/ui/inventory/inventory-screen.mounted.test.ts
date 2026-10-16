@@ -510,6 +510,31 @@ test("requests the owning App to refresh sidebar alerts after a successful mutat
   assert.equal(ownerRefreshes, 1);
 });
 
+test("stock alerts group their heading and description before the read-only body", async () => {
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [
+      { product_id: 2, product_name: "Cuaderno A5", quantity: 1, classification: "low_stock" },
+      { product_id: 3, product_name: "Jabón neutro", quantity: 0, classification: "out_of_stock" },
+    ] };
+    if (command === "browse_products_command") return browse([]);
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const region = screen.getByRole("region", { name: "Alertas de stock" });
+  const heading = within(region).getByRole("heading", { name: "Alertas de stock", level: 2 });
+  const header = heading.closest("header");
+  assert.ok(header, "the alert heading belongs to a header");
+  assert.ok(within(header).getByText("Productos en catálogo activo con stock crítico o agotado. Solo lectura."));
+  const list = await within(region).findByRole("list");
+  assert.equal(header.contains(list), false);
+  assert.ok(header.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING);
+  assert.deepEqual(within(list).getAllByRole("listitem").map(item => item.textContent), [
+    "Jabón neutroSin stock: 0", "Cuaderno A5Stock bajo: 1",
+  ]);
+  assert.equal(within(region).queryAllByRole("button").length, 0);
+  assert.equal(within(region).queryAllByRole("link").length, 0);
+});
+
 test("shows loading/no-results, physical-count validation, and exact prioritized stock cues", async () => {
   let searches = 0;
   let resolveSearch!: (value: unknown) => void;
@@ -554,8 +579,8 @@ test("shows loading/no-results, physical-count validation, and exact prioritized
   await waitFor(() => assert.equal(physicalCount, 0));
   assert.equal((physicalCountChoice as HTMLInputElement).checked, true);
   const items = within(screen.getByRole("region", { name: "Alertas de stock" })).getAllByRole("listitem");
-  assert.match(items[0].textContent ?? "", /Sin stock: 0.*Correa/);
-  assert.match(items[1].textContent ?? "", /Stock bajo: 1.*Bujía/);
+  assert.match(items[0].textContent ?? "", /Correa.*Sin stock: 0/);
+  assert.match(items[1].textContent ?? "", /Bujía.*Stock bajo: 1/);
 });
 
 test("requires an accessible Catalog password for physical counts and never exposes the secret", async () => {

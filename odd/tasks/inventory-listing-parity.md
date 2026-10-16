@@ -25,6 +25,9 @@ Delivery strategy: ask-on-risk; no PR requested. Resolve oversized delivery stra
 - [x] T4 — Correct toolbar composition and alerts geometry from Windows feedback. **Verified; work-unit commit `2d786cd`**. Delegate one bounded writer: Inventory-only heading/toggle header, divider and broad search/filter form in rounded light panel; outlined active toggle matching accepted screenshot; alerts radius 32px. Results remain independent and inline operations unchanged.
 - [x] T5 — Verify corrected visual contracts and regressions. **Automated checks and native review complete; Windows visual acceptance pending**. Full tests, typecheck/build, native review and honest rendered-Windows validation limitation.
 
+- [x] T6 — Match complete stock-alert composition to approved mockup. **Implemented and writer checks passed; no commit authorized**. Group heading/description above full-width divider, rounded soft alert rows without severity stripe, soft status pills. Preserve all alert states, ordering, read-only semantics and behavior.
+- [x] T7 — Verify alert correction and review candidate. **Automated checks/review complete; Windows visual acceptance pending**. Full tests/types/build and native review; new Windows screenshot acceptance required.
+
 ## Acceptance and verification
 Agreed user-facing seams: rendered ProductBrowser controls and mounted Inventory screen interactions, preserving existing Sales/Catalog mounted contracts.
 Behavioral changes use vertical RED/GREEN tests: toggle state and accessible naming, unchanged browse calls/filters/page, same product facts/selection in either view, reset retains view/browser state, loading/error/empty and stale responses preserved. CSS geometry assertions are structural only, never visual proof.
@@ -66,5 +69,14 @@ Route: delegated writer (non-trivial multi-file markup/CSS/tests), single writer
 - Assessment: medium risk, large runtime writer; writer self-verification stands, no separate verifier required. Native reliability review `review-e85fe1f5f1ff8643` approved and exact acknowledgement returned authority burned for target `sha256:5a1869a29cd80f91ea8163dd78742868c4abbd5c9ade2667beed449c757fc03a` (163 diff lines including task tracking). No further bound STATUS.
 - Correction work-unit commit: `2d786cd` (`fix(inventory): match approved toolbar and alert panel design`). Final candidate including task closure was also approved and acknowledged in native review `review-8ed62b8dea7d4d31`. Windows rendering/geometry remains unverified.
 
+## Remaining alerts correction
+User screenshot `/tmp/screenshot-2026-10-15_20-59-03.png` shows outer radius improved but alerts interior rejected. Parent compared directly against `docs/design/velay-v1/inventario-tabla.png`: heading and description must precede full-width divider; rows need pronounced rounded corners, no thick left stripe, muted surface and soft severity pills rather than outlined badges. User explicitly authorized correction. No new commit/push authorization inferred.
+Confirmed current implementation: Inventory alerts use shared Panel heading plus description sibling; CSS uses control radius and4px severity edge. Use Inventory-local header/body structure and CSS, never alter shared Panel or Badge globally.
+Route: delegated writer due multiple non-trivial files; forecast100–200 authored lines, advisory only. Existing toolbar/results and stock operations are non-goals. Test DOM order/named region and CSS cascade for rows/badges plus all alert states; jsdom does not prove native geometry.
+
+## Alerts interior implementation evidence
+Writer `mva9ktw7-a-ukjm`: four allowed files +105/-14 (119 authored lines). Parent spot-checked complete alerts markup and CSS diff. Semantic header groups title/description, padded body,24px rows without stripe, scoped soft pills and forced-color borders; product precedes status in reading order.
+Observed RED: missing header/product-first order then missing divider; GREEN87/87 focused,695/695 full (zero skipped), test typecheck, production build82 modules and diff check pass. Existing diagnostics/build warnings remain, no new categories. Loading/empty/unavailable/retry/order and independent refresh preserved. Native Windows geometry still pending.
+
 ## Next step
-Correction is implemented, automatically verified and authorized for feature-branch delivery; obtain matching Windows screenshots for visual acceptance. Do not claim visual parity is accepted yet. Modal remains deferred. Parent owns this task document and its Engram mirror.
+Assessment medium/large writer accepted writer verification without separate verifier. Native reliability review `review-117a0c7b9fb588e5` approved and exact acknowledgement burned authority for target `sha256:5932bef954545af7182329f3e1b10d21bf6c0a5bc1f67432363902a712705b33`. Source unchanged after closure; only passive task completion recorded. New Windows screenshots needed before visual acceptance. No staging, commits or push authorized for this iteration. Modal deferred. Parent owns task document and mirror.
