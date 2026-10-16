@@ -1324,6 +1324,30 @@ body:has([data-ui-inventory-dialog]) [data-ui-shell-content] { overflow: hidden;
 [data-ui-inventory-dialog] > p { color: var(--color-text-muted); }
 [data-ui-inventory-dialog-body] { min-block-size: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
 [data-ui-inventory-dialog] [data-ui-inventory-selection] { border-radius: 24px; }
+[data-ui-inventory-dialog] [data-ui-inventory-choice] { border-radius: 24px; }
+[data-ui-inventory-dialog] [data-ui-field-control]:not([data-ui-field-control="money"]) > input { border-radius: 16px; }
+/* The complete currency field owns its corners and ring, never the inner seam. */
+[data-ui-inventory-dialog] [data-ui-field-control="money"] {
+  border: 1px solid var(--color-border-strong);
+  border-radius: 16px;
+  background: var(--color-surface);
+}
+[data-ui-inventory-dialog] [data-ui-field-control="money"] > span {
+  border: 0;
+  border-radius: 16px 0 0 16px;
+  background: transparent;
+}
+[data-ui-inventory-dialog] [data-ui-field-control="money"] > input,
+[data-ui-inventory-dialog] [data-ui-field-control="money"] > input[aria-invalid="true"] {
+  border: 0;
+  border-radius: 0 16px 16px 0;
+  background: transparent;
+}
+[data-ui-inventory-dialog] [data-ui-field-control="money"]:has(> input:disabled) { background: var(--color-disabled-surface); }
+[data-ui-inventory-dialog] [data-ui-field-control="money"]:has(> input:disabled) > span { color: var(--color-disabled-text); }
+[data-ui-inventory-dialog] [data-ui-field-control="money"]:has(> input[aria-invalid="true"]) { border: 2px solid var(--color-danger); background: var(--color-danger-surface); }
+[data-ui-inventory-dialog] [data-ui-field-control="money"]:has(> input:focus-visible) { outline-width: 3px; outline-style: solid; outline-color: var(--color-focus); outline-offset: 2px; }
+[data-ui-inventory-dialog] [data-ui-field-control="money"] > input:focus-visible { outline-style: none; outline-width: 0; }
 [data-ui-inventory-dialog] [data-ui-inventory-identity] { flex-basis: 100%; }
 [data-ui-inventory-dialog] [data-ui-inventory-fields] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 [data-ui-inventory-dialog] [data-ui-field]:not([data-ui-field="money"]) { grid-column: 1 / -1; }
@@ -1336,6 +1360,9 @@ body:has([data-ui-inventory-dialog]) [data-ui-shell-content] { overflow: hidden;
 }
 @media (forced-colors: active) {
   [data-ui-inventory-dialog] { border-color: CanvasText; forced-color-adjust: auto; }
+  [data-ui-inventory-dialog] [data-ui-field-control="money"],
+  [data-ui-inventory-dialog] [data-ui-field-control="money"]:has(> input[aria-invalid="true"]) { border-color: CanvasText; forced-color-adjust: auto; }
+  [data-ui-inventory-dialog] [data-ui-field-control="money"]:has(> input:focus-visible) { outline-color: Highlight; }
 }
 
 [data-ui-movement-ledger] { display: grid; align-content: start; gap: var(--space-5); }

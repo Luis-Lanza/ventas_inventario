@@ -138,6 +138,48 @@ test("a newly pending dialog finishes its opening instead of stranding hidden co
   assert.equal(within(dialog).getByRole("button", { name: "Guardando…" }).hasAttribute("disabled"), true);
 });
 
+for (const forced of [false, true]) test(`Inventory entry/count retain rounded cards and native fields through selection, errors and pending (forced=${forced})`, async () => {
+  const style = document.createElement("style");
+  style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  document.head.append(style);
+  if (forced) style.textContent = Array.from(style.sheet!.cssRules).map((rule) =>
+    rule.type === 4 && (rule as CSSMediaRule).conditionText === "(forced-colors: active)"
+      ? Array.from((rule as CSSMediaRule).cssRules).map((child) => child.cssText).join("\n") : rule.cssText).join("\n");
+  try {
+    const { invoker } = fixture();
+    await userEvent.click(invoker.current!);
+    const dialog = screen.getByRole("dialog");
+    const check = () => {
+      for (const radio of within(dialog).getAllByRole("radio")) {
+        assert.equal(getComputedStyle(radio.closest("label")!).borderRadius, "24px");
+        assert.equal(radio.getAttribute("type"), "radio");
+      }
+      for (const input of dialog.querySelectorAll('[data-ui-field]:not([data-ui-field="money"]) input')) {
+        assert.equal(getComputedStyle(input).borderRadius, "16px");
+        input.setAttribute("data-ui-focus-visible", "true");
+        assert.equal(getComputedStyle(input).outlineWidth, "3px");
+        assert.equal(getComputedStyle(input).outlineOffset, "2px");
+        input.removeAttribute("data-ui-focus-visible");
+      }
+      assert.equal(getComputedStyle(dialog).borderRadius, "32px");
+      assert.equal(getComputedStyle(within(dialog).getByRole("button", { name: "Nueva operación" })).borderRadius, "999px");
+    };
+    check();
+    const count = within(dialog).getByRole("radio", { name: /Conteo físico/ });
+    await userEvent.click(count);
+    assert.equal(document.activeElement, count);
+    assert.equal((count as HTMLInputElement).checked, true);
+    assert.equal(within(dialog).getByLabelText("Motivo").getAttribute("aria-invalid"), "true");
+    check();
+    fireEvent.change(within(dialog).getByRole("spinbutton"), { target: { value: "6" } });
+    fireEvent.change(within(dialog).getByLabelText("Motivo"), { target: { value: "Control" } });
+    fireEvent.change(within(dialog).getByLabelText("Contraseña del catálogo"), { target: { value: "password" } });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Confirmar operación" }));
+    assert.equal((within(dialog).getByLabelText("Motivo") as HTMLInputElement).disabled, true);
+    check();
+  } finally { style.remove(); }
+});
+
 test("Inventory CSS bounds one body scroller, stacks count fields and reserves three desktop price columns", async () => {
   // No meaningful jsdom visual RED: geometry and native clipping require a running desktop.
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");

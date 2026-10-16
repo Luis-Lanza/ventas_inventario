@@ -476,6 +476,68 @@ test("checkout currency keeps a whole-group focus ring in forced colors", async 
   } finally { style.remove(); }
 });
 
+for (const forced of [false, true]) for (const state of ["normal", "error", "disabled"] as const) {
+  test(`Inventory currency has continuous rounded group geometry and focus: ${state}, forced=${forced} (cascade only)`, async () => {
+    const style = await mountBaseStyles();
+    try {
+      if (forced) activateForcedColors(style);
+      // jsdom cannot reliably invalidate :has(:focus-visible) or resolve token
+      // shorthands. Activate focus declarations and resolve colors, not geometry.
+      for (const token of ["--color-border-strong", "--color-focus", "--color-danger"]) {
+        style.textContent = style.textContent!.replaceAll(`var(${token})`, styleOf(document.documentElement, token));
+      }
+      style.textContent = style.textContent!.replaceAll(":focus-visible", '[data-ui-focus-visible="true"]');
+      const money = (label: string) => createElement(Field, { kind: "money", label,
+        error: state === "error" ? "Revisá el importe" : undefined,
+        control: createElement("input", { defaultValue: "35,50", disabled: state === "disabled", "data-ui-focus-visible": state !== "disabled" ? "true" : undefined }),
+      });
+      render(createElement("div", null,
+        createElement("div", { "data-ui-inventory-dialog": true },
+          ...["Precio de compra (Bs)", "Precio de venta (Bs)", "Precio mínimo de venta (Bs)"].map(money)),
+        createElement("section", { "aria-label": "Shared currency" }, money("Otro importe"))));
+      const system = document.createElement("span");
+      system.style.outlineColor = "Highlight"; system.style.borderColor = "CanvasText";
+      document.body.append(system);
+      try {
+        for (const input of document.querySelectorAll<HTMLInputElement>('[data-ui-inventory-dialog] input')) {
+          const group = input.parentElement!;
+          const prefix = group.querySelector("span")!;
+          if (state !== "disabled") {
+            assert.equal(styleOf(group, "outline-width"), "3px");
+            assert.equal(styleOf(group, "outline-offset"), "2px");
+            assert.equal(styleOf(group, "outline-style"), "solid");
+            assert.equal(styleOf(group, "outline-color"), forced ? styleOf(system, "outline-color") : "rgb(197, 104, 69)");
+            assert.equal(styleOf(input, "outline-width"), "0px");
+          }
+          assert.equal(styleOf(group, "border-radius"), "16px");
+          assert.equal(styleOf(prefix, "border-radius"), "16px 0 0 16px");
+          assert.equal(styleOf(input, "border-radius"), "0 16px 16px 0");
+          assert.equal(styleOf(prefix, "border-top-width"), "0px");
+          assert.equal(styleOf(input, "border-top-width"), "0px");
+          assert.equal(styleOf(prefix, "background"), "transparent");
+          assert.equal(styleOf(input, "background"), "transparent");
+          assert.notEqual(styleOf(group, "overflow"), "hidden");
+          assert.equal(prefix.textContent, "Bs");
+          assert.equal(input.disabled, state === "disabled");
+          assert.ok(input.labels?.length);
+          assert.equal(styleOf(group, "background"), state === "error" ? "#f5e2e2" : state === "disabled" ? "#eee7dc" : "#fffcf7");
+          assert.equal(styleOf(group, "border-top-width"), state === "error" ? "2px" : "1px");
+          if (forced) assert.equal(styleOf(group, "border-top-color"), styleOf(system, "border-top-color"));
+          else if (state === "error") assert.equal(styleOf(group, "border-top-color"), "rgb(163, 63, 70)");
+          if (state === "error") {
+            assert.equal(input.getAttribute("aria-invalid"), "true");
+            assert.equal(document.getElementById(input.getAttribute("aria-describedby")!)?.textContent, "Revisá el importe");
+          }
+          if (state === "disabled") assert.equal(styleOf(prefix, "color"), "#817982");
+        }
+        const shared = screen.getByRole("textbox", { name: "Otro importe" });
+        assert.notEqual(styleOf(shared.parentElement!, "border-radius"), "16px");
+        assert.equal(styleOf(shared.parentElement!.querySelector("span")!, "background"), "#eee7dc");
+      } finally { system.remove(); }
+    } finally { style.remove(); }
+  });
+}
+
 test("Catalog table columns shrink and wrap while the results region retains optional horizontal scrolling", async () => {
   const style = await mountBaseStyles();
   try {
