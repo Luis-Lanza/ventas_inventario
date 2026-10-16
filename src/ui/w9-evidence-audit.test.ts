@@ -1003,10 +1003,38 @@ const catalogResponsiveTableCandidatePaths = [
 
 const catalogResponsiveTableUnifiedDiffSha256 = "59892e0e3e5eb56cbf47ea62be4eaf9a22e69380e9365d4fd2a354355b321126";
 
+const catalogListingParityCandidatePaths = [
+  "src/ui/catalog/catalog-maintenance-screen.ts",
+  "src/ui/catalog/product-browser.ts",
+  "src/ui/styles.css",
+  "src/ui/catalog/product-browser.test.ts",
+  "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
+  "src/ui/app-shell.mounted.test.ts",
+  "src/ui/visual-system/base-styles.mounted.test.ts",
+  "odd/tasks/catalog-listing-parity.md",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+
+// Bounded CURRENT structural checks only: no deterministic byte receipt, rendered
+// behavior proof, historical execution evidence, or Windows visual acceptance.
+function assertCatalogListingParityCurrentCandidate(changedPaths: string[]) {
+  assert.deepEqual([...changedPaths].sort(), [...catalogListingParityCandidatePaths].sort(), "CURRENT listing-parity exact whole profile");
+  assert.deepEqual(selectCurrentCandidate(changedPaths), { status: "SELECTED", profile: "listing-parity", owner: "catalog" });
+  assert.match(read("src/ui/catalog/catalog-maintenance-screen.ts"), /"data-ui-catalog-products": true/, "CURRENT Catalog Products container marker");
+  const browser = read("src/ui/catalog/product-browser.ts");
+  assert.match(browser, /"data-ui-catalog-table-scroll": true, role: "region", tabIndex: 0/, "CURRENT focusable table results region marker");
+  assert.match(browser, /"data-ui-catalog-product-card": true/, "CURRENT Catalog gallery card marker");
+  assert.match(browser, /"aria-label": "Vista de galería"/, "CURRENT named gallery toggle marker");
+  const styles = read("src/ui/styles.css");
+  assert.match(styles, /\[data-ui-catalog-workspace\] :is\(\[data-ui-catalog-table-scroll\], \[data-ui-catalog-results\]\) \{[^}]*overflow: auto;/, "CURRENT results wrapper overflow declaration");
+  assert.match(styles, /\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\] \{[^}]*overflow: visible;/, "CURRENT inner list non-scroll declaration");
+  assert.match(styles, /@container catalog-browse \(min-width: 68rem\) \{[^}]*\}[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/, "CURRENT bounded desktop four-column declaration");
+}
+
 type CurrentCandidateSelection =
   | { status: "NO_CANDIDATE" }
   | { status: "SELECTED"; profile: "desktop-fixture" | "R4" | "R3"; owner: "operations" }
-  | { status: "SELECTED"; profile: "T3" | "responsive-table" | "catalog-access"; owner: "catalog" }
+  | { status: "SELECTED"; profile: "T3" | "responsive-table" | "catalog-access" | "listing-parity"; owner: "catalog" }
   | { status: "REJECTED"; reason: "NO_COMPLETE_PROFILE" | "AMBIGUOUS_PROFILE" };
 
 // Path selection is not byte acceptance or historical execution evidence.
@@ -1026,6 +1054,7 @@ function selectCurrentCandidate(acquiredPaths: readonly string[]): CurrentCandid
   if (complete(grossProfitReportCandidatePaths)) matches.push({ status: "SELECTED", profile: "T3", owner: "catalog" });
   if (complete(catalogResponsiveTableCandidatePaths)) matches.push({ status: "SELECTED", profile: "responsive-table", owner: "catalog" });
   if (complete(catalogAccessCandidatePaths)) matches.push({ status: "SELECTED", profile: "catalog-access", owner: "catalog" });
+  if (complete(catalogListingParityCandidatePaths)) matches.push({ status: "SELECTED", profile: "listing-parity", owner: "catalog" });
   if (matches.length > 1) return { status: "REJECTED", reason: "AMBIGUOUS_PROFILE" };
   return matches[0] ?? { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" };
 }
@@ -1094,6 +1123,17 @@ const currentCandidatePolicyExamples: {
     "src/ui/visual-system/base-styles.mounted.test.ts",
     "src/ui/w9-evidence-audit.test.ts",
   ] },
+  { profile: "listing-parity", owner: "catalog", paths: [
+    "src/ui/catalog/catalog-maintenance-screen.ts",
+    "src/ui/catalog/product-browser.ts",
+    "src/ui/styles.css",
+    "src/ui/catalog/product-browser.test.ts",
+    "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
+    "src/ui/app-shell.mounted.test.ts",
+    "src/ui/visual-system/base-styles.mounted.test.ts",
+    "odd/tasks/catalog-listing-parity.md",
+    "src/ui/w9-evidence-audit.test.ts",
+  ] },
   { profile: "catalog-access", owner: "catalog", paths: [
     "odd/tasks/catalog-access-and-profit-report.md",
     "src-tauri/src/application/catalog/mod.rs",
@@ -1153,12 +1193,32 @@ test("W9 current candidate policy rejects mixed subsets and complete R4 with par
 
 test("W9 current candidate policy rejects globally allowlisted extras and its own task record", () => {
   for (const { paths } of currentCandidatePolicyExamples) {
-    for (const extra of ["package.json", "odd/tasks/velay-w9-historical-candidates.md", "unrelated.txt"]) {
+    for (const extra of ["package.json", "odd/tasks/velay-w9-historical-candidates.md", "src-tauri/src/lib.rs", "src/ui/unrelated.ts", "unrelated.txt"].filter(path => !paths.includes(path))) {
       assert.deepEqual(selectCurrentCandidate([...paths, extra]), {
         status: "REJECTED", reason: "NO_COMPLETE_PROFILE",
       });
     }
   }
+});
+
+test("W9 current candidate policy acquires the untracked listing ledger without excluding neighboring tasks", () => {
+  const example = currentCandidatePolicyExamples.find(({ profile }) => profile === "listing-parity")!;
+  const acquired = changedPathsFromGitOutput(
+    example.paths.filter(path => path !== "odd/tasks/catalog-listing-parity.md").join("\n"),
+    "odd/tasks/catalog-listing-parity.md\n",
+  );
+  assert.deepEqual(acquired, [...example.paths].sort());
+  assert.doesNotThrow(() => assertW9ProtectedDiffPolicy(acquired, currentPackage, baselinePackage, currentLock, baselineLock, ""));
+  assert.deepEqual(selectCurrentCandidate(acquired), { status: "SELECTED", profile: "listing-parity", owner: "catalog" });
+  const withNeighbor = changedPathsFromGitOutput(acquired.join("\n"), "odd/tasks/catalog-listing-parity-unrelated.md\n");
+  assert.deepEqual(selectCurrentCandidate(withNeighbor), { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" });
+  assert.throws(() => assertW9ProtectedDiffPolicy(withNeighbor, currentPackage, baselinePackage, currentLock, baselineLock, ""), /unexpected protected-path drift/);
+});
+
+test("W9 current candidate policy keeps protected content checks independent of selected ownership", () => {
+  const example = currentCandidatePolicyExamples.find(({ profile }) => profile === "desktop-fixture")!;
+  assert.deepEqual(selectCurrentCandidate(example.paths), { status: "SELECTED", profile: "desktop-fixture", owner: "operations" });
+  assert.throws(() => assertW9ProtectedDiffPolicy(example.paths, currentPackage, baselinePackage, currentLock, baselineLock, "+ unrelated_backend_drift();"), /missing ticket-11 marker: command_builder/);
 });
 
 test("W9 current candidate policy treats order and duplicates as the acquired normalized set", () => {
@@ -1460,6 +1520,7 @@ function assertW9ProtectedDiffPolicy(
     "odd/tasks/dashboard-realized-gross-profit.md",
     "odd/tasks/dashboard-partial-gross-profit.md",
     "odd/tasks/configurable-low-stock-threshold.md",
+    "odd/tasks/catalog-listing-parity.md",
   ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
   assert.deepEqual(unexpectedPaths, [], "unexpected protected-path drift");
@@ -1642,7 +1703,15 @@ test("W9 binds every changed Windows desktop-fix file and task byte to exact has
       ? execFileSync("git", ["diff", "--unified=0", "HEAD", "--", path], { cwd: root, encoding: "utf8" })
       : readFileSync(resolve(root, path));
   }
-  assertWindowsDesktopFixDiffAllowlist(diffs);
+  const selection = selectCurrentCandidate(changedPaths);
+  if (selection.status === "SELECTED" && selection.profile === "listing-parity") {
+    // The entire nine-path candidate, including audit self-ownership, belongs to
+    // the CURRENT Catalog validator; historical hashes remain unchanged.
+    assertCatalogListingParityCurrentCandidate(changedPaths);
+    assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, "");
+  } else {
+    assertWindowsDesktopFixDiffAllowlist(diffs);
+  }
 
   const commandBackup = read("src-tauri/src/commands/backup.rs");
   const storeBackup = read("src-tauri/src/infrastructure/filesystem/backup_store.rs");
@@ -1692,7 +1761,13 @@ test("W9 binds every changed backup-integrity file to its exact unified-zero dif
       ? execFileSync("git", ["diff", "--unified=0", "HEAD", "--", path], { cwd: root, encoding: "utf8" })
       : readFileSync(resolve(root, path));
   }
-  assertBackupIntegrityDiffAllowlist(diffs);
+  const selection = selectCurrentCandidate(changedPaths);
+  if (selection.status === "SELECTED" && selection.profile === "listing-parity") {
+    assertCatalogListingParityCurrentCandidate(changedPaths);
+    assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, "");
+  } else {
+    assertBackupIntegrityDiffAllowlist(diffs);
+  }
   const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts" && path !== "src-tauri/src/lib.rs");
   if (candidate) {
     assert.throws(
@@ -1861,6 +1936,10 @@ test("W9 binds the exact Catalog access candidate diff and untracked task bytes"
   assert.ok(selection.status === "SELECTED", "current candidate rejected: requires exactly one complete owned profile");
   if (selection.owner !== "catalog") {
     t.skip(`Owned by Operations (${selection.profile}); this wrapper supplies no candidate acceptance`);
+    return;
+  }
+  if (selection.profile === "listing-parity") {
+    assertCatalogListingParityCurrentCandidate(changedPaths);
     return;
   }
   if (selection.profile === "T3") {
