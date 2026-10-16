@@ -4,7 +4,7 @@ import { Action } from "./controls.ts";
 
 export type DialogPurpose = "restore" | "cancellation" | "routine";
 export type DialogLayout = "default" | "checkout" | "inventory";
-export type InventoryPresentation = { restoreFocusFallback: () => HTMLElement | null };
+export type InventoryPresentation = { restoreFocusFallback: () => HTMLElement | null; frameRef?: RefCallback<HTMLDivElement>; ready?: boolean; closing?: boolean };
 export type DestructivePurpose = Exclude<DialogPurpose, "routine">;
 export type CheckoutPresentation = { frameRef: RefCallback<HTMLDivElement>; ready: boolean; closing?: boolean; onBack?: () => void; restoreFocusFallback?: () => HTMLElement | null };
 export type ConfirmationDialogProps = {
@@ -85,8 +85,8 @@ function DialogFrame({
   const titleId = `${kind === "confirmation" ? "confirmation" : "form"}-title-${generated}`;
   const descriptionId = `${kind === "confirmation" ? "confirmation" : "form"}-description-${generated}`;
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const presentation = purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog" ? checkoutPresentation : undefined;
-  const inventory = purpose === "routine" && layout === "inventory" ? inventoryPresentation : undefined;
+  const inventory = purpose === "routine" && layout === "inventory" && dialogDataAttribute !== "catalog-edit-dialog" ? inventoryPresentation : undefined;
+  const presentation = purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog" ? checkoutPresentation : inventory;
   const ready = presentation?.ready ?? true;
   const readyRef = useRef(ready);
   readyRef.current = ready;
@@ -207,8 +207,10 @@ function DialogFrame({
     createElement("div", {
       id: dialogId ?? (purpose === "routine" ? "checkout-dialog" : undefined),
       ref: attachFrame, role: "dialog", tabIndex: -1,
-      "data-ui-checkout-opening": !ready || undefined,
-      "data-ui-checkout-closing": presentation?.closing || undefined,
+      "data-ui-checkout-opening": !inventory && !ready || undefined,
+      "data-ui-checkout-closing": !inventory && presentation?.closing || undefined,
+      "data-ui-inventory-opening": !!inventory && !ready || undefined,
+      "data-ui-inventory-closing": inventory?.closing || undefined,
       "aria-modal": "true", "aria-labelledby": titleId, "aria-describedby": descriptionId,
       "aria-busy": pending || undefined,
       "data-ui-confirmation-dialog": kind === "confirmation" && purpose !== "routine" || undefined,
@@ -238,11 +240,12 @@ export function ConfirmationDialog({
   }
   const onBack = purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog"
     ? checkoutPresentation?.onBack ?? onCancel : onCancel;
+  const inventoryClosing = purpose === "routine" && layout === "inventory" && dialogDataAttribute !== "catalog-edit-dialog" && inventoryPresentation?.closing;
   return createElement(DialogFrame, {
     open, purpose, layout, title, description, pending, initialFocusRef, invokerRef, checkoutPresentation, inventoryPresentation, dialogId, dialogDataAttribute,
     kind: "confirmation", onCancel, children,
     actions: createElement("div", { "data-ui-dialog-actions": true },
-      createElement(Action, { variant: "secondary", disabled: pending, onClick: () => { if (!pending) onBack(); } }, cancelLabel),
+      createElement(Action, { variant: "secondary", disabled: pending || inventoryClosing, onClick: () => { if (!pending && !inventoryClosing) onBack(); } }, cancelLabel),
       createElement(Action, { variant: purpose === "routine" ? "primary" : "destructive", pending, pendingLabel, disabled: confirmDisabled, onClick: () => { if (!pending && !confirmDisabled) onConfirm(); } }, confirmLabel)),
   });
 }

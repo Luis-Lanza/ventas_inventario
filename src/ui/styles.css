@@ -1313,6 +1313,8 @@ html:has([data-ui-persisted-summary]), body:has([data-ui-persisted-summary]),
 }
 
 /* Inventory owns one native body scroll; heading and actions never enter that scroll. */
+[data-ui-inventory-dialog]:is([data-ui-inventory-opening], [data-ui-inventory-closing]) > * { visibility: hidden; pointer-events: none; }
+[data-ui-inventory-dialog][data-ui-inventory-closing] { pointer-events: none; }
 [data-ui-dialog-backdrop]:has([data-ui-inventory-dialog]) { padding: 16px; overscroll-behavior: contain; }
 html:has([data-ui-inventory-dialog]), body:has([data-ui-inventory-dialog]),
 [data-ui-shell-content]:has([data-ui-inventory-dialog]) { overflow: hidden; }

@@ -29,7 +29,7 @@ export function captureCheckoutOpening(trigger: HTMLElement, id: number): Checko
     surface: { backgroundColor: style?.backgroundColor ?? "transparent", borderColor: style?.borderColor ?? "transparent", boxShadow: style?.boxShadow ?? "none" } };
 }
 
-export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening, ready: () => void, direction: "open" | "close" = "open", closingFrame?: CheckoutOpening) {
+export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening, ready: () => void, direction: "open" | "close" = "open", closingFrame?: CheckoutOpening, structure = { body: ":scope > [data-ui-sales-checkout]", actions: ":scope > [data-ui-dialog-actions]" }) {
   const owner = frame.ownerDocument, view = owner.defaultView;
   let live = true, terminal = false;
   let context: gsap.Context | undefined;
@@ -42,7 +42,7 @@ export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening
   const restore = () => {
     if (restored) return;
     restored = true;
-    context?.revert();
+    try { context?.revert(); } catch { /* Restore owned declarations even when the animation engine fails. */ }
     const priorProperties = new Set(original.map(([property]) => property));
     // CSS shorthand writes can leave expanded longhands behind after revert.
     for (const property of ownedStyles) if (!priorProperties.has(property)) frame.style.removeProperty(property);
@@ -73,8 +73,8 @@ export function startCheckoutMotion(frame: HTMLElement, opening: CheckoutOpening
     if (!view || reduced?.matches || !frame.isConnected || !opening.trigger.isConnected
       || opening.trigger.ownerDocument !== owner || !valid(source.rect) || !valid(current.rect)
       || (style?.writingMode && style.writingMode !== "horizontal-tb")
-      || !frame.querySelector(":scope > [data-ui-sales-checkout]")
-      || !frame.querySelector(":scope > [data-ui-dialog-actions]")) {
+      || !frame.querySelector(structure.body)
+      || !frame.querySelector(structure.actions)) {
       finish();
     } else {
       context = gsap.context(() => {}, frame);

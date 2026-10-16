@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { StrictMode, createElement } from "react";
+import { gsap } from "gsap";
 import { renderToStaticMarkup } from "react-dom/server";
 import { mockIPC as installIPC } from "@tauri-apps/api/mocks";
 import { invoke } from "@tauri-apps/api/core";
@@ -46,6 +47,57 @@ async function searchAndSelect() {
   await user.keyboard("{Enter}");
   return user;
 }
+
+test("real selection geometry retains only a locked credential-free exit; obsolete completions cannot close a fresh draft", async (t) => {
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    throw Error(`No business command expected: ${command}`);
+  });
+  const rect = HTMLElement.prototype.getBoundingClientRect;
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", function(this: HTMLElement) {
+    if (this.matches('[data-ui-inventory-dialog]')) return { left: 100, top: 20, width: 800, height: 600 } as DOMRect;
+    if (this.textContent === "Seleccionar") return { left: 30, top: 50, width: 120, height: 40 } as DOMRect;
+    return rect.call(this);
+  });
+  const completions: Array<() => void> = [];
+  t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
+  render(createElement(StrictMode, null, createElement(InventoryScreen)));
+  const opener = await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" });
+  await userEvent.click(opener);
+  const dialog = screen.getByRole("dialog");
+  assert.equal(dialog.style.left, "30px"); assert.equal(dialog.style.width, "120px");
+  assert.equal(document.activeElement, dialog);
+  assert.ok(within(dialog).getByRole("button", { name: "Confirmar operación" }).hasAttribute("disabled"));
+  act(() => completions.at(-1)!());
+  assert.equal(document.activeElement, within(dialog).getByRole("spinbutton"));
+  const count = within(dialog).getByRole("radio", { name: /Conteo físico/ });
+  await userEvent.click(count);
+  assert.equal(screen.getByRole("dialog"), dialog);
+  assert.equal(document.activeElement, count);
+  act(() => completions.at(-1)!());
+  fireEvent.change(within(dialog).getByLabelText("Contraseña del catálogo"), { target: { value: "secret" } });
+  fireEvent.keyDown(document, { key: "Escape" });
+  const exit = completions.at(-1)!;
+  assert.equal(dialog.style.visibility, "", `exit must remain visible until completion (${completions.length} tweens)`);
+  assert.equal(screen.getByRole("dialog"), dialog);
+  assert.equal((within(dialog).getByLabelText("Contraseña del catálogo") as HTMLInputElement).value, "");
+  assert.ok(opener.closest("[inert]"));
+  fireEvent.click(opener);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirmar operación" }));
+  assert.equal(screen.getAllByRole("dialog").length, 1);
+  act(() => exit());
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(opener.closest("[inert]"), null);
+  assert.equal(document.activeElement, opener);
+  await userEvent.click(opener);
+  const fresh = screen.getByRole("dialog");
+  act(() => { exit(); completions[0](); });
+  assert.equal(screen.getByRole("dialog"), fresh);
+  act(() => completions.at(-1)!());
+  assert.equal((within(fresh).getByRole("spinbutton") as HTMLInputElement).value, "");
+  assert.ok(within(fresh).getByRole("radio", { name: /Entrada de stock/ }).getAttribute("checked") !== null);
+});
 
 test("selection opens a named modal over the same inert browser; direct dismissal preserves loaded alerts and focus", async () => {
   let loads = 0;

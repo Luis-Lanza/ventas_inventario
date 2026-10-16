@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement, createRef, StrictMode, useReducer, useState } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { createInventoryFlow, initialInventoryState } from "./inventory-flow.ts";
+import { gsap } from "gsap";
+import { captureInventoryOpening } from "./inventory-operation-motion.ts";
 import { InventoryOperationDialog } from "./inventory-operation-dialog.ts";
 
 function fixture() {
@@ -72,6 +74,69 @@ for (const unavailable of ["disabled", "hidden", "inert", "detached", "offscreen
     } finally { root.getClientRects = previousRects; }
   });
 }
+
+test("mode motion stays in one dialog, preserves radio focus, avoids keystroke replay, and invalidates old epochs", async (t) => {
+  const rect = HTMLElement.prototype.getBoundingClientRect;
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", function(this: HTMLElement) {
+    return this.matches('[data-ui-inventory-dialog]')
+      ? { left: 100, top: 20, width: 800, height: this.querySelector('input[type="password"]') ? 500 : 650 } as DOMRect
+      : rect.call(this);
+  });
+  const completions: Array<() => void> = [];
+  t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => {
+    assert.equal(vars.scale, undefined);
+    completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween;
+  });
+  const { view, invoker } = fixture();
+  await userEvent.click(invoker.current!);
+  const dialog = screen.getByRole("dialog");
+  const count = within(dialog).getByRole("radio", { name: /Conteo físico/ });
+  await userEvent.click(count);
+  assert.equal(document.activeElement, count);
+  assert.equal(dialog.style.height, "650px");
+  assert.equal(completions.length, 1);
+  const obsolete = completions[0];
+  fireEvent.change(within(dialog).getByLabelText("Contraseña del catálogo"), { target: { value: "secret" } });
+  fireEvent.change(within(dialog).getByLabelText("Motivo"), { target: { value: "control" } });
+  assert.equal(completions.length, 1);
+  const entry = within(dialog).getByRole("radio", { name: /Entrada de stock/ });
+  await userEvent.click(entry);
+  assert.equal(document.activeElement, entry);
+  assert.equal(screen.getByRole("dialog"), dialog);
+  assert.equal(completions.length, 2);
+  act(() => obsolete());
+  assert.ok(within(dialog).getByRole("button", { name: "Confirmar operación" }).hasAttribute("disabled"));
+  act(() => window.dispatchEvent(new Event("resize")));
+  assert.equal(dialog.style.height, "");
+  assert.equal(document.activeElement, entry);
+  assert.equal(within(dialog).getByRole("button", { name: "Confirmar operación" }).hasAttribute("disabled"), false);
+  await userEvent.click(count);
+  assert.equal((within(dialog).getByLabelText("Contraseña del catálogo") as HTMLInputElement).value, "");
+  view.unmount();
+  act(() => completions.forEach((done) => done()));
+  assert.equal(document.querySelector('[data-ui-inventory-dialog]'), null);
+});
+
+test("a newly pending dialog finishes its opening instead of stranding hidden controls", async (t) => {
+  const trigger = document.createElement("button"); document.body.append(trigger); t.after(() => trigger.remove());
+  trigger.getBoundingClientRect = () => ({ left: 30, top: 50, width: 120, height: 40 } as DOMRect);
+  const rect = HTMLElement.prototype.getBoundingClientRect;
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", function(this: HTMLElement) {
+    return this.matches('[data-ui-inventory-dialog]') ? { left: 100, top: 20, width: 800, height: 600 } as DOMRect : rect.call(this);
+  });
+  t.mock.method(gsap, "to", () => ({} as gsap.core.Tween));
+  const opening = captureInventoryOpening(trigger, 1);
+  const state = { ...initialInventoryState, product: { product_id: 1, name: "Filtro", available_quantity: 8 } };
+  const props = { state, dispatch: () => {}, password: "", onPasswordChange: () => {}, onClose: () => {}, onConfirm: () => {},
+    invokerRef: { current: trigger }, restoreFocusFallback: () => null, ordinaryFailure: false, opening };
+  const view = render(createElement(InventoryOperationDialog, props));
+  assert.equal(screen.getByRole("dialog").style.width, "120px");
+  view.rerender(createElement(InventoryOperationDialog, { ...props, state: { ...state, confirmation: "pending" } }));
+  const dialog = screen.getByRole("dialog");
+  assert.equal(dialog.hasAttribute("data-ui-inventory-opening"), false);
+  assert.equal(dialog.style.width, "");
+  assert.equal(within(dialog).getByRole("button", { name: "Guardando…" }).hasAttribute("disabled"), true);
+});
 
 test("Inventory CSS bounds one body scroller, stacks count fields and reserves three desktop price columns", async () => {
   // No meaningful jsdom visual RED: geometry and native clipping require a running desktop.

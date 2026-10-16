@@ -7,6 +7,7 @@ import { useActionNotifications } from "../visual-system/action-notifications.ts
 import { createInventoryFlow, initialInventoryState, stockEntryPrices, type InventoryAction, type InventoryProduct, type InventoryState } from "./inventory-flow.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, type CatalogViewMode } from "../catalog/product-browser.ts";
 import { InventoryOperationDialog, inventoryOperationValid } from "./inventory-operation-dialog.ts";
+import { captureInventoryOpening } from "./inventory-operation-motion.ts";
 export { InventoryOperationChoices } from "./inventory-operation-dialog.ts";
 
 export const inventoryScreenDescription = "Operaciones de entrada de stock y conteo físico.";
@@ -42,6 +43,10 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
   const [catalogPassword, setCatalogPassword] = useState("");
   const root = useRef<HTMLElement>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
+  const [opening, setOpening] = useState<ReturnType<typeof captureInventoryOpening> | null>(null);
+  const [retiring, setRetiring] = useState<InventoryState | null>(null);
+  const presentationLocked = useRef(false);
+  const operationId = useRef(0);
   const mounted = useRef(true);
   const searchAttempt = useRef(0);
   const alertAttempt = useRef(0);
@@ -90,7 +95,16 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     setOrdinaryFailure(false);
     dispatch({ type: "discard" });
   };
-  const close = () => { if (!confirmLocked.current) resetDraft(); };
+  const close = () => {
+    if (confirmLocked.current || presentationLocked.current || !state.product) return;
+    presentationLocked.current = true;
+    // Only public product/form geometry survives. Credentials, retry identity,
+    // free text and feedback are not part of the retiring presentation.
+    setRetiring({ ...initialInventoryState, product: state.product, operation: state.operation,
+      entry_quantity: state.entry_quantity, physical_count: state.physical_count,
+      purchase_price: state.purchase_price, sale_price: state.sale_price, minimum_sale_price: state.minimum_sale_price });
+    resetDraft();
+  };
   const confirm = async () => {
     if (!state.product || confirmLocked.current || !inventoryOperationValid(state, catalogPassword)) return;
     confirmLocked.current = true;
@@ -133,7 +147,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     createElement("div", { "data-ui-inventory-layout": true },
       createElement("section", { "data-ui-panel": true, "aria-label": "Operación de inventario" },
         createElement(ProductBrowser<InventoryBrowseProduct>, { state: browser, presentation: "inventory", inventoryViewMode: viewMode, onInventoryViewModeChange: setViewMode, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage,
-          onInventorySelect: (product, button) => { if (confirmLocked.current) return; opener.current = button; setSavedOutcome(null); setCatalogPassword(""); setOrdinaryFailure(false); dispatch({ type: "product_selected", product }); },
+          onInventorySelect: (product, button) => { if (confirmLocked.current || presentationLocked.current || state.product) return; opener.current = button; setOpening(captureInventoryOpening(button, ++operationId.current)); setSavedOutcome(null); setCatalogPassword(""); setOrdinaryFailure(false); dispatch({ type: "product_selected", product }); },
           actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending })),
       createElement("section", { "data-ui-panel": true, "data-ui-inventory-alert-panel": true, "aria-labelledby": "inventory-alert-heading" },
         createElement("header", null,
@@ -146,6 +160,8 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
             : createElement("ul", { "data-ui-inventory-alerts": true }, sortedAlerts.map((alert) => createElement("li", { key: alert.product_id },
               createElement("span", null, alert.product_name),
               createElement(Badge, { kind: alert.classification === "out_of_stock" ? "out-of-stock" : "low-stock", text: alert.classification === "out_of_stock" ? `Sin stock: ${alert.quantity}` : `Stock bajo: ${alert.quantity}` }))))))),
-    state.product ? createElement(InventoryOperationDialog, { state, dispatch, password: catalogPassword, onPasswordChange: setCatalogPassword, onClose: close, onConfirm: confirm, invokerRef: opener,
+    state.product || retiring ? createElement(InventoryOperationDialog, { state: retiring ?? state, dispatch, password: retiring ? "" : catalogPassword, onPasswordChange: setCatalogPassword, onClose: close, onConfirm: confirm, invokerRef: opener,
+      opening, closing: !!retiring, onRetired: () => { if (opening?.id !== operationId.current) return; setRetiring(null); presentationLocked.current = false; },
+
       restoreFocusFallback: () => root.current?.querySelector<HTMLElement>('input[type="search"]') ?? null, ordinaryFailure: !!notifications && ordinaryFailure }) : null);
 }

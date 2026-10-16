@@ -111,6 +111,28 @@ for (const reason of ["complete", "resize", "deadline", "exception", "initial-re
   });
 }
 
+test("additive structure opt-in does not change the legacy Sales-only default", (t) => {
+  const f = fixture(); t.after(() => f.clean());
+  f.frame.querySelector('[data-ui-sales-checkout]')!.replaceWith(document.createElement('section'));
+  let tweens = 0, ready = 0;
+  t.mock.method(gsap, "to", () => { tweens++; return {} as gsap.core.Tween; });
+  const legacy = startCheckoutMotion(f.frame, f.opening, () => ready++);
+  assert.equal(tweens, 0); assert.equal(ready, 1); legacy.dispose();
+  const opted = startCheckoutMotion(f.frame, f.opening, () => ready++, "open", undefined,
+    { body: ":scope > section", actions: ":scope > [data-ui-dialog-actions]" });
+  assert.equal(tweens, 1); assert.equal(ready, 1); opted.dispose();
+});
+
+test("a GSAP revert exception cannot strand readiness or prevent owned-style cleanup", (t) => {
+  const f = fixture(); t.after(() => f.clean());
+  t.mock.method(gsap, "context", () => ({ add: () => { throw Error("unavailable"); }, revert: () => { throw Error("revert unavailable"); } }) as unknown as gsap.Context);
+  let ready = 0;
+  const motion = startCheckoutMotion(f.frame, f.opening, () => ready++);
+  assert.equal(ready, 1);
+  motion.dispose();
+  assert.equal(f.frame.style.width, "777px");
+});
+
 test("actual frame starts outside its final bounds and restores preexisting styles before readiness", (t) => {
   const f = fixture();
   let complete: (() => void) | undefined, ready = 0;
