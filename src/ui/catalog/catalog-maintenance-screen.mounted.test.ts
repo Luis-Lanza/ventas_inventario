@@ -60,6 +60,52 @@ async function openCategoryEditor() {
   return screen.findByRole("button", { name: "Editar Filtros" });
 }
 
+test("Catalog groups its title and lock in a header while disclosure and current subview remain independent", async () => {
+  mockIPC(baseIPC);
+  render(createElement(CatalogMaintenanceScreen));
+  const heading = await screen.findByRole("heading", { name: "Catálogo", level: 1 });
+  const header = heading.closest("header");
+  assert.ok(header, "compose the screen heading and compact lock action");
+  const lock = within(header).getByRole("button", { name: "Bloquear catálogo" });
+  await screen.findByRole("button", { name: "Editar" });
+  const style = document.createElement("style");
+  style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  document.head.append(style);
+  try {
+    assert.equal(getComputedStyle(header).display, "flex");
+    assert.equal(getComputedStyle(header).flexWrap, "wrap");
+    assert.equal(getComputedStyle(header).justifyContent, "space-between");
+    assert.equal(getComputedStyle(lock).flexGrow, "0");
+    assert.equal(getComputedStyle(lock).borderRadius, "999px");
+    const summary = screen.getByText("Cambiar contraseña del catálogo");
+    assert.equal(getComputedStyle(summary).inlineSize, "fit-content");
+    assert.equal(getComputedStyle(summary).borderRadius, "999px");
+    const navigation = screen.getByRole("navigation", { name: "Vistas del catálogo" });
+    for (const button of navigation.querySelectorAll("button")) {
+      assert.equal(getComputedStyle(button).borderRadius, "999px");
+    }
+    style.textContent = style.textContent.replace(/:(hover|active|focus-visible)\b/g, '[data-test-$1]');
+    const current = within(navigation).getByRole("button", { name: "Productos" });
+    const selectedFill = getComputedStyle(current).background;
+    for (const state of ["hover", "active", "focus-visible"]) {
+      current.setAttribute(`data-test-${state}`, "");
+      assert.equal(getComputedStyle(current).background, selectedFill, `current subview keeps its fill on ${state}`);
+      current.removeAttribute(`data-test-${state}`);
+    }
+  } finally { style.remove(); }
+  const disclosure = screen.getByText("Cambiar contraseña del catálogo").closest("details")!;
+  assert.equal(header.contains(disclosure), false);
+  assert.equal(disclosure.open, false);
+  const navigation = screen.getByRole("navigation", { name: "Vistas del catálogo" });
+  assert.equal(within(navigation).getByRole("button", { name: "Productos" }).getAttribute("aria-current"), "page");
+  await userEvent.click(within(navigation).getByRole("button", { name: "Gestionar categorías" }));
+  assert.equal(within(navigation).getByRole("button", { name: "Gestionar categorías" }).getAttribute("aria-current"), "page");
+  await userEvent.click(within(navigation).getByRole("button", { name: "Productos" }));
+  await userEvent.click(screen.getByText("Cambiar contraseña del catálogo"));
+  assert.equal(disclosure.open, true);
+  assert.ok(screen.getByLabelText("Contraseña actual"));
+});
+
 test("Catalog mock rejects outer arrays before fixture dispatch", async () => {
   let calls = 0;
   const callback = mockIPC(() => { calls++; return { kind: "success" }; });

@@ -1031,10 +1031,42 @@ function assertCatalogListingParityCurrentCandidate(changedPaths: string[]) {
   assert.match(styles, /@container catalog-browse \(min-width: 68rem\) \{[^}]*\}[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/, "CURRENT bounded desktop four-column declaration");
 }
 
+const catalogVisualCorrectionCandidatePaths = [
+  "src/ui/catalog/catalog-maintenance-screen.ts",
+  "src/ui/catalog/product-browser.ts",
+  "src/ui/styles.css",
+  "src/ui/catalog/product-browser.test.ts",
+  "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
+  "src/ui/visual-system/base-styles.mounted.test.ts",
+  "odd/tasks/catalog-listing-parity.md",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+
+// CURRENT structural ownership only, not byte approval or Windows visual proof.
+function assertCatalogVisualCorrectionCurrentCandidate(changedPaths: string[]) {
+  assert.deepEqual([...changedPaths].sort(), [...catalogVisualCorrectionCandidatePaths].sort(), "CURRENT visual-correction exact whole profile");
+  assert.deepEqual(selectCurrentCandidate(changedPaths), { status: "SELECTED", profile: "visual-correction", owner: "catalog" });
+  const screen = read("src/ui/catalog/catalog-maintenance-screen.ts");
+  for (const marker of ["data-ui-catalog-products", "data-ui-catalog-header", "data-ui-catalog-navigation", "data-ui-catalog-password-change"]) {
+    assert.ok(screen.includes(`"${marker}": true`), `CURRENT Catalog marker: ${marker}`);
+  }
+  const browser = read("src/ui/catalog/product-browser.ts");
+  assert.match(browser, /"data-ui-catalog-table-scroll": true, role: "region", tabIndex: 0/);
+  assert.match(browser, /"data-ui-catalog-table-headings": true/);
+  assert.match(browser, /"data-ui-catalog-product-card": true/);
+  assert.match(browser, /"aria-label": "Vista de galería"/);
+  const styles = read("src/ui/styles.css");
+  assert.match(styles, /\[data-ui-catalog-workspace\] :is\(\[data-ui-catalog-table-scroll\], \[data-ui-catalog-results\]\) \{[^}]*overflow: auto;/);
+  assert.match(styles, /\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\] \{[^}]*overflow: visible;/);
+  assert.match(styles, /@container catalog-browse \(min-width: 68rem\) \{[^}]*\}[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(styles, /\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\] > li \{[^}]*border-radius: 32px;/);
+  assert.match(styles, /\[data-ui-catalog-workspace\] \[data-ui-catalog-toolbar-item="views"\] > \[data-ui-action\]\[aria-pressed="true"\]:is\(:hover, :active, :focus-visible\) \{[^}]*background: var\(--color-action\);/);
+}
+
 type CurrentCandidateSelection =
   | { status: "NO_CANDIDATE" }
   | { status: "SELECTED"; profile: "desktop-fixture" | "R4" | "R3"; owner: "operations" }
-  | { status: "SELECTED"; profile: "T3" | "responsive-table" | "catalog-access" | "listing-parity"; owner: "catalog" }
+  | { status: "SELECTED"; profile: "T3" | "responsive-table" | "catalog-access" | "listing-parity" | "visual-correction"; owner: "catalog" }
   | { status: "REJECTED"; reason: "NO_COMPLETE_PROFILE" | "AMBIGUOUS_PROFILE" };
 
 // Path selection is not byte acceptance or historical execution evidence.
@@ -1055,6 +1087,7 @@ function selectCurrentCandidate(acquiredPaths: readonly string[]): CurrentCandid
   if (complete(catalogResponsiveTableCandidatePaths)) matches.push({ status: "SELECTED", profile: "responsive-table", owner: "catalog" });
   if (complete(catalogAccessCandidatePaths)) matches.push({ status: "SELECTED", profile: "catalog-access", owner: "catalog" });
   if (complete(catalogListingParityCandidatePaths)) matches.push({ status: "SELECTED", profile: "listing-parity", owner: "catalog" });
+  if (complete(catalogVisualCorrectionCandidatePaths)) matches.push({ status: "SELECTED", profile: "visual-correction", owner: "catalog" });
   if (matches.length > 1) return { status: "REJECTED", reason: "AMBIGUOUS_PROFILE" };
   return matches[0] ?? { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" };
 }
@@ -1134,6 +1167,16 @@ const currentCandidatePolicyExamples: {
     "odd/tasks/catalog-listing-parity.md",
     "src/ui/w9-evidence-audit.test.ts",
   ] },
+  { profile: "visual-correction", owner: "catalog", paths: [
+    "src/ui/catalog/catalog-maintenance-screen.ts",
+    "src/ui/catalog/product-browser.ts",
+    "src/ui/styles.css",
+    "src/ui/catalog/product-browser.test.ts",
+    "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
+    "src/ui/visual-system/base-styles.mounted.test.ts",
+    "odd/tasks/catalog-listing-parity.md",
+    "src/ui/w9-evidence-audit.test.ts",
+  ] },
   { profile: "catalog-access", owner: "catalog", paths: [
     "odd/tasks/catalog-access-and-profit-report.md",
     "src-tauri/src/application/catalog/mod.rs",
@@ -1157,11 +1200,14 @@ for (const { paths, profile, owner } of currentCandidatePolicyExamples) {
 }
 
 test("W9 current candidate policy rejects partial profiles and task-only delegation", () => {
-  for (const { paths } of currentCandidatePolicyExamples) {
+  for (const { paths, profile } of currentCandidatePolicyExamples) {
     for (let omitted = 0; omitted < paths.length; omitted += 1) {
-      assert.deepEqual(selectCurrentCandidate(paths.filter((_, index) => index !== omitted)), {
-        status: "REJECTED", reason: "NO_COMPLETE_PROFILE",
-      });
+      // Removing app-shell from the original profile yields the independently
+      // authorized correction whole set; every correction omission rejects.
+      const expected = profile === "listing-parity" && paths[omitted] === "src/ui/app-shell.mounted.test.ts"
+        ? { status: "SELECTED", profile: "visual-correction", owner: "catalog" }
+        : { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" };
+      assert.deepEqual(selectCurrentCandidate(paths.filter((_, index) => index !== omitted)), expected);
     }
   }
   for (const paths of [
@@ -1211,6 +1257,22 @@ test("W9 current candidate policy acquires the untracked listing ledger without 
   assert.doesNotThrow(() => assertW9ProtectedDiffPolicy(acquired, currentPackage, baselinePackage, currentLock, baselineLock, ""));
   assert.deepEqual(selectCurrentCandidate(acquired), { status: "SELECTED", profile: "listing-parity", owner: "catalog" });
   const withNeighbor = changedPathsFromGitOutput(acquired.join("\n"), "odd/tasks/catalog-listing-parity-unrelated.md\n");
+  assert.deepEqual(selectCurrentCandidate(withNeighbor), { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" });
+  assert.throws(() => assertW9ProtectedDiffPolicy(withNeighbor, currentPackage, baselinePackage, currentLock, baselineLock, ""), /unexpected protected-path drift/);
+});
+
+test("W9 current candidate policy bounds correction self-ownership and rejects unnecessary extras", () => {
+  const example = currentCandidatePolicyExamples.find(({ profile }) => profile === "visual-correction")!;
+  const acquired = changedPathsFromGitOutput(
+    example.paths.filter(path => path !== "odd/tasks/catalog-listing-parity.md").join("\n"),
+    "odd/tasks/catalog-listing-parity.md\n",
+  );
+  assert.deepEqual(acquired, [...example.paths].sort());
+  assert.doesNotThrow(() => assertW9ProtectedDiffPolicy(acquired, currentPackage, baselinePackage, currentLock, baselineLock, ""));
+  assert.doesNotThrow(() => assertCatalogVisualCorrectionCurrentCandidate(acquired));
+  assert.throws(() => assertCatalogVisualCorrectionCurrentCandidate([...acquired, "src/ui/app-shell.mounted.test.ts"]), /CURRENT visual-correction exact whole profile/);
+  assert.deepEqual(selectCurrentCandidate([...acquired, "src/ui/app-shell.mounted.test.ts"]), { status: "SELECTED", profile: "listing-parity", owner: "catalog" });
+  const withNeighbor = [...acquired, "odd/tasks/catalog-listing-parity-unrelated.md"];
   assert.deepEqual(selectCurrentCandidate(withNeighbor), { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" });
   assert.throws(() => assertW9ProtectedDiffPolicy(withNeighbor, currentPackage, baselinePackage, currentLock, baselineLock, ""), /unexpected protected-path drift/);
 });
@@ -1709,6 +1771,9 @@ test("W9 binds every changed Windows desktop-fix file and task byte to exact has
     // the CURRENT Catalog validator; historical hashes remain unchanged.
     assertCatalogListingParityCurrentCandidate(changedPaths);
     assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, "");
+  } else if (selection.status === "SELECTED" && selection.profile === "visual-correction") {
+    assertCatalogVisualCorrectionCurrentCandidate(changedPaths);
+    assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, "");
   } else {
     assertWindowsDesktopFixDiffAllowlist(diffs);
   }
@@ -1764,6 +1829,9 @@ test("W9 binds every changed backup-integrity file to its exact unified-zero dif
   const selection = selectCurrentCandidate(changedPaths);
   if (selection.status === "SELECTED" && selection.profile === "listing-parity") {
     assertCatalogListingParityCurrentCandidate(changedPaths);
+    assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, "");
+  } else if (selection.status === "SELECTED" && selection.profile === "visual-correction") {
+    assertCatalogVisualCorrectionCurrentCandidate(changedPaths);
     assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, "");
   } else {
     assertBackupIntegrityDiffAllowlist(diffs);
@@ -1940,6 +2008,10 @@ test("W9 binds the exact Catalog access candidate diff and untracked task bytes"
   }
   if (selection.profile === "listing-parity") {
     assertCatalogListingParityCurrentCandidate(changedPaths);
+    return;
+  }
+  if (selection.profile === "visual-correction") {
+    assertCatalogVisualCorrectionCurrentCandidate(changedPaths);
     return;
   }
   if (selection.profile === "T3") {

@@ -603,6 +603,33 @@ test("Catalog table columns shrink and wrap while the results region retains opt
   }
 });
 
+test("Catalog selected segments keep plum fill through pointer and keyboard states in both modes (cascade only)", async () => {
+  const style = await mountBaseStyles(1440);
+  try {
+    // JSDOM does not synthesize pointer pseudo-classes. Attribute selectors
+    // preserve their specificity while activating the actual stylesheet rules.
+    style.textContent = style.textContent.replace(/:(hover|active|focus-visible)\b/g, '[data-test-$1]');
+    const view = render(createElement("div", { "data-ui-catalog-workspace": true }, catalogBrowser("table")));
+    for (const mode of ["table", "gallery"] as const) {
+      view.rerender(createElement("div", { "data-ui-catalog-workspace": true }, catalogBrowser(mode)));
+      const toggle = screen.getByRole("group", { name: "Presentación del catálogo" });
+      const selected = within(toggle).getByRole("button", { name: mode === "table" ? "Vista de tabla" : "Vista de galería" });
+      const unselected = within(toggle).getByRole("button", { name: mode === "table" ? "Vista de galería" : "Vista de tabla" });
+      for (const state of ["rest", "hover", "active", "focus-visible"]) {
+        if (state !== "rest") selected.setAttribute(`data-test-${state}`, "");
+        assert.equal(styleOf(selected, "background"), "#3d3042", `${mode} ${state} keeps its selected fill`);
+        assert.equal(styleOf(unselected, "background"), "transparent");
+        if (state === "focus-visible") {
+          assert.equal(styleOf(selected, "outline-width"), "3px");
+          assert.equal(styleOf(selected, "outline-style"), "solid");
+          assert.equal(styleOf(selected, "outline-offset"), "2px");
+        }
+        selected.removeAttribute(`data-test-${state}`);
+      }
+    }
+  } finally { style.remove(); }
+});
+
 function catalogBrowser(mode: CatalogViewMode) {
   const product: CatalogProductBrowseResult = { product_id: 1, revision: 1, category_id: 1, sku: "FIL-001", name: "Filtro", category_name: "Filtros", available_quantity: 2, purchase_price_centavos: null, sale_price_centavos: 12550, list_price_centavos: 12550, catalog_unit_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_code: null, attribute_values: [] };
   return createElement(ProductBrowser, {
@@ -628,6 +655,14 @@ for (const width of [1440, 961, 960, 600, 340]) {
       const table = wrapper.querySelector('[data-ui-product-browser-list][data-ui-catalog-table="true"]')!;
       assert.ok(table, "real ProductBrowser table carries the generic list attribute");
       assert.equal(table.tagName, "UL");
+      const headings = within(wrapper as HTMLElement).getByRole("group", { name: "Columnas de productos" });
+      const row = within(table as HTMLElement).getByRole("listitem");
+      assert.equal(styleOf(headings, "grid-template-columns"), styleOf(row, "grid-template-columns"));
+      assert.equal(styleOf(headings, "min-inline-size"), styleOf(row, "min-inline-size"));
+      assert.equal(styleOf(headings, "column-gap"), "12px");
+      assert.equal(styleOf(row, "column-gap"), "12px");
+      assert.equal(styleOf(headings.firstElementChild!, "grid-column"), "span 2");
+      assert.equal(styleOf(row, "border-radius"), "32px");
       assert.equal(styleOf(table, "overflow-y"), "visible");
       assert.equal(styleOf(table, "overflow-x"), "visible");
       assert.equal(styleOf(wrapper, "overflow-x"), "auto");
@@ -884,7 +919,8 @@ for (const [width, browseWidth, columns] of [[1440, 800, 3], [1200, 560, 2], [96
       assert.equal(styleOf(shared, "min-block-size"), "0px");
       assert.equal(styleOf(shared.parentElement!, "aspect-ratio"), "4 / 3");
       assert.equal(styleOf(shared, "block-size"), "100%");
-      assert.notEqual(styleOf(shared.closest("li")!, "border-radius"), "32px");
+      assert.equal(styleOf(shared.closest("li")!, "border-radius"), "32px", "Catalog now shares the rounded card family");
+      assert.equal(styleOf(shared.parentElement!, "border-radius"), "24px");
     } finally { style.remove(); }
   });
 }

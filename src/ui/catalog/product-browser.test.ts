@@ -297,6 +297,10 @@ test("Catalog Table exposes stable result columns, a thumbnail slot, and an acce
   assert.equal(scroll?.getAttribute("tabindex"), "0");
   const table = screen.getByRole("list", { name: "Resultados del catálogo" });
   assert.equal(table.getAttribute("data-ui-catalog-table"), "true");
+  const headings = within(scroll as HTMLElement).getByRole("group", { name: "Columnas de productos" });
+  assert.deepEqual([...headings.children].map(node => node.textContent), ["Producto", "Precio de venta", "Categoría", "Stock", "Acción"]);
+  assert.equal(headings.nextElementSibling, table, "headings and rows share the only scroll owner");
+  assert.equal(screen.queryByRole("table"), null, "retain native list semantics rather than partial ARIA table roles");
   const row = within(table).getByRole("listitem");
   for (const column of ["thumbnail", "identity", "price", "category", "stock", "edit"]) {
     assert.ok(within(row).getByTestId(`catalog-table-${column}`), `missing ${column} column`);
