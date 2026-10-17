@@ -658,6 +658,83 @@ test(`${presentation} selected segments keep plum fill through pointer and keybo
 
 }
 
+for (const presentation of ["sales", "inventory"] as const) {
+  for (const thumbnail of [undefined, "data:image/jpeg;base64,/9j/2Q==", "invalid-image"]) {
+    test(`${presentation} table image circles match Catalog for ${thumbnail ?? "missing image"} without changing gallery (cascade only)`, async () => {
+      const style = await mountBaseStyles(1440, 880);
+      try {
+        const browser = (mode: CatalogViewMode) => createElement(ProductBrowser, {
+          ...catalogBrowser(mode).props, presentation, salesViewMode: mode, inventoryViewMode: mode,
+          thumbnails: thumbnail ? { 1: thumbnail } : undefined,
+        });
+        const view = render(browser("table"));
+        const area = document.querySelector(presentation === "sales" ? "[data-ui-sales-table-thumbnail]" : "[data-ui-inventory-image-area]")!;
+        assert.equal(styleOf(area, "inline-size"), "48px");
+        assert.equal(styleOf(area, "border-radius"), "24px");
+        assert.equal(styleOf(area, "overflow"), "hidden");
+        if (presentation === "sales" && thumbnail?.startsWith("data:")) {
+          const image = within(area as HTMLElement).getByRole("img", { name: "Filtro" });
+          assert.equal(styleOf(image, "border-radius"), "24px");
+          assert.equal(styleOf(image, "object-fit"), "contain");
+        } else {
+          assert.ok(within(area as HTMLElement).getByRole("img", { name: "Sin imagen" }));
+        }
+        view.rerender(browser("gallery"));
+        const galleryArea = document.querySelector(presentation === "sales" ? "[data-ui-sales-image-area]" : "[data-ui-inventory-image-area]")!;
+        assert.equal(styleOf(galleryArea, "inline-size"), "100%");
+        assert.equal(styleOf(galleryArea, "aspect-ratio"), "4 / 3");
+        assert.equal(styleOf(galleryArea, "border-radius"), "24px");
+      } finally { style.remove(); }
+    });
+  }
+}
+
+for (const width of [2560, 1440, 961, 960, 600]) {
+  test(`Sales and Inventory share bounded desktop rails and stack at ${width}px (cascade only)`, async () => {
+    const style = await mountBaseStyles(width);
+    try {
+      render(createElement("div", null,
+        createElement("div", { "data-ui-sale-layout": true }),
+        createElement("div", { "data-ui-inventory-layout": true })));
+      for (const layout of document.querySelectorAll("[data-ui-sale-layout], [data-ui-inventory-layout]")) {
+        assert.equal(styleOf(layout, "grid-template-columns"), width > 960
+          ? "minmax(0, 1fr) minmax(260px, 320px)" : "minmax(0, 1fr)");
+      }
+    } finally { style.remove(); }
+  });
+}
+
+for (const browseWidth of [340, 560, 831, 832, 880, 1100]) {
+  test(`Inventory toolbar uses proportionate wide density but can still wrap at ${browseWidth}px (cascade only)`, async () => {
+    const style = await mountBaseStyles(1440, browseWidth);
+    try {
+      render(createElement(ProductBrowser, { ...catalogBrowser("table").props,
+        presentation: "inventory", inventoryViewMode: "table", onStockStateChange() {} }));
+      const form = screen.getByRole("searchbox").closest("form")!;
+      const fields = [...form.querySelectorAll("[data-ui-field]")];
+      assert.equal(fields.length, 3);
+      assert.deepEqual(fields.map(field => styleOf(field, "flex-basis")), browseWidth >= 832
+        ? ["160px", "144px", "128px"] : ["224px", "160px", "160px"]);
+      assert.equal(styleOf(form, "gap"), browseWidth >= 832 ? "8px" : "16px");
+      assert.equal(styleOf(form, "flex-wrap"), "wrap");
+      const toggle = screen.getByRole("group", { name: "Presentación de inventario" });
+      assert.ok(form.contains(toggle));
+      assert.equal(styleOf(toggle, "flex-wrap"), "wrap");
+      assert.equal(styleOf(toggle, "max-inline-size"), "100%");
+      for (const name of ["Vista de tabla", "Vista de galería"]) {
+        const button = within(toggle).getByRole("button", { name });
+        assert.ok(button.textContent?.includes(name));
+        assert.equal(styleOf(button, "white-space"), "normal");
+      }
+      for (const control of form.querySelectorAll("input, select, button")) {
+        assert.equal(styleOf(control, "min-height"), "44px");
+        control.setAttribute("data-ui-focus-visible", "true");
+        assert.equal(styleOf(control, "outline-width"), "3px");
+      }
+    } finally { style.remove(); }
+  });
+}
+
 function catalogBrowser(mode: CatalogViewMode) {
   const product: CatalogProductBrowseResult = { product_id: 1, revision: 1, category_id: 1, sku: "FIL-001", name: "Filtro", category_name: "Filtros", available_quantity: 2, purchase_price_centavos: null, sale_price_centavos: 12550, list_price_centavos: 12550, catalog_unit_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_code: null, attribute_values: [] };
   return createElement(ProductBrowser, {

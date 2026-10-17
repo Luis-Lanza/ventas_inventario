@@ -467,7 +467,8 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-inventory-header] :is(h1, p) { margin: 0; }
 [data-ui-inventory-header] p, [data-ui-inventory-intro], [data-ui-inventory-alert-description] { color: var(--color-text-muted); font-size: var(--type-caption-size); }
 [data-ui-inventory-header] p { margin-block-start: var(--space-1); }
-[data-ui-inventory-layout] { display: grid; grid-template-columns: minmax(0, 1.85fr) minmax(260px, 1fr); grid-template-rows: minmax(0, 1fr); gap: var(--space-5); align-items: stretch; }
+/* One desktop rail contract keeps stock alerts and the Sales cart aligned. */
+[data-ui-inventory-layout], [data-ui-sale-layout] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); grid-template-rows: minmax(0, 1fr); gap: var(--space-5); align-items: stretch; }
 [data-ui-inventory-layout] > [data-ui-panel] { min-inline-size: 0; align-self: start; }
 [data-ui-inventory-layout] > [data-ui-panel]:first-child { min-block-size: 0; align-self: stretch; }
 [data-ui-inventory-layout] > [data-ui-panel]:first-child:has([data-ui-inventory-operation]) { align-self: start; }
@@ -521,6 +522,7 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-product-browser="inventory"] [data-ui-badge] { justify-self: start; white-space: normal; overflow-wrap: anywhere; }
 [data-ui-product-browser="inventory"] [data-ui-money] { font-size: var(--type-h2-size); font-weight: var(--weight-emphasis); white-space: normal; overflow-wrap: anywhere; }
 [data-ui-inventory-image-area] { inline-size: 3rem; aspect-ratio: 1; border-radius: var(--radius-control); background: var(--color-surface-subtle); }
+[data-ui-inventory-table] [data-ui-inventory-image-area] { border-radius: 24px; overflow: hidden; }
 [data-ui-inventory-image-placeholder] { display: grid; block-size: 100%; place-items: center; color: var(--color-text-muted); font-size: var(--type-caption-size); line-height: 1.1; text-align: center; }
 [data-ui-product-browser="inventory"] [data-ui-inventory-table] > li > :is([data-ui-money], [data-ui-inventory-product-category], [data-ui-badge], [data-ui-action]) { grid-column: 2; }
 [data-ui-inventory-table] > li > [data-ui-inventory-product-category] { color: var(--color-text-muted); font-size: var(--type-caption-size); }
@@ -774,7 +776,6 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-sale-header] { margin-block-end: var(--space-5); }
 [data-ui-sale-header] h1 { margin-block-end: 0; }
 [data-ui-sale-header] p, [data-ui-panel-subtitle] { margin: 0; color: var(--color-text-muted); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
-[data-ui-sale-layout] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); grid-template-rows: minmax(0, 1fr); gap: var(--space-5); align-items: stretch; }
 [data-ui-sale-layout] > [data-ui-panel] { display: flex; min-block-size: 0; flex-direction: column; gap: var(--space-4); }
 [data-ui-sale-layout] > [data-ui-panel] > h2 { margin-block-end: calc(-1 * var(--space-4)); }
 [data-ui-sale-layout] > [data-ui-panel]:has(> [data-ui-sale-summary]) {
@@ -890,9 +891,9 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   [data-ui-product-browser="sales"] [data-ui-sales-table="true"] > [data-ui-sales-product] { grid-template-columns: 3rem minmax(0, 1fr) auto; }
   [data-ui-product-browser="sales"] [data-ui-sales-table="true"] [data-ui-product-action] { grid-column: 3; grid-row: 1; }
 }
-[data-ui-sales-table-thumbnail] { display: grid; inline-size: 3rem; block-size: 3rem; place-items: center; overflow: hidden; border-radius: var(--radius-control); background: var(--color-surface-subtle); }
+[data-ui-sales-table-thumbnail] { display: grid; inline-size: 3rem; block-size: 3rem; place-items: center; overflow: hidden; border-radius: 24px; background: var(--color-surface-subtle); }
 [data-ui-sales-table-image-placeholder] { display: grid; inline-size: 100%; block-size: 100%; place-items: center; color: var(--color-text-muted); font-size: var(--type-caption-size); line-height: 1.1; text-align: center; }
-[data-ui-sales-table-thumbnail] [data-ui-product-thumbnail] { inline-size: 100%; block-size: 100%; }
+[data-ui-sales-table-thumbnail] [data-ui-product-thumbnail] { inline-size: 100%; block-size: 100%; border-radius: 24px; }
 [data-ui-sales-product-attributes] { display: flex; min-inline-size: 0; flex-wrap: wrap; gap: 0 var(--space-2); color: var(--color-text-muted); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
 [data-ui-sales-product-attributes] > span { overflow-wrap: anywhere; }
 [data-ui-sales-view-toggle] { display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-1); border-radius: 999px; background: var(--color-surface-subtle); }
@@ -902,6 +903,15 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-product-browser] [data-ui-browser-view-toggle] > [data-ui-action][aria-pressed="true"],
 [data-ui-product-browser] [data-ui-browser-view-toggle] > [data-ui-action][aria-pressed="true"]:is(:hover, :active, :focus-visible) { background: var(--color-action); border-color: var(--color-action); color: var(--color-text-inverse); }
 [data-ui-sales-view-toggle] svg { inline-size: 1.125rem; block-size: 1.125rem; }
+/* Inventory has a third field: spend wide-container space on controls rather
+   than generous gaps/bases. Keep normal type, 44px targets and wrapping. */
+@container inventory-browse (min-width: 52rem) {
+  [data-ui-product-browser="inventory"] [data-ui-browser-toolbar="wrap"] { gap: var(--space-2); padding-inline: var(--space-3); }
+  [data-ui-product-browser="inventory"] [data-ui-browser-toolbar="wrap"] > [data-ui-field]:first-child { flex-basis: 10rem; }
+  [data-ui-product-browser="inventory"] [data-ui-browser-toolbar="wrap"] > [data-ui-field]:nth-child(2) { flex-basis: 9rem; }
+  [data-ui-product-browser="inventory"] [data-ui-browser-toolbar="wrap"] > [data-ui-field]:nth-child(3) { flex-basis: 8rem; }
+  [data-ui-product-browser="inventory"] [data-ui-browser-view-toggle] > button { gap: var(--space-1); padding-inline: var(--space-2); }
+}
 /* Fixed track counts retain equal card widths in short final rows. */
 [data-ui-product-browser="sales"] [data-ui-product-browser-list][data-ui-sales-gallery="true"] {
   grid-template-columns: repeat(1, minmax(0, 1fr)); gap: var(--space-4);

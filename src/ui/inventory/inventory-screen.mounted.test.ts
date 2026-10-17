@@ -487,7 +487,7 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.ok(within(secondRow).getByRole("button", { name: "Seleccionar Filter (SKU: FLT-2)" }));
   assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
-  assert.match(css, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0,\s*1\.85fr\) minmax\(260px,\s*1fr\)/s);
+  assert.match(css, /\[data-ui-inventory-layout\],\s*\[data-ui-sale-layout\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(260px,\s*320px\)/s);
   assert.match(css, /\[data-ui-inventory-layout\] \{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/s);
   assert.match(css, /\[data-ui-product-browser-pages\] \{[^}]*flex:\s*0 0 auto/s);
   assert.match(css, /\[data-ui-product-browser="inventory"\] > \[data-ui-inventory-toolbar\] \{[^}]*inline-size:\s*100%;[^}]*max-inline-size:\s*100%/s);
