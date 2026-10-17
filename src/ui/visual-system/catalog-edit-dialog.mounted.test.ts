@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ActionNotificationProvider } from "./action-notifications.ts";
 import { CatalogEditDialog } from "./catalog-edit-dialog.ts";
@@ -99,6 +100,41 @@ const imageRecord = { target: "product" as const, entity_id: 1, label: "Filtro",
 const imageDetail = { ...imageRecord, category_id: 1, category_revision: 0, sku: "F-1", name: "Filtro", purchase_price_centavos: 100, sale_price_centavos: 200, minimum_sale_price_centavos: 100, low_stock_threshold: 1, primary_location_id: null, attribute_definitions: [], attribute_values: [] };
 const imageForm = { name: "Filtro", sku: "F-1", purchase_price_centavos: "1", sale_price_centavos: "2", minimum_sale_price_centavos: "1", attribute_values: {} };
 const noop = () => undefined;
+
+test("product presentation isolates a single scrolling body from heading and actions without changing category layout", async () => {
+  mockIPC(() => ({ kind: "schema_success", schema: { revision: 0, segments: [] } }));
+  const rendered = render(createElement(CatalogEditDialog, {
+    record: imageRecord, detail: { ...imageDetail, attribute_definitions: Array.from({ length: 12 }, (_, index) => ({ definition_id: index + 1, label: `Atributo configurado ${index + 1}`, field_type: "text" as const, required: false, active: true, options: [] })) }, form: imageForm, loading: false, pending: false, feedback: null,
+    lifecycleFeedback: null, recoveryRequired: false, fieldErrors: {}, locationsStatus: "ready",
+    onChange: noop, onSubmit: noop, onLifecycle: noop, onReload: noop, onCancel: noop,
+  }));
+  await act(async () => {});
+  const dialog = screen.getByRole("dialog", { name: "Editar Filtro" });
+  const body = dialog.querySelector("[data-ui-catalog-product-body]");
+  assert.ok(body, "product metadata and separate persistence actions share one native scrolling body");
+  assert.ok(body.contains(screen.getByRole("textbox", { name: "Nombre del producto" })));
+  assert.ok(body.contains(screen.getByRole("button", { name: "Elegir imagen" })));
+  assert.ok(body.contains(screen.getByRole("button", { name: "Archivar" })));
+  assert.equal(body.contains(screen.getByRole("heading", { name: "Editar Filtro" })), false);
+  assert.equal(body.contains(screen.getByRole("button", { name: "Guardar metadatos" })), false);
+  assert.equal(dialog.parentElement?.parentElement, document.body, "product backdrop covers the viewport outside the shell");
+  const style = document.createElement("style");
+  style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  document.head.append(style);
+  try {
+    const attributes = within(dialog).getByRole("group", { name: "Valores de atributos del producto" });
+    assert.equal(within(attributes).getAllByRole("textbox").length, 12);
+    assert.equal(getComputedStyle(attributes).gridTemplateColumns, "repeat(2, minmax(0, 1fr))");
+    assert.equal(getComputedStyle(attributes).overflowY, "visible");
+    assert.equal(getComputedStyle(body).overflowY, "auto");
+    assert.equal(getComputedStyle(dialog.querySelector("[data-ui-catalog-edit-content]")!).overflow, "visible");
+    assert.equal(getComputedStyle(document.body).overflow, "hidden");
+    assert.equal(getComputedStyle(dialog).inlineSize, "min(1120px, 100%)");
+  } finally { style.remove(); }
+  rendered.unmount();
+  view(false);
+  assert.equal(screen.getByRole("dialog").querySelector("[data-ui-catalog-product-body]"), null);
+});
 
 for (const kind of ["success", "error", "advisory"] as const) test(`dialog renders explicitly owned ${kind} image feedback without publishing`, async () => {
   mockIPC(() => ({ kind: "schema_success", schema: { revision: 0, segments: [] } }));

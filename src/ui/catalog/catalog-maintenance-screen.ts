@@ -1,9 +1,12 @@
-import { createElement, type ChangeEvent, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
+import { createElement, type ReactElement, type ChangeEvent, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
+
+import { createPortal } from "react-dom";
 
 import { CATALOG_INTENT, CATALOG_TARGET, browseProducts, catalogAccessCommands, catalogMaintenanceCommands, catalogProductImageCommands, productLocationCommands, type CatalogProductBrowseResult, type CatalogAccessStatus, type CatalogMaintenanceRecord, type CatalogMetadataDetail, type ProductLocationRecord } from "../../commands/catalog.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback } from "../visual-system/controls.ts";
-import { CatalogEditDialog, CatalogMetadataEditor } from "../visual-system/catalog-edit-dialog.ts";
+import { captureCatalogProductOpening, type CatalogProductOpening } from "../visual-system/catalog-product-motion.ts";
+import { CatalogEditDialog, CatalogMetadataEditor, CatalogProductRetirement } from "../visual-system/catalog-edit-dialog.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
 import { createCatalogEditRequest, createCategorySchemaEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState, type CatalogEditFieldErrors, type CatalogEditForm, type CatalogMaintenanceAction } from "./catalog-maintenance-flow.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, readCatalogViewMode, writeCatalogViewMode, type CatalogViewMode, type ProductBrowserState } from "./product-browser.ts";
@@ -80,6 +83,9 @@ export function CatalogMaintenanceScreen() {
   const [accessNotice, setAccessNotice] = useState<string | null>(null);
   const lockPendingRef = useRef(false);
   const [form, setForm] = useState<CatalogEditForm | null>(null);
+  const renderArchive = (dialog: ReactElement) => flowState.selected?.target === "product" ? createPortal(dialog, document.body) : dialog;
+  const productOpening = useRef<CatalogProductOpening | null>(null);
+  const [retiringProduct, setRetiringProduct] = useState<{ opening: CatalogProductOpening; snapshot: CatalogProductOpening } | null>(null);
   const [productLocations, setProductLocations] = useState<ProductLocationRecord[]>([]);
   const [productLocationsStatus, setProductLocationsStatus] = useState<"loading" | "ready" | "error">("loading");
   const [imageThumbnail, setImageThumbnail] = useState<string | null>(null);
@@ -246,6 +252,10 @@ export function CatalogMaintenanceScreen() {
   };
   const close = () => {
     if (mutationLocked.current || imageMutationLocked.current) return;
+    const frame = document.getElementById("catalog-edit-dialog");
+    if (state.selected?.target === "product" && frame && productOpening.current) {
+      setRetiringProduct({ opening: productOpening.current, snapshot: captureCatalogProductOpening(frame, productOpening.current.id) });
+    }
     setPartialSaveGuidance(null);
     setRoutineFailure(false);
     attempt.current += 1;
@@ -545,7 +555,11 @@ export function CatalogMaintenanceScreen() {
             showActivity: true,
             onSubmit: submitBrowse,
             onPageChange: (page) => void browseCatalogProducts(browserSnapshot(), page),
-            onSelect: (product) => void loadDetail({ target: "product", entity_id: product.product_id, label: `${product.sku} — ${product.name}`, activity: "active", revision: product.revision }),
+            onCatalogSelect: (product, opener) => {
+              setRetiringProduct(null);
+              productOpening.current = captureCatalogProductOpening(opener, attempt.current + 1);
+              void loadDetail({ target: "product", entity_id: product.product_id, label: `${product.sku} — ${product.name}`, activity: "active", revision: product.revision });
+            },
             allowUnavailableSelection: true,
             actionLabel: "Editar",
             thumbnails: browseThumbnails,
@@ -554,7 +568,8 @@ export function CatalogMaintenanceScreen() {
         ),
       ),
     ),
-    state.selected ? createElement(CatalogEditDialog, { record: state.selected, detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: notifications && routineFailure && !state.recovery_required ? null : state.feedback, lifecycleFeedback: inlineLifecycleFeedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, locations: productLocations, locationsStatus: productLocationsStatus, imageThumbnail, imagePending, imageFeedback, imageFeedbackKind, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onRemoveCategoryFieldDraft: removeCategoryFieldDraft, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
+    state.selected ? createElement(CatalogEditDialog, { record: state.selected, opening: state.selected.target === "product" ? productOpening.current : null, restoreFocusFallback: () => catalogMainHeading.current, categoryName: browser.result?.categories.find((category) => category.category_id === (state.detail?.target === "product" ? state.detail.category_id : null))?.name,  detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: notifications && routineFailure && !state.recovery_required ? null : state.feedback, lifecycleFeedback: inlineLifecycleFeedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, locations: productLocations, locationsStatus: productLocationsStatus, imageThumbnail, imagePending, imageFeedback, imageFeedbackKind, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onRemoveCategoryFieldDraft: removeCategoryFieldDraft, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
+    retiringProduct ? createElement(CatalogProductRetirement, { ...retiringProduct, onRetired: () => setRetiringProduct(null) }) : null,
     retirementConfirmation ? createElement(ConfirmationDialog, {
       open: true,
       purpose: "cancellation",
@@ -566,7 +581,7 @@ export function CatalogMaintenanceScreen() {
       onCancel: () => setRetirementConfirmation(null),
       onConfirm: confirmCategoryFieldRetirement,
     }) : null,
-    archiveConfirmation ? createElement(ConfirmationDialog, {
+    archiveConfirmation ? renderArchive(createElement(ConfirmationDialog, {
       open: true,
       purpose: "cancellation",
       title: `Archivar ${archiveConfirmation.record.label}`,
@@ -577,6 +592,6 @@ export function CatalogMaintenanceScreen() {
       dialogId: "catalog-archive-confirmation-dialog",
       onCancel: () => { if (!archivePending) setArchiveConfirmation(null); },
       onConfirm: () => void confirmArchive(),
-    }) : null,
+    })) : null,
   );
 }

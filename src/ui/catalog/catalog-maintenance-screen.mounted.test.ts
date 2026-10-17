@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
+import { gsap } from "gsap";
 import { mockIPC as nativeMockIPC } from "@tauri-apps/api/mocks";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -196,6 +197,52 @@ test("Catalog mock intercepts status before validation without fixture dispatch"
   } finally {
     mockedCatalogAccessStatus = "unlocked";
   }
+});
+
+test("product close immediately discards the draft while only an empty surface retires", async (t) => {
+  let complete: (() => void) | undefined;
+  let writes = 0;
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", function (this: HTMLElement) {
+    return (this.tagName === "BUTTON" ? { left: 30, top: 50, width: 120, height: 40, right: 150, bottom: 90 } : { left: 100, top: 20, width: 900, height: 600, right: 1000, bottom: 620 }) as DOMRect;
+  });
+  t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { complete = vars.onComplete as () => void; return {} as gsap.core.Tween; });
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") return productDetail;
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 0, segments: [] } };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    if (command === "edit_catalog_command") { writes++; return { kind: "success", ...activeProduct }; }
+    return baseIPC(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  const opener = await screen.findByRole("button", { name: "Editar" });
+  await userEvent.click(opener);
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
+  act(() => complete?.());
+  const archive = within(dialog).getByRole("button", { name: "Archivar" });
+  await userEvent.click(archive);
+  const confirmation = screen.getByRole("dialog", { name: /Archivar .*Filtro Premium/ });
+  assert.equal(confirmation.parentElement?.parentElement, document.body, "nested confirmation paints above the portaled editor");
+  await userEvent.keyboard("{Escape}");
+  assert.equal(screen.queryByRole("dialog", { name: /Archivar .*Filtro Premium/ }), null);
+  assert.equal(document.activeElement, archive);
+  assert.ok(screen.getByRole("dialog", { name: "Editar Filtro Premium" }));
+  const name = within(dialog).getByRole("textbox", { name: "Nombre del producto" });
+  await userEvent.clear(name); await userEvent.type(name, "Borrador descartado");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Volver" }));
+  assert.equal(screen.queryByRole("dialog"), null);
+  const surface = document.querySelector("[data-ui-catalog-product-retirement]");
+  assert.ok(surface);
+  assert.equal(surface.querySelector("input, button, form, [role=dialog]"), null);
+  assert.equal(surface.textContent, "");
+  assert.equal(document.activeElement, opener);
+  assert.equal(writes, 0);
+  act(() => complete?.());
+  assert.equal(document.querySelector("[data-ui-catalog-product-retirement]"), null);
+  await userEvent.click(opener);
+  await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
+  act(() => complete?.());
+  assert.equal((screen.getByRole("textbox", { name: "Nombre del producto" }) as HTMLInputElement).value, "Filtro Premium");
 });
 
 test("Catalog thumbnails retain browse revision and edits use freshly loaded native revision", async () => {

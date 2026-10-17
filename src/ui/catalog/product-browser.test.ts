@@ -30,6 +30,19 @@ test("Inventory selection reports the actual clicked button without changing oth
   view.unmount();
 });
 
+for (const mode of ["table", "gallery"] as const) test(`Catalog ${mode} editing supplies its own actual opener`, () => {
+  let selected: unknown, opener: HTMLButtonElement | undefined;
+  render(createElement(ProductBrowser, {
+    state: { ...initialProductBrowserState, status: "results", result: page }, presentation: "catalog", catalogViewMode: mode,
+    onQueryChange() {}, onCategoryChange() {}, onSubmit() {}, onPageChange() {}, actionLabel: "Editar",
+    onCatalogSelect(product, button) { selected = product; opener = button; },
+  }));
+  const button = screen.getByRole("button", { name: "Editar" });
+  fireEvent.click(button);
+  assert.equal(selected, page.products[0]);
+  assert.equal(opener, button);
+});
+
 function browserContractDiagnostics(source: string) {
   const config = ts.readConfigFile("tsconfig.json", ts.sys.readFile);
   assert.equal(config.error, undefined);
