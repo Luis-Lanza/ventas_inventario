@@ -10,7 +10,7 @@ Align Catalog's Edit product modal with the approved Velay reference and reuse e
 - Reuse checkout-motion's geometry driver; no text scaling, transaction dependency on animation or new packages.
 - Preserve reduced motion, cleanup, pending guards, nested confirmation focus, opener restoration and authoritative detail loading.
 - Bounded responsive modal; one native scrolling body, reachable heading/footer, uniform viewport backdrop and background scroll lock.
-- No Rust, IPC or persistence changes. No commit/push/merge without explicit user authorization.
+- No Rust, IPC or persistence changes. User explicitly authorized commit and feature-branch push; no merge authorized.
 
 ## Tasks
 - [x] T1: Implement product-only Velay layout and opener-linked entrance/exit with focused test-first regression coverage.
@@ -35,7 +35,7 @@ Align Catalog's Edit product modal with the approved Velay reference and reuse e
 - Native review review-6d15dc0fc85a5c46 approved and acknowledged candidate sha256:38a27beffe39fb3054dab136835980ecf40835dfe28544fc390293816ad2b298; acknowledgement returned authority burned. This subsequent passive tracking update was not part of that frozen tree; source unchanged.
 - ASSESS failed on intended-untracked declaration and returned unassessable/high fallback; its requested independent verification was completed successfully without tooling repair.
 - Starting branch: feat/catalog-product-editor-velay, based on clean master.
-- Commit evidence: pending explicit authorization; no commits created.
+- Commit evidence: 53876f4 feat(ui): align product editor with Velay modal design. User explicitly requested commit and push for Windows verification.
 
 ## Next step
-Await user visual acceptance in running Windows app: Edit from table/gallery, open/close motion, short window, many/long attributes, invalid-field visibility, nested archive confirmation and image operations. Commit/push remain unauthorized; changes are local only. Category editing is deferred.
+Await user visual acceptance in running Windows app: Edit from table/gallery, open/close motion, short window, many/long attributes, invalid-field visibility, nested archive confirmation and image operations. Feature-branch push authorized for Windows verification; no merge authorized. Category editing is deferred.
