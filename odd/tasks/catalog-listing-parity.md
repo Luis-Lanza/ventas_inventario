@@ -18,8 +18,8 @@ C2 requires real runtime/Windows visual evidence; JSDOM cannot certify geometry 
 ## Tasks
 - [x] C1 (done): Implement Catalog Products listing parity, verify regressions and record local work-unit commits 3b2c654 and cb1b4ac.
 - [x] C3 (done): Correct screenshot-proven visual gaps against Catalog mockups and implemented Sales/Inventory measurements; checks/review passed, local commit3663e67.
-- [ ] C4 (in progress): Present Catalog search/filter/view controls on the same bounded white rounded toolbar surface as Inventory; retain all behavior and independent results.
-- [ ] C2 (pending C4 visual evidence): User accepted prior correction visible in table screenshot20-52-31; validate new toolbar in table/gallery and record remaining runtime evidence.
+- [x] C4 (done): Present Catalog controls on Inventory-equivalent white rounded toolbar; checks/review passed, local commit0b3be75.
+- [ ] C2 (in progress; awaiting toolbar Windows evidence): User accepted prior correction in table screenshot20-52-31; validate new toolbar in table/gallery and record remaining runtime evidence.
 
 ## Allowed C1 edit surfaces
 - src/ui/catalog/catalog-maintenance-screen.ts
@@ -121,5 +121,9 @@ Writer mvbopcm1-f-4jdy returned partial: styles.css + base-styles.mounted.test.t
 Audit writer mvbp6ces-g-cois completed exact four-path toolbar-surface profile with independent expected example,selector,validator and CURRENT routing. Prior9/8/historical profiles,hashes,normalizers,validators and protected allowlist unchanged. RED16pass2intended ownershipfail then GREEN19/19; fullW9 PASS72/SKIP1owner/FAIL0,types/build PASS(existingwarnings),npm754/754 PASS,diff-check PASS. Combined119changedlines before this update. Parent spot-read Catalog-only form CSS uses same surface/border32px/16pxpaddinggap as Inventory and flex0 0auto; no markup/results changes.
 ASSESSmediumlarge runtimewriter,selfverificationstands,reviewDuefalseunderbudget. Optional spot verifier mvbpdhyo-h-ikoj runs styles/W9 and audits scoped changes. Native review not started for intermediate ledger-only/3path candidates.
 
+## C4 final review and local delivery
+Independent verifier mvbpdhyo-h-ikoj:64/64 styles PASS,W9 72PASS1ownerSKIP0FAIL,diff-checkclean; no severe issue. Confirmed form-only surface32px/16px matches Inventory, original ownership/history intact. Full754 suite/types/build are writer evidence, not independently duplicated.
+Native review-b8fc8ef52376ced2 medium123lines4paths APPROVED without advisories; exact acknowledgement returned authorityburned for target sha256:7ac2081d5572425154194671c96704d825f54cc4cf17834f3fbe7ca72cb0ed8b, consumedrevisionee348f0edaf5ea7ce1fb37417b02cb31d7f9182f3eb881ee8f64bf2e83aa7ced. Local work-unit commit0b3be75 feat(catalog): match Inventory white search toolbar includes CSS/tests/audit/evidence. No source changes after review; this closure update is passive documentation. No push/PR/merge performed.
+
 ## Next step
-Collect independent spot evidence, record local C4 unit with tests and evidence, then freeze final candidate for native review. C2 awaits new toolbar Windows evidence and remaining runtime checks; preserve prior accepted screenshot and original rejection separately. No new push authorization.
+Request new push authorization for0b3be75 and closure evidence so user can test toolbar in Windows. C2 awaits actual new table/gallery/scroll/focus evidence; do not infer visual acceptance from tests or prior screenshot.
