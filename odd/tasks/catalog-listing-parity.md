@@ -17,8 +17,8 @@ C2 requires real runtime/Windows visual evidence; JSDOM cannot certify geometry 
 
 ## Tasks
 - [x] C1 (done): Implement Catalog Products listing parity, verify regressions and record local work-unit commits 3b2c654 and cb1b4ac.
-- [ ] C3 (in progress): Correct screenshot-proven visual gaps against Catalog mockups and implemented Sales/Inventory visual measurements; preserve behavior and verify regressions.
-- [ ] C2 (pending corrected candidate): Validate corrected table/gallery in Windows against mockups and the existing Sales/Inventory visual family; record actual acceptance.
+- [x] C3 (done): Correct screenshot-proven visual gaps against Catalog mockups and implemented Sales/Inventory measurements; checks/review passed, local commit3663e67.
+- [ ] C2 (in progress; awaiting corrected Windows evidence): Validate corrected table/gallery against mockups and existing Sales/Inventory visual family; record actual acceptance.
 
 ## Allowed C1 edit surfaces
 - src/ui/catalog/catalog-maintenance-screen.ts
@@ -102,5 +102,10 @@ Writer mvbnehbf-c-yzcq returned partial: six meaningful UI/test files changed130
 Audit writer mvbo0uum-d-fx5d completed: separate exact eight-path visual-correction profile, independent examples, explicit CURRENT routing and self-ownership; original nine-path profile/history unchanged. Policy RED14/16 then GREEN17/17. W9 PASS70/SKIP1owner/FAIL0 against actual eight paths. Types/build PASS (mixed-import/chunk warnings). First full npm invocation timed out at120seconds; foreground rerun PASS748/748 with no onboarding recurrence. Diff-check PASS. Audit change77 additions5 deletions; combined current diff222 additions22 deletions (244 lines before this update).
 Native ASSESS reports medium risk, large runtime writer profile, reviewDuefalse under_budget; writer self-verification stands. Independent optional spot verifier mvbo8o6j-e-eamy checks rendered seams/audit and severe regressions before local delivery. Parent spot-read header and headings changes: lock handler/pending states retained, native list semantics preserved, headings only Catalog table inside existing viewport. No native lineage started for intermediate worker candidates.
 
+## C3 final verification and delivery
+Independent verifier mvbo8o6j-e-eamy:154/154 focused PASS; W9 70PASS1ownerSKIP, diff-check clean; no severe functional/accessibility regression or broad policy weakening. Original nine-path ownership and historical checks retained. No actual Windows geometry certification.
+Native review review-ffb79b19f090a888 inspected stable correction against525f664, medium248lines8paths; approved with no advisory listed. Exact acknowledgement returned native-approved-acknowledgement-completed, authority burned for target sha256:0949f0a68e170ffea1998cf3895fe08169ed14a4b8a8494d826c5519919dbfda, consumed revision5f825488bd2fabf6004be082caaa61c432deb3969c35ba711351569a0020b112. No source edits after review.
+Local work-unit commit3663e67 fix(catalog): match approved rounded listing design includes behavior/tests/audit/task evidence (248lines). This post-delivery update only documents completion; it adds no source behavior. No new push/PR/merge performed.
+
 ## Next step
-Collect verifier result, commit coherent C3 implementation/tests/evidence locally, then inspect/review final committed correction against525f664 (including closure documentation before freeze to avoid generating a new candidate afterward). C2 stays pending until corrected Windows screenshots/scroll/focus/size evidence and human acceptance. No new push authorization.
+C2 awaits corrected Windows screenshots (table/gallery), hover/focus, actual scroll, same-scale cross-screen comparison and human acceptance. Request explicit push authorization for3663e67 and closure documentation before claiming the correction is available on Windows. Preserve initial rejected screenshots as prior evidence; do not infer acceptance from green checks.
