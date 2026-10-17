@@ -44,7 +44,7 @@ async function mountBaseStyles(width?: number, browseWidth?: number, height = 90
     // in source order to check declarations/cascade, not layout or wheel routing.
     const activeRules = (rules: CSSRuleList): string[] => Array.from(rules).flatMap((rule) => {
       if (rule.type === 1) return [rule.cssText];
-      const container = rule.cssText.match(/^@container (sales-browse|catalog-browse)\b/)?.[1];
+      const container = rule.cssText.match(/^@container (sales-browse|catalog-browse|inventory-browse)\b/)?.[1];
       const containerWidth = container === "catalog-browse" ? browseWidth ?? width : browseWidth;
       if (container && containerWidth !== undefined) {
         const minimum = Number(rule.cssText.match(/min-width:\s*(\d+)rem/)?.[1]) * 16;
@@ -88,7 +88,7 @@ function styleOf(element: Element, property: string) {
 
 for (const mode of ["table", "gallery"] as const) {
   for (const forced of [false, true]) {
-    test(`Inventory ${mode} has an outlined active view and rounded alerts${forced ? " in forced colors" : ""} (cascade only)`, async () => {
+    test(`Inventory ${mode} shares the inline plum toolbar and rounded alerts${forced ? " in forced colors" : ""} (cascade only)`, async () => {
       const style = await mountBaseStyles();
       try {
         if (forced) activateForcedColors(style);
@@ -101,27 +101,31 @@ for (const mode of ["table", "gallery"] as const) {
             createElement("section", { "data-ui-panel": true, "aria-label": "Alertas de stock" })),
           createElement("section", { "data-ui-panel": true, "aria-label": "Otro panel" })));
         const toolbar = document.querySelector("[data-ui-inventory-toolbar]")!;
-        assert.equal(styleOf(toolbar, "border-radius"), "32px");
-        assert.equal(styleOf(toolbar, "background"), "#fffcf7");
+        assert.equal(styleOf(toolbar, "background"), "transparent");
+        const form = toolbar.querySelector("form")!;
+        assert.equal(styleOf(form, "border-radius"), "32px");
+        assert.equal(styleOf(form, "background"), "#fffcf7");
+        assert.equal(styleOf(form, "display"), "flex");
+        assert.equal(styleOf(form, "flex-wrap"), "wrap");
         // Padding geometry is covered by the source contract; jsdom does not
         // reliably apply variable-valued padding shorthands over reset rules.
         assert.equal(styleOf(toolbar, "gap"), "16px");
         assert.equal(styleOf(toolbar, "flex-shrink"), "0");
         const header = toolbar.querySelector("header")!;
-        assert.equal(styleOf(header, "border-block-end"), "1px solid var(--color-border)");
+        assert.equal(styleOf(header, "border-block-end"), "0px");
         assert.equal(styleOf(header, "flex-wrap"), "wrap");
         for (const control of toolbar.querySelectorAll("input, select")) {
           assert.equal(styleOf(control, "border-radius"), "999px");
           assert.equal(styleOf(control, "background"), "#fff");
         }
         const active = screen.getByRole("button", { name: mode === "table" ? "Vista de tabla" : "Vista de galería" });
-        assert.equal(styleOf(active, "background"), "#fffcf7");
+        assert.equal(styleOf(active, "background"), "#3d3042");
         // jsdom cannot resolve variable-valued color declarations reliably.
         // Match the rendered active node against the stylesheet in source order.
         const declarations = Array.from(style.sheet!.cssRules).filter((rule): rule is CSSStyleRule =>
           rule.type === 1 && active.matches((rule as CSSStyleRule).selectorText));
         for (const property of ["color", "border-color"]) {
-          assert.equal(declarations.filter(rule => rule.style.getPropertyValue(property)).at(-1)?.style.getPropertyValue(property).toLowerCase(), forced && property === "border-color" ? "canvastext" : "var(--color-action)");
+          assert.equal(declarations.filter(rule => rule.style.getPropertyValue(property)).at(-1)?.style.getPropertyValue(property).toLowerCase(), forced && property === "border-color" ? "canvastext" : property === "color" ? "var(--color-text-inverse)" : "var(--color-action)");
         }
         assert.equal(styleOf(active, "border-radius"), "999px");
         if (forced) {
@@ -562,6 +566,25 @@ for (const forced of [false, true]) for (const state of ["normal", "error", "dis
   });
 }
 
+for (const presentation of ["sales", "inventory"] as const) {
+  test(`${presentation} sparse table uses content-sized tracks and wraps long identity without clipping (cascade only)`, async () => {
+    const style = await mountBaseStyles(1440, 800);
+    try {
+      render(createElement(ProductBrowser, { ...catalogBrowser("table").props, presentation,
+        salesViewMode: "table", inventoryViewMode: "table" }));
+      const list = screen.getByRole("list", { name: "Resultados del catálogo" });
+      assert.equal(styleOf(list, "align-content"), "start");
+      assert.equal(styleOf(list, "grid-auto-rows"), "max-content");
+      const row = within(list).getByRole("listitem");
+      assert.equal(styleOf(row, "align-content"), "start");
+      assert.equal(styleOf(row, "max-block-size"), "none");
+      const identity = row.querySelector(presentation === "sales" ? "[data-ui-product-identity]" : "[data-ui-inventory-product-identity]")!;
+      assert.equal(styleOf(identity, "overflow-wrap"), "anywhere");
+      assert.notEqual(styleOf(identity, "overflow"), "hidden");
+    } finally { style.remove(); }
+  });
+}
+
 test("Catalog table columns shrink and wrap while the results region retains optional horizontal scrolling", async () => {
   const style = await mountBaseStyles();
   try {
@@ -603,16 +626,19 @@ test("Catalog table columns shrink and wrap while the results region retains opt
   }
 });
 
-test("Catalog selected segments keep plum fill through pointer and keyboard states in both modes (cascade only)", async () => {
+for (const presentation of ["catalog", "sales", "inventory"] as const) {
+test(`${presentation} selected segments keep plum fill through pointer and keyboard states in both modes (cascade only)`, async () => {
   const style = await mountBaseStyles(1440);
   try {
     // JSDOM does not synthesize pointer pseudo-classes. Attribute selectors
     // preserve their specificity while activating the actual stylesheet rules.
     style.textContent = style.textContent.replace(/:(hover|active|focus-visible)\b/g, '[data-test-$1]');
-    const view = render(createElement("div", { "data-ui-catalog-workspace": true }, catalogBrowser("table")));
+    const browser = (mode: CatalogViewMode) => createElement("div", { "data-ui-catalog-workspace": presentation === "catalog" || undefined },
+      createElement(ProductBrowser, { ...catalogBrowser(mode).props, presentation, salesViewMode: mode, inventoryViewMode: mode }));
+    const view = render(browser("table"));
     for (const mode of ["table", "gallery"] as const) {
-      view.rerender(createElement("div", { "data-ui-catalog-workspace": true }, catalogBrowser(mode)));
-      const toggle = screen.getByRole("group", { name: "Presentación del catálogo" });
+      view.rerender(browser(mode));
+      const toggle = screen.getByRole("group", { name: presentation === "catalog" ? "Presentación del catálogo" : presentation === "sales" ? "Presentación de ventas" : "Presentación de inventario" });
       const selected = within(toggle).getByRole("button", { name: mode === "table" ? "Vista de tabla" : "Vista de galería" });
       const unselected = within(toggle).getByRole("button", { name: mode === "table" ? "Vista de galería" : "Vista de tabla" });
       for (const state of ["rest", "hover", "active", "focus-visible"]) {
@@ -630,6 +656,8 @@ test("Catalog selected segments keep plum fill through pointer and keyboard stat
   } finally { style.remove(); }
 });
 
+}
+
 function catalogBrowser(mode: CatalogViewMode) {
   const product: CatalogProductBrowseResult = { product_id: 1, revision: 1, category_id: 1, sku: "FIL-001", name: "Filtro", category_name: "Filtros", available_quantity: 2, purchase_price_centavos: null, sale_price_centavos: 12550, list_price_centavos: 12550, catalog_unit_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_code: null, attribute_values: [] };
   return createElement(ProductBrowser, {
@@ -640,6 +668,48 @@ function catalogBrowser(mode: CatalogViewMode) {
     } },
     onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: () => {}, onPageChange: () => {},
   });
+}
+
+for (const presentation of ["sales", "inventory"] as const) {
+  for (const browseWidth of [340, 560, 800]) {
+    for (const mode of ["table", "gallery"] as const) {
+      test(`${presentation} ${mode} toolbar wraps within ${browseWidth}px beside its sibling panel (cascade only)`, async () => {
+        const style = await mountBaseStyles(1440, browseWidth, 640);
+        try {
+          render(createElement("div", { "data-ui-inventory-layout": presentation === "inventory" || undefined },
+            createElement(ProductBrowser, { ...catalogBrowser(mode).props, presentation,
+              salesViewMode: mode, inventoryViewMode: mode, onStockStateChange() {} })));
+          const form = screen.getByRole("searchbox").closest("form")!;
+          assert.equal(styleOf(form, "display"), "flex");
+          assert.equal(styleOf(form, "flex-wrap"), "wrap");
+          assert.equal(styleOf(form, "max-inline-size"), "100%");
+          assert.equal(styleOf(form, "background"), "#fffcf7");
+          assert.equal(styleOf(form, "border-radius"), "32px");
+          for (const field of form.querySelectorAll("[data-ui-field]")) {
+            assert.equal(styleOf(field, "min-inline-size"), "0px");
+            assert.equal(styleOf(field, "flex-shrink"), "1");
+          }
+          const toggle = screen.getByRole("group", { name: presentation === "sales" ? "Presentación de ventas" : "Presentación de inventario" });
+          assert.ok(form.contains(toggle));
+          assert.equal(styleOf(toggle, "flex-wrap"), "wrap");
+          assert.equal(styleOf(toggle, "max-inline-size"), "100%");
+          for (const control of form.querySelectorAll("input, select, button")) {
+            assert.equal(styleOf(control, "border-radius"), "999px");
+          }
+          const list = screen.getByRole("list");
+          assert.equal(form.contains(list), false);
+          const viewport = presentation === "sales" ? list : list.parentElement!;
+          assert.equal(styleOf(viewport, "overflow-y"), "auto");
+          if (presentation === "inventory" && mode === "table") {
+            const row = within(list).getByRole("listitem");
+            assert.equal(styleOf(row, "grid-template-columns"), browseWidth >= 640
+              ? "3rem minmax(0, 1.5fr) minmax(0, .8fr) minmax(0, 1fr) minmax(0, 1fr) auto"
+              : "3rem minmax(0, 1fr)");
+          }
+        } finally { style.remove(); }
+      });
+    }
+  }
 }
 
 for (const width of [340, 900, 1440]) {
@@ -814,8 +884,9 @@ for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [600, 
       assert.equal(styleOf(outer, "border-top-width"), "0px");
       assert.equal(styleOf(outer, "border-top-style"), "none");
       assert.equal(styleOf(outer, "padding"), "0px");
-      assert.equal(styleOf(toolbar, "background"), "#fffcf7");
-      assert.equal(styleOf(toolbar, "border-radius"), "32px");
+      assert.equal(styleOf(toolbar, "background"), "transparent");
+      assert.equal(styleOf(toolbar.querySelector("form")!, "background"), "#fffcf7");
+      assert.equal(styleOf(toolbar.querySelector("form")!, "border-radius"), "32px");
       assert.equal(styleOf(toolbar, "flex-shrink"), "0");
       // Cascade contract, not physical visibility: Chromium must separately
       // prove trusted Tab keeps the whole 3px outline + 2px offset unclipped.
@@ -857,9 +928,10 @@ for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [600, 
       assert.equal(submit.getAttribute("data-ui-action"), "secondary");
       for (const shared of document.querySelectorAll('[data-ui-product-browser]:not([data-ui-product-browser="sales"])')) {
         for (const control of shared.querySelectorAll("input, select")) {
-          assert.equal(styleOf(control, "border-radius"), "6px");
-          assert.equal(styleOf(control, "background"), "#fffcf7");
-          assert.equal(styleOf(control, "border-top-color"), "rgb(141, 129, 119)");
+          const concordant = control.closest("[data-ui-browser-toolbar]") !== null;
+          assert.equal(styleOf(control, "border-radius"), concordant ? "999px" : "6px");
+          assert.equal(styleOf(control, "background"), concordant ? "#fff" : "#fffcf7");
+          assert.equal(styleOf(control, "border-top-color"), concordant ? "rgb(228, 221, 210)" : "rgb(141, 129, 119)");
           assert.equal(styleOf(control, "min-height"), "44px");
           assert.equal(styleOf(control, "padding-inline"), "12px");
           control.setAttribute("data-ui-focus-visible", "true");
@@ -868,7 +940,8 @@ for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [600, 
         }
         assert.equal(shared.querySelector("[data-ui-sales-view-toggle]"), null);
       }
-      assert.equal(styleOf(outer.querySelector("form")!, "grid-template-columns"), browseWidth >= 640 ? "minmax(0, 1.6fr) minmax(0, 1fr) auto" : "minmax(0, 1fr)");
+      assert.equal(styleOf(outer.querySelector("form")!, "display"), "flex");
+      assert.equal(styleOf(outer.querySelector("form")!, "flex-wrap"), "wrap");
       if (salesViewMode === "table") {
         const row = outer.querySelector("[data-ui-sales-product]")!;
         assert.equal(styleOf(row, "background"), "#fffcf7");

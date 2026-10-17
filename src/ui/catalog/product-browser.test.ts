@@ -117,7 +117,7 @@ for (const mode of ["table", "gallery"] as const) {
     const toolbar = heading.closest("[data-ui-sales-catalog-toolbar]")!;
     assert.ok(toolbar);
     const toggle = within(toolbar as HTMLElement).getByRole("group", { name: "Presentación de ventas" });
-    assert.equal(toggle.closest("form"), null);
+    assert.equal(toggle.closest("form"), screen.getByRole("searchbox").closest("form"));
     for (const name of ["Vista de tabla", "Vista de galería"]) {
       const button = within(toggle).getByRole("button", { name });
       assert.equal(button.textContent?.trim(), name);
@@ -179,8 +179,8 @@ test("Inventory controls its presentation without submitting and preserves produ
   assert.equal(heading.closest("header")?.parentElement, toolbar);
   assert.equal(form.parentElement, toolbar);
   const toggle = within(toolbar).getByRole("group", { name: "Presentación de inventario" });
-  assert.equal(toggle.closest("header"), heading.closest("header"));
-  assert.equal(toggle.closest("form"), null);
+  assert.equal(toggle.closest("header"), null);
+  assert.equal(toggle.closest("form"), form);
   const results = screen.getByRole("region", { name: "Productos de inventario" });
   const pages = screen.getByRole("navigation", { name: "Páginas de productos" });
   assert.equal(results.previousElementSibling, toolbar);
@@ -202,6 +202,11 @@ test("Inventory controls its presentation without submitting and preserves produ
     assert.equal(within(toggle).getByRole("button", { name: "Vista de tabla" }).getAttribute("aria-pressed"), String(mode === "table"));
     assert.equal(galleryButton.getAttribute("aria-pressed"), String(mode === "gallery"));
     const rows = within(screen.getByRole("list", { name: "Resultados del catálogo" })).getAllByRole("listitem");
+    if (mode === "table") {
+      const identity = rows[0].querySelector("[data-ui-inventory-product-identity]")!;
+      assert.equal(identity.textContent, "FilterFLT", "table identity keeps only name and SKU; category has its own compact column");
+      assert.ok(rows[0].querySelector(":scope > [data-ui-inventory-product-category]"));
+    }
     for (const [index, stock] of ["Disponible: 4", "Sin stock: 0", "Stock bajo: 1"].entries()) {
       for (const fact of ["Filter", products[index].sku, "Filters", "Bs 25,00", stock]) assert.ok(within(rows[index]).getByText(fact));
       assert.ok(within(rows[index]).getByRole("img", { name: "Sin imagen" }));
@@ -662,7 +667,7 @@ test("Sales view preference is separate from Catalog and defaults safely", () =>
   assert.equal(values.get("sales.product-browser.view-mode"), "gallery");
 });
 
-test("Sales toolbar keeps search and submit in the form with view controls outside it", async () => {
+test("Sales toolbar keeps filters, submit and non-submitting views inline in one form", async () => {
   const props = { state: { ...initialProductBrowserState, status: "results" as const, result: page }, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
   const view = render(createElement(ProductBrowser, props));
   const form = view.container.querySelector('[data-ui-sales-catalog-toolbar] > form');
@@ -670,17 +675,17 @@ test("Sales toolbar keeps search and submit in the form with view controls outsi
   const search = within(form).getByRole("searchbox", { name: "Buscar en el catálogo" });
   const category = within(form).getByRole("combobox", { name: "Categoría" });
   const views = screen.getByRole("group", { name: "Presentación de ventas" });
-  assert.equal(views.closest("form"), null);
+  assert.equal(views.closest("form"), form);
   assert.equal(views.closest("[data-ui-sales-catalog-toolbar]"), form.parentElement);
   const submit = within(form).getByRole("button", { name: "Buscar" });
-  assert.deepEqual([search.closest("[data-ui-field]"), category.closest("[data-ui-field]"), submit], Array.from(form.children));
+  assert.deepEqual([search.closest("[data-ui-field]"), category.closest("[data-ui-field]"), submit, views], Array.from(form.children));
   assert.equal((within(views).getByRole("button", { name: "Vista de tabla" })).getAttribute("aria-pressed"), "true");
   assert.equal((within(views).getByRole("button", { name: "Vista de galería" })).getAttribute("aria-pressed"), "false");
 
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /\[data-ui-product-browser="sales"\]\s*\{[^}]*container:\s*sales-browse\s*\/\s*inline-size/s);
-  assert.match(css, /\[data-ui-product-browser="sales"\]\s*\[data-ui-sale-search\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*;[^}]*\}/s);
-  assert.match(css, /@container sales-browse \(min-width:\s*40rem\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-sale-search\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1\.6fr\) minmax\(0,\s*1fr\) auto/s);
+  assert.match(css, /\[data-ui-product-browser\] \[data-ui-browser-toolbar="wrap"\] \{[^}]*display: flex;[^}]*flex-wrap: wrap/);
+  assert.match(css, /\[data-ui-browser-toolbar="wrap"\] > \[data-ui-field\]:first-child \{ flex: 2 1 14rem/);
   assert.equal(css.includes('[data-ui-catalog-workspace] [data-ui-product-browser] > form'), true);
 });
 

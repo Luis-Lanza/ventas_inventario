@@ -702,13 +702,14 @@ test("keeps Sales toolbar and gallery presentation isolated from browser layout 
   render(createElement(SaleScreen));
   const catalog = await screen.findByRole("region", { name: "Catálogo de productos" });
   const toolbar = within(catalog).getByRole("searchbox", { name: "Buscar en el catálogo" }).closest("form")!;
-  assert.deepEqual(Array.from(toolbar.querySelectorAll(":scope > *"), (item) => item.getAttribute("role") === "group" ? item.getAttribute("aria-label") : item.tagName === "BUTTON" ? item.textContent?.trim() : item.querySelector("label")?.textContent), ["Buscar en el catálogo", "Categoría", "Buscar"]);
+  assert.deepEqual(Array.from(toolbar.querySelectorAll(":scope > *"), (item) => item.getAttribute("role") === "group" ? item.getAttribute("aria-label") : item.tagName === "BUTTON" ? item.textContent?.trim() : item.querySelector("label")?.textContent), ["Buscar en el catálogo", "Categoría", "Buscar", "Presentación de ventas"]);
   const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
   await user().click(within(catalog).getByRole("button", { name: "Vista de galería" }));
   assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
   assert.equal(within(list).getAllByRole("listitem").length, 1);
   const css = style.textContent ?? "";
-  assert.match(css, /@container sales-browse \(min-width:\s*40rem\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-sale-search\] \{ grid-template-columns: minmax\(0, 1\.6fr\) minmax\(0, 1fr\) auto; \}/);
+  assert.equal(toolbar.getAttribute("data-ui-browser-toolbar"), "wrap");
+  assert.match(css, /\[data-ui-product-browser\] \[data-ui-browser-toolbar="wrap"\] \{[^}]*display: flex;[^}]*flex-wrap: wrap/);
   assert.match(css, /@container sales-browse \(min-width: 46rem\)[\s\S]*\[data-ui-sales-gallery="true"\] \{[^}]*repeat\(3, minmax\(0, 1fr\)\)[^}]*\}/);
   assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*aspect-ratio: 4 \/ 3/);
 });
@@ -895,7 +896,7 @@ test("contains the product result viewport between search and pagination without
   assert.equal(toolbar.getAttribute("data-ui-sales-catalog-toolbar"), "true");
   assert.equal(toolbar.querySelector("[data-ui-sales-catalog-status]")?.getAttribute("role"), "status");
   assert.ok(toolbar.querySelector("form"));
-  assert.equal(toolbar.querySelector("[data-ui-sales-view-toggle]")?.closest("form"), null);
+  assert.ok(toolbar.querySelector("[data-ui-sales-view-toggle]")?.closest("form") === toolbar.querySelector("form"));
   assert.equal(results.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");
   assert.equal(within(catalog).getAllByRole("listitem").length, 100);
   assert.ok(screen.getByRole("region", { name: "Resumen de venta" }));
