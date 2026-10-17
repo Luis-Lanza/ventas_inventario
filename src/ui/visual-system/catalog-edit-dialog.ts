@@ -1,4 +1,4 @@
-import { createElement, useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type FormEvent, type RefObject } from "react";
+import { createElement, Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type FormEvent, type RefObject, type ReactNode } from "react";
 
 import { createPortal } from "react-dom";
 import { startCatalogProductMotion, type CatalogProductOpening } from "./catalog-product-motion.ts";
@@ -113,7 +113,7 @@ export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback
       createElement(Field, { kind: "money", label: "Precio de venta (Bs)", hint: "Referencia para nuevas ventas. Se guarda en centavos.", error: fieldErrors.sale_price_centavos, control: createElement("input", { id: "catalog-edit-sale-price", disabled: pending, value: form.sale_price_centavos ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("sale_price_centavos", event.target.value) }) } as never),
       createElement(Field, { kind: "money", label: "Precio mínimo de venta (Bs)", hint: "No puede superar el precio de venta.", error: fieldErrors.minimum_sale_price_centavos, control: createElement("input", { id: "catalog-edit-minimum-price", disabled: pending, value: form.minimum_sale_price_centavos ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("minimum_sale_price_centavos", event.target.value) }) } as never),
       createElement(Field, { kind: "quantity", label: "Umbral de stock bajo (opcional)", hint: "Dejalo vacío para usar 1 unidad.", error: fieldErrors.low_stock_threshold, control: createElement("input", { id: "catalog-edit-low-stock-threshold", min: 1, disabled: pending, value: form.low_stock_threshold ?? "1", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("low_stock_threshold", event.target.value) }) } as never),
-      createElement(LocationPicker, { id: "catalog-edit-primary-location", label: "Ubicación principal (opcional)", locations, segments: locationSegments, selectedId: form.primary_location_id == null ? "" : String(form.primary_location_id), disabled: pending, status: locationsStatus, onChange: (value: string) => onChange("primary_location_id", value) }),
+      createElement(LocationPicker, { id: "catalog-edit-primary-location", label: "Ubicación principal (opcional)", presentation: "catalog-product", locations, segments: locationSegments, selectedId: form.primary_location_id == null ? "" : String(form.primary_location_id), disabled: pending, status: locationsStatus, onChange: (value: string) => onChange("primary_location_id", value) }),
       locationsStatus === "error" ? createElement("p", null, "No se pudieron cargar ubicaciones activas.") : null,
       detail.attribute_definitions.some((field) => field.active !== false) ? createElement("fieldset", { "data-ui-catalog-attributes": true }, createElement("legend", null, "Valores de atributos del producto"), createElement("p", null, "El producto guarda los valores según los atributos definidos por su categoría."), detail.attribute_definitions.filter((field) => field.active !== false).map(attribute)) : null) : null,
     createElement("button", { type: "submit", tabIndex: -1, "aria-hidden": "true", hidden: true }, "Guardar"),
@@ -136,6 +136,9 @@ export function CatalogEditDialog({ record, opening, restoreFocusFallback = () =
   const invokerRef = useRef<HTMLElement | null>(opening?.trigger ?? null);
   const dialogPending = loading || pending;
   const title = `Editar ${detail?.name ?? record.label}`;
+  const renderRail = (...children: ReactNode[]) => product
+    ? createElement("div", { "data-ui-catalog-product-rail": true }, ...children)
+    : createElement(Fragment, null, ...children);
 
   useEffect(() => {
     if (!detail || loading || !ready || hasFocusedDetail.current) return;
@@ -165,18 +168,21 @@ export function CatalogEditDialog({ record, opening, restoreFocusFallback = () =
         createElement(Badge, { kind: detail.activity, text: detail.activity === "active" ? "Activo" : "Archivado" }),
         createElement("span", null, `Producto · Categoría: ${categoryName ?? detail.category_id}`)) : null,
       createElement(CatalogMetadataEditor, { detail, form, nameRef, pending: dialogPending || imagePending || recoveryRequired, feedback, fieldErrors, locations, locationsStatus, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft }),
-      detail.target === "product" ? createElement("section", { "aria-label": "Imagen del producto", "data-ui-catalog-product-image": true, "aria-busy": imagePending || undefined },
-        createElement("h3", null, "Imagen del producto"),
-        imageThumbnail ? createElement("img", { src: imageThumbnail, alt: `Imagen de ${detail.name}`, "data-ui-catalog-product-image-preview": true }) : createElement("div", { "data-ui-catalog-product-placeholder": true, role: "img", "aria-label": "Sin imagen" }, "Sin imagen"),
-        createElement(Action, { variant: "secondary", disabled: dialogPending || imagePending || recoveryRequired, pending: imagePending, pendingLabel: "Procesando imagen…", onClick: onChooseImage }, "Elegir imagen"),
-        imageThumbnail ? createElement(Action, { variant: "tertiary", disabled: dialogPending || imagePending || recoveryRequired, onClick: onRemoveImage }, "Quitar imagen") : null,
-        imageFeedback ? createElement(Feedback, { kind: imageFeedbackKind } as never, imageFeedback) : null) : null,
-      createElement("section", { "aria-label": "Acciones de ciclo de vida", "data-ui-catalog-lifecycle": true },
-        product ? createElement("h3", null, "Acciones de ciclo de vida") : null,
-        createElement(Action, { variant: detail.activity === "active" ? "destructive" : "secondary", disabled: dialogPending || imagePending || recoveryRequired, onClick: onLifecycle, "data-ui-catalog-lifecycle-action": detail.activity }, detail.activity === "active" ? "Archivar" : "Reactivar"),
-        lifecycleFeedback ? createElement(Feedback, { kind: lifecycleFeedback === "Catálogo actualizado." ? "success" : "error" } as never, lifecycleFeedback) : null,
-        recoveryRequired ? createElement(Action, { variant: "secondary", disabled: dialogPending || imagePending, onClick: onReload }, "Reintentar actualización") : null))
-      : loading ? createElement(Feedback, { kind: "loading" } as never, "Cargando el detalle autorizado…")
+      renderRail(
+        detail.target === "product" ? createElement("section", { "aria-label": "Imagen del producto", "data-ui-catalog-product-image": true, "aria-busy": imagePending || undefined },
+          createElement("h3", null, "Imagen del producto"),
+          imageThumbnail ? createElement("img", { src: imageThumbnail, alt: `Imagen de ${detail.name}`, "data-ui-catalog-product-image-preview": true }) : createElement("div", { "data-ui-catalog-product-placeholder": true, role: "img", "aria-label": "Sin imagen" }, "Sin imagen"),
+          createElement(Action, { variant: "secondary", disabled: dialogPending || imagePending || recoveryRequired, pending: imagePending, pendingLabel: "Procesando imagen…", onClick: onChooseImage }, "Elegir imagen"),
+          imageThumbnail ? createElement(Action, { variant: "tertiary", disabled: dialogPending || imagePending || recoveryRequired, onClick: onRemoveImage }, "Quitar imagen") : null,
+          imageFeedback ? createElement(Feedback, { kind: imageFeedbackKind } as never, imageFeedback) : null) : null,
+        createElement("section", { "aria-label": "Acciones de ciclo de vida", "data-ui-catalog-lifecycle": true },
+          product ? createElement("h3", null, "Acciones de ciclo de vida") : null,
+          createElement(Action, { variant: detail.activity === "active" ? "destructive" : "secondary", disabled: dialogPending || imagePending || recoveryRequired, onClick: onLifecycle, "data-ui-catalog-lifecycle-action": detail.activity }, detail.activity === "active" ? "Archivar" : "Reactivar"),
+          lifecycleFeedback ? createElement(Feedback, { kind: lifecycleFeedback === "Catálogo actualizado." ? "success" : "error" } as never, lifecycleFeedback) : null,
+          recoveryRequired ? createElement(Action, { variant: "secondary", disabled: dialogPending || imagePending, onClick: onReload }, "Reintentar actualización") : null)))
+      : loading ? product
+        ? createElement("div", { "data-ui-catalog-product-loading": true }, createElement(Feedback, { kind: "loading" } as never, "Cargando el detalle autorizado…"))
+        : createElement(Feedback, { kind: "loading" } as never, "Cargando el detalle autorizado…")
         : createElement("div", { "data-ui-catalog-edit-error": true },
           createElement(Feedback, { kind: "error" } as never, feedback ?? "No se pudo cargar el registro."),
           createElement(Action, { variant: "secondary", onClick: onReload }, "Recargar registro")),

@@ -1498,16 +1498,24 @@ body:has([data-ui-inventory-dialog]) [data-ui-shell-content] { overflow: hidden;
 [data-ui-dialog-backdrop]:has([data-ui-catalog-product-dialog]) { padding: 16px; overscroll-behavior: contain; }
 html:has([data-ui-catalog-product-dialog]), body:has([data-ui-catalog-product-dialog]),
 body:has([data-ui-catalog-product-dialog]) [data-ui-shell-content] { overflow: hidden; }
-[data-ui-catalog-product-dialog] { --radius-control: 16px; display: flex; flex-direction: column; gap: var(--space-3); inline-size: min(1120px, 100%); min-inline-size: 0; max-block-size: calc(100dvh - 32px); overflow: hidden; padding: var(--space-5); border: 1px solid var(--color-border-strong); border-radius: 32px; background: var(--color-surface-elevated); box-shadow: var(--elevation-modal); }
+[data-ui-catalog-product-dialog] { --radius-control: 16px; display: flex; flex-direction: column; gap: var(--space-3); inline-size: min(1120px, 100%); min-inline-size: 0; block-size: min(800px, calc(100dvh - 32px)); max-block-size: calc(100dvh - 32px); overflow: hidden; padding: var(--space-5); border: 1px solid var(--color-border-strong); border-radius: 32px; background: var(--color-surface-elevated); box-shadow: var(--elevation-modal); }
 [data-ui-catalog-product-dialog] > :is(h2, p) { flex: 0 0 auto; margin: 0; overflow-wrap: anywhere; }
 [data-ui-catalog-product-dialog] > p { color: var(--color-text-muted); padding-block-end: var(--space-3); }
-[data-ui-catalog-product-body] { min-block-size: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px; border-block-start: 1px solid var(--color-border); }
+[data-ui-catalog-product-body] { flex: 1 1 auto; min-inline-size: 0; min-block-size: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px; border-block-start: 1px solid var(--color-border); }
 [data-ui-catalog-product-dialog] [data-ui-catalog-edit-content] { display: grid; grid-template-columns: minmax(0, 2fr) minmax(15rem, 1fr); gap: var(--space-5); overflow: visible; padding-block: var(--space-4); }
 [data-ui-catalog-product-dialog] [data-ui-catalog-identity] { grid-column: 1 / -1; align-items: center; margin: 0; border: 1px solid var(--color-border); border-radius: 20px; padding: var(--space-4); }
 [data-ui-catalog-product-dialog] [data-ui-catalog-identity] > strong { font-size: var(--type-h2-size); overflow-wrap: anywhere; }
 [data-ui-catalog-product-dialog] [data-ui-catalog-identity] > span:last-child { flex-basis: 100%; color: var(--color-text-muted); }
-[data-ui-catalog-product-dialog] form[data-ui-catalog-product-metadata] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: var(--space-4); grid-column: 1; grid-row: 2 / span 2; min-inline-size: 0; }
-[data-ui-catalog-product-dialog] [data-ui-field] { margin: 0; min-inline-size: 0; }
+[data-ui-catalog-product-dialog] form[data-ui-catalog-product-metadata] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: var(--space-4); grid-column: 1; grid-row: 2; min-inline-size: 0; }
+[data-ui-catalog-product-dialog] [data-ui-field] { margin: 0; min-inline-size: 0; align-content: start; }
+[data-ui-catalog-product-dialog] :is([data-ui-field-control], [data-ui-location-picker], [data-ui-catalog-product-image], [data-ui-catalog-lifecycle]) { min-inline-size: 0; }
+[data-ui-catalog-product-dialog] :is(input, select) { min-inline-size: 0; max-inline-size: 100%; }
+[data-ui-catalog-product-dialog] [data-ui-field-control="money"] > input { flex: 1 1 0px; inline-size: 0; }
+[data-ui-catalog-product-dialog] [data-ui-field-control="money"] > span { flex: 0 0 auto; }
+[data-ui-catalog-product-dialog] [data-ui-field="money"] > label { min-block-size: 2lh; }
+[data-ui-catalog-product-dialog] :is(label, small, legend, [data-ui-location-picker-status]) { overflow-wrap: anywhere; }
+[data-ui-catalog-product-dialog] [data-ui-location-picker-status] { margin-block: var(--space-2) 0; }
+[data-ui-catalog-product-loading] { padding-block: var(--space-4); }
 [data-ui-catalog-product-dialog] form > [data-ui-feedback] { grid-column: 1 / -1; }
 [data-ui-catalog-product-dialog] [data-ui-catalog-editor] fieldset { min-inline-size: 0; margin: 0; padding: 0; border: 0; }
 [data-ui-catalog-product-dialog] legend { margin-block-end: var(--space-3); color: var(--color-text-muted); text-transform: uppercase; font-size: var(--type-caption-size); letter-spacing: .04em; }
@@ -1515,22 +1523,27 @@ body:has([data-ui-catalog-product-dialog]) [data-ui-shell-content] { overflow: h
 [data-ui-catalog-product-dialog] [data-ui-catalog-general] > [data-ui-location-picker] { grid-column: span 2; }
 [data-ui-catalog-product-dialog] [data-ui-catalog-attributes] { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
 [data-ui-catalog-product-dialog] [data-ui-catalog-attributes] > p { grid-column: 1 / -1; margin: 0; color: var(--color-text-muted); }
-[data-ui-catalog-product-dialog] [data-ui-catalog-product-image] { grid-column: 2; align-self: start; align-content: start; border-radius: 24px; padding: var(--space-4); gap: var(--space-4); }
-[data-ui-catalog-product-dialog] [data-ui-catalog-product-image] > :is([data-ui-catalog-product-placeholder], img) { display: grid; place-items: center; inline-size: 100%; aspect-ratio: 4 / 3; block-size: auto; max-block-size: none; border-radius: 20px; background: var(--color-surface-subtle); color: var(--color-text-muted); object-fit: contain; }
+[data-ui-catalog-product-dialog] [data-ui-catalog-product-rail] { display: grid; grid-column: 2; align-content: start; gap: var(--space-4); min-inline-size: 0; }
+[data-ui-catalog-product-dialog] [data-ui-catalog-product-image] { align-self: start; align-content: start; border-radius: 24px; padding: var(--space-4); gap: var(--space-4); }
+[data-ui-catalog-product-dialog] [data-ui-catalog-product-image] > :is([data-ui-catalog-product-placeholder], img) { display: grid; place-items: center; inline-size: 100%; aspect-ratio: 4 / 3; block-size: auto; max-block-size: min(180px, 24dvh); border-radius: 20px; background: var(--color-surface-subtle); color: var(--color-text-muted); object-fit: contain; }
 [data-ui-catalog-product-dialog] [data-ui-catalog-product-image] > button { inline-size: 100%; }
-[data-ui-catalog-product-dialog] [data-ui-catalog-lifecycle] { grid-column: 2; align-self: start; border-block-start: 1px solid var(--color-border); padding-block-start: var(--space-3); }
+[data-ui-catalog-product-dialog] [data-ui-catalog-lifecycle] { align-self: start; border-block-start: 1px solid var(--color-border); padding-block-start: var(--space-3); }
 [data-ui-catalog-product-dialog] [data-ui-catalog-lifecycle] > h3 { flex-basis: 100%; margin: 0; color: var(--color-text-muted); font-size: var(--type-caption-size); text-transform: uppercase; }
 [data-ui-catalog-product-dialog] [data-ui-dialog-actions] { flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-4); border-block-start: 1px solid var(--color-border); padding-block-start: var(--space-4); }
 [data-ui-catalog-product-dialog] [data-ui-action] { border-radius: 999px; }
 [data-ui-catalog-product-opening] > * { visibility: hidden; pointer-events: none; }
 [data-ui-catalog-product-retirement] { pointer-events: none; }
+@media (min-width: 800px) and (max-width: 999px) {
+  [data-ui-catalog-product-dialog] [data-ui-catalog-general] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 799px) {
   [data-ui-catalog-product-dialog] { padding: var(--space-3); border-radius: 24px; }
   [data-ui-catalog-product-dialog] [data-ui-catalog-edit-content] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-catalog-product-dialog] form[data-ui-catalog-product-metadata] { grid-row: auto; }
-  [data-ui-catalog-product-dialog] :is([data-ui-catalog-product-image], [data-ui-catalog-lifecycle]) { grid-column: 1; }
+  [data-ui-catalog-product-dialog] [data-ui-catalog-product-rail] { grid-column: 1; }
 }
 @media (max-width: 549px) {
+  [data-ui-catalog-product-dialog] [data-ui-field="money"] > label { min-block-size: 0; }
   [data-ui-catalog-product-dialog] :is(form[data-ui-catalog-product-metadata], [data-ui-catalog-general], [data-ui-catalog-attributes]) { grid-template-columns: minmax(0, 1fr); }
   [data-ui-catalog-product-dialog] [data-ui-catalog-general] > [data-ui-location-picker] { grid-column: 1; }
 }

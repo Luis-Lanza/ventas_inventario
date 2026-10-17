@@ -115,6 +115,9 @@ test("product presentation isolates a single scrolling body from heading and act
   assert.ok(body.contains(screen.getByRole("textbox", { name: "Nombre del producto" })));
   assert.ok(body.contains(screen.getByRole("button", { name: "Elegir imagen" })));
   assert.ok(body.contains(screen.getByRole("button", { name: "Archivar" })));
+  const rail = dialog.querySelector("[data-ui-catalog-product-rail]");
+  assert.ok(rail?.contains(screen.getByRole("button", { name: "Elegir imagen" })));
+  assert.ok(rail?.contains(screen.getByRole("button", { name: "Archivar" })), "lifecycle follows the image independently of metadata height");
   assert.equal(body.contains(screen.getByRole("heading", { name: "Editar Filtro" })), false);
   assert.equal(body.contains(screen.getByRole("button", { name: "Guardar metadatos" })), false);
   assert.equal(dialog.parentElement?.parentElement, document.body, "product backdrop covers the viewport outside the shell");
@@ -130,6 +133,16 @@ test("product presentation isolates a single scrolling body from heading and act
     assert.equal(getComputedStyle(dialog.querySelector("[data-ui-catalog-edit-content]")!).overflow, "visible");
     assert.equal(getComputedStyle(document.body).overflow, "hidden");
     assert.equal(getComputedStyle(dialog).inlineSize, "min(1120px, 100%)");
+    assert.equal(getComputedStyle(dialog).blockSize, "min(800px, 100dvh - 32px)", "loading and ready frames share bounded geometry");
+    const money = dialog.querySelector('[data-ui-field="money"]')!;
+    assert.equal(getComputedStyle(money).alignContent, "start");
+    assert.equal(getComputedStyle(money.querySelector("input")!).minInlineSize, "0px");
+    assert.equal(getComputedStyle(money.querySelector("input")!).flexBasis, "0px");
+    const location = within(dialog).getByRole("group", { name: "Ubicación principal (opcional)" });
+    assert.equal(location.firstElementChild?.tagName, "LEGEND");
+    assert.ok(location.contains(within(dialog).getByText("No hay ubicaciones activas disponibles.")));
+    const preview = within(dialog).getByRole("img", { name: "Sin imagen" });
+    assert.equal(getComputedStyle(preview).maxBlockSize, "min(180px, 24dvh)");
   } finally { style.remove(); }
   rendered.unmount();
   view(false);

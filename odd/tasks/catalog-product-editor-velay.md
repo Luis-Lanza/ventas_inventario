@@ -10,11 +10,13 @@ Align Catalog's Edit product modal with the approved Velay reference and reuse e
 - Reuse checkout-motion's geometry driver; no text scaling, transaction dependency on animation or new packages.
 - Preserve reduced motion, cleanup, pending guards, nested confirmation focus, opener restoration and authoritative detail loading.
 - Bounded responsive modal; one native scrolling body, reachable heading/footer, uniform viewport backdrop and background scroll lock.
-- No Rust, IPC or persistence changes. User explicitly authorized commit and feature-branch push; no merge authorized.
+- No Rust, IPC or persistence changes. Prior implementation commit/push was authorized and delivered. Follow-up fixes are authorized; no new commit/push/merge without explicit request.
 
 ## Tasks
 - [x] T1: Implement product-only Velay layout and opener-linked entrance/exit with focused test-first regression coverage.
-- [x] T2: Reconcile verification/review evidence and document remaining native Windows visual acceptance.
+- [x] T2: Reconcile initial verification/review evidence and document native Windows visual acceptance.
+- [x] T3: Fix Windows-reported price overflow/alignment, product location heading order, oversized image rail and opening snapshot invalidation; add regression tests.
+- [x] T4: Verify follow-up, follow native review routing and document remaining real-window acceptance.
 
 ## Acceptance and checks
 - Product identity, metadata and image/lifecycle rail follow the reference; many attributes use responsive two-column layout.
@@ -37,5 +39,24 @@ Align Catalog's Edit product modal with the approved Velay reference and reuse e
 - Starting branch: feat/catalog-product-editor-velay, based on clean master.
 - Commit evidence: 53876f4 feat(ui): align product editor with Velay modal design. User explicitly requested commit and push for Windows verification.
 
+## Follow-up evidence and rationale
+- User screenshot /tmp/screenshot-2026-10-17_17-20-58.png rejects initial layout: overlapping/misaligned price controls, location notice above heading, image/lifecycle imbalance. User confirms close animates but opening does not; initial visual acceptance failed.
+- Read-only diagnosis: loading disables Edit after valid geometry capture; catalog-product-motion then rejects disabled opener and skips opening tween. Closing-target eligibility must remain strict.
+- Price grid has gutters but nested money controls likely overflow intrinsic tracks; real browser measurements are needed, not CSS-string assertions alone.
+- Shared LocationPicker currently emits status before heading. Any fix must be product-only opt-in or scoped composition; do not alter unrelated screens.
+- Opening may animate a stable loading shell independently of async detail/locations; never block persistence on animation or require content to load before feedback appears.
+- User authorized follow-up with 'avanza'. Writer observed opening RED (zero tweens vs one; 13 pass/1 fail), heading-order RED in three states, and loading/rail RED before fixes.
+- Writer GREEN: required focused suite 237 passed; location flow/mounted tests 5 passed. Typecheck/build/diff check passed. Existing act/localStorage/deliberate-error and mixed-import/chunk warnings remain.
+- Opening snapshot survives intentional loading locks while close target checks remain strict; product-only heading-first location opt-in preserves shared default; stable loading shell and independent bounded image/lifecycle rail implemented.
+- No browser executable or Playwright/Puppeteer package available; no real geometry measurements performed. Windows manual price alignment, loading/motion, narrow/short-window scroll and invalid-field visibility remain pending.
+
+## Follow-up verification closure
+- Independent verifier: 242/242 passed, no failures/skips; typecheck, build and diff check passed. No concrete regression found in inspected scope.
+- Parent motion spot check: 27/27 passed. Categories, shared default LocationPicker and strict closing eligibility preserved.
+- Native follow-up review review-9eba10f7fba1c524 approved and acknowledged target sha256:1e2a6e672241a9a41d7fb9cf72c33692bae60485cd76e0148e2af87b8cf8fea0; authority burned. R3-001 at catalog-edit-dialog.mounted.test.ts:138–140 is informational/nonblocking, no correction offered. This subsequent tracking-only update was not in frozen tree; source unchanged.
+- ASSESS failed on intended-untracked declaration, triggering independent high-risk verification now completed; no tooling repair attempted.
+- Existing test act/localStorage/deliberate-error logs and mixed-import/510.86 kB build chunk warnings remain non-failing.
+- No actual browser/Windows geometry checks executed; DOM/CSS assertions are not visual acceptance. No follow-up commits, staging or push.
+
 ## Next step
-Await user visual acceptance in running Windows app: Edit from table/gallery, open/close motion, short window, many/long attributes, invalid-field visibility, nested archive confirmation and image operations. Feature-branch push authorized for Windows verification; no merge authorized. Category editing is deferred.
+Await explicit commit/push request to deliver follow-up for Windows acceptance. Check prices, slow-load opening/close motion, focus/reduced motion, preview balance, short/narrow windows, many attributes and invalid-field visibility. Category editing remains deferred.

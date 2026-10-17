@@ -10,10 +10,11 @@ export interface LocationPickerProps {
   selectedId: string;
   disabled?: boolean;
   status?: "loading" | "ready" | "error";
+  presentation?: "catalog-product";
   onChange: (locationId: string) => void;
 }
 
-export function LocationPicker({ id, label, locations, segments, selectedId, disabled = false, status = "ready", onChange }: LocationPickerProps) {
+export function LocationPicker({ id, label, locations, segments, selectedId, disabled = false, status = "ready", presentation, onChange }: LocationPickerProps) {
   const activeLocations = locations.filter((location) => location.active);
   const selected = activeLocations.find((location) => String(location.location_id) === selectedId);
   const [guidedValues, setGuidedValues] = useState<string[]>(selected?.values ?? []);
@@ -25,8 +26,9 @@ export function LocationPicker({ id, label, locations, segments, selectedId, dis
   };
   const stateText = status === "loading" ? "Cargando ubicaciones activas…" : status === "error" ? "No se pudieron cargar ubicaciones activas." : activeLocations.length ? `${activeLocations.length} ubicaciones activas disponibles.` : "No hay ubicaciones activas disponibles.";
 
+  const statusMessage = h("p", { role: "status", "aria-live": "polite", "data-ui-location-picker-status": true }, stateText);
   return h("div", { "data-ui-location-picker": true },
-    h("p", { role: "status", "aria-live": "polite", "data-ui-location-picker-status": true }, stateText),
+    presentation === "catalog-product" ? null : statusMessage,
     h("fieldset", null,
       h("legend", null, label),
       segments.map((segment, index) => {
@@ -36,5 +38,6 @@ export function LocationPicker({ id, label, locations, segments, selectedId, dis
           h("select", { id: `${id}-segment-${segment.id}`, value: guidedValues[index] ?? "", disabled: disabled || status !== "ready" || (index > 0 && !guidedValues[index - 1]), onChange: (event: ChangeEvent<HTMLSelectElement>) => updateGuided(index, event.target.value) },
             h("option", { value: "" }, `Seleccioná ${segment.label.toLocaleLowerCase()}`),
             options.map((value) => h("option", { key: value, value }, value))));
-      })));
+      }),
+      presentation === "catalog-product" ? statusMessage : null));
 }

@@ -199,6 +199,44 @@ test("Catalog mock intercepts status before validation without fixture dispatch"
   }
 });
 
+test("product opening animates once without waiting for authoritative detail or locations", async (t) => {
+  let resolveDetail!: (value: unknown) => void, resolveLocations!: (value: unknown) => void;
+  const detailPending = new Promise((resolve) => { resolveDetail = resolve; });
+  const locationsPending = new Promise((resolve) => { resolveLocations = resolve; });
+  let complete!: () => void, tweens = 0;
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", function (this: HTMLElement) {
+    return (this.tagName === "BUTTON" ? { left: 30, top: 50, width: 120, height: 40, right: 150, bottom: 90 } : { left: 100, top: 20, width: 900, height: 600, right: 1000, bottom: 620 }) as DOMRect;
+  });
+  t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => {
+    tweens++; complete = vars.onComplete as () => void; return {} as gsap.core.Tween;
+  });
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") return detailPending;
+    if (command === "list_product_locations_command") return locationsPending;
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 0, segments: [] } };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    return baseIPC(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  const opener = await screen.findByRole("button", { name: "Editar" });
+  assert.equal((opener as HTMLButtonElement).disabled, false);
+  await userEvent.click(opener);
+  assert.equal((opener as HTMLButtonElement).disabled, true);
+  assert.equal(tweens, 1, "loading lock must not skip the captured opening");
+  act(() => complete());
+  const dialog = screen.getByRole("dialog");
+  assert.ok(dialog.querySelector("[data-ui-catalog-product-loading]"));
+  assert.equal(screen.queryByRole("textbox", { name: "Nombre del producto" }), null);
+  await act(async () => { resolveDetail(productDetail); });
+  assert.ok(dialog.querySelector("[data-ui-catalog-product-loading]"), "locations may still be pending after motion has completed");
+  assert.equal(tweens, 1, "detail arrival must not restart the opening");
+  await act(async () => { resolveLocations({ kind: "locations_success", locations: [] }); });
+  assert.ok(within(dialog).getByRole("textbox", { name: "Nombre del producto" }));
+  assert.equal(dialog.querySelector("[data-ui-catalog-product-loading]"), null);
+  assert.match(dialog.textContent ?? "", /No hay ubicaciones activas disponibles/);
+  assert.equal(tweens, 1);
+});
+
 test("product close immediately discards the draft while only an empty surface retires", async (t) => {
   let complete: (() => void) | undefined;
   let writes = 0;

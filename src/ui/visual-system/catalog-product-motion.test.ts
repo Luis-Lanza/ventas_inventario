@@ -27,7 +27,42 @@ for (const direction of ["open", "close"] as const) test(`Catalog ${direction} u
   driver.dispose(); assert.equal(f.frame.style.width, "");
 });
 
-for (const reason of ["resize", "reduce", "initial-reduce", "exception", "deadline", "dispose", "detached", "disabled", "offscreen", "hidden", "inert"] as const) test(`Catalog motion safely handles ${reason}`, async (t) => {
+test("a valid Edit snapshot still opens exactly once after detail loading disables its button", (t) => {
+  const f = fixture(); t.after(() => f.clean());
+  f.trigger.disabled = true;
+  let tweens = 0, ready = 0;
+  let complete!: () => void;
+  t.mock.method(gsap, "to", (target: unknown, vars: gsap.TweenVars) => {
+    tweens++;
+    assert.equal(target, f.frame);
+    assert.deepEqual([vars.left, vars.top, vars.width, vars.height], [100, 20, 900, 600]);
+    complete = vars.onComplete as () => void;
+    return {} as gsap.core.Tween;
+  });
+  const driver = startCatalogProductMotion(f.frame, f.opening, () => ready++);
+  assert.equal(tweens, 1, "loading must not bypass the opening tween");
+  assert.equal(ready, 0);
+  complete(); driver.finish();
+  assert.equal(ready, 1);
+  driver.dispose();
+  assert.equal(f.frame.style.width, "");
+});
+
+for (const reason of ["initial-disabled", "unvalidated-snapshot"] as const) test(`Catalog opening refuses ${reason}`, (t) => {
+  const f = fixture(); t.after(() => f.clean());
+  f.trigger.disabled = true;
+  const opening = reason === "initial-disabled" ? captureCatalogProductOpening(f.trigger, 2) : { ...f.opening };
+  f.trigger.disabled = false;
+  let tweens = 0, ready = 0;
+  t.mock.method(gsap, "to", () => { tweens++; return {} as gsap.core.Tween; });
+  const driver = startCatalogProductMotion(f.frame, opening, () => ready++);
+  assert.equal(ready, 1);
+  assert.equal(tweens, 0);
+  driver.dispose();
+});
+
+for (const direction of ["open", "close"] as const)
+for (const reason of ["resize", "reduce", "initial-reduce", "exception", "deadline", "dispose", "detached", "disabled", "offscreen", "hidden", "inert"] as const) test(`Catalog ${direction} motion safely handles ${reason}`, async (t) => {
   const f = fixture(); t.after(() => f.clean());
   let matches = reason === "initial-reduce";
   const media = new window.EventTarget();
@@ -35,7 +70,10 @@ for (const reason of ["resize", "reduce", "initial-reduce", "exception", "deadli
   Object.defineProperty(window, "matchMedia", { configurable: true, value: () => media });
   t.after(() => Reflect.deleteProperty(window, "matchMedia"));
   if (reason === "detached") f.trigger.remove();
-  if (reason === "disabled") f.trigger.disabled = true;
+  if (reason === "disabled") {
+    f.trigger.disabled = true;
+    if (direction === "open") f.opening = captureCatalogProductOpening(f.trigger, 2);
+  }
   if (reason === "hidden") f.trigger.hidden = true;
   if (reason === "inert") f.trigger.setAttribute("inert", "");
   if (reason === "offscreen") f.trigger.getBoundingClientRect = () => ({ left: -200, top: 0, width: 120, height: 40, right: -80, bottom: 40 } as DOMRect);
@@ -45,7 +83,7 @@ for (const reason of ["resize", "reduce", "initial-reduce", "exception", "deadli
     complete = vars.onComplete as () => void; return {} as gsap.core.Tween;
   });
   const before = f.frame.style.cssText;
-  const driver = startCatalogProductMotion(f.frame, f.opening, () => ready++, "close");
+  const driver = startCatalogProductMotion(f.frame, f.opening, () => ready++, direction);
   if (reason === "resize") window.dispatchEvent(new Event("resize"));
   if (reason === "reduce") { matches = true; media.dispatchEvent(new Event("change")); }
   if (reason === "deadline") await new Promise((resolve) => setTimeout(resolve, 390));
