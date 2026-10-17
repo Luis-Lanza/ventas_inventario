@@ -18,7 +18,8 @@ C2 requires real runtime/Windows visual evidence; JSDOM cannot certify geometry 
 ## Tasks
 - [x] C1 (done): Implement Catalog Products listing parity, verify regressions and record local work-unit commits 3b2c654 and cb1b4ac.
 - [x] C3 (done): Correct screenshot-proven visual gaps against Catalog mockups and implemented Sales/Inventory measurements; checks/review passed, local commit3663e67.
-- [ ] C2 (in progress; awaiting corrected Windows evidence): Validate corrected table/gallery against mockups and existing Sales/Inventory visual family; record actual acceptance.
+- [ ] C4 (in progress): Present Catalog search/filter/view controls on the same bounded white rounded toolbar surface as Inventory; retain all behavior and independent results.
+- [ ] C2 (pending C4 visual evidence): User accepted prior correction visible in table screenshot20-52-31; validate new toolbar in table/gallery and record remaining runtime evidence.
 
 ## Allowed C1 edit surfaces
 - src/ui/catalog/catalog-maintenance-screen.ts
@@ -107,5 +108,18 @@ Independent verifier mvbo8o6j-e-eamy:154/154 focused PASS; W9 70PASS1ownerSKIP, 
 Native review review-ffb79b19f090a888 inspected stable correction against525f664, medium248lines8paths; approved with no advisory listed. Exact acknowledgement returned native-approved-acknowledgement-completed, authority burned for target sha256:0949f0a68e170ffea1998cf3895fe08169ed14a4b8a8494d826c5519919dbfda, consumed revision5f825488bd2fabf6004be082caaa61c432deb3969c35ba711351569a0020b112. No source edits after review.
 Local work-unit commit3663e67 fix(catalog): match approved rounded listing design includes behavior/tests/audit/task evidence (248lines). This post-delivery update only documents completion; it adds no source behavior. No new push/PR/merge performed.
 
+## C4 authorized toolbar refinement
+Correction3663e67 and closure6b018ad were explicitly pushed by user request. User provided screenshot /tmp/screenshot-2026-10-16_20-52-31.png and confirmed the correction meets the mockup. This establishes human acceptance of the visible corrected table, not unobserved gallery/scroll/keyboard states.
+User now authorizes a refinement beyond the static Catalog mockup: place the complete search/category/activity/Buscar/view-toggle group on a bounded white rounded surface like Inventory. Reuse Inventory toolbar measures from src/ui/styles.css:483–487 (surface token,32px radius,border,padding/gap); preserve Catalog4columns, existing layout/responsiveness, selected states, handlers and independent product rows/cards on ivory. Do not wrap results, headings, top Catalog header/password/navigation or other subviews in that white card. No backend/editor/global styles/new motion.
+Minimal C4 write surfaces: src/ui/styles.css and src/ui/visual-system/base-styles.mounted.test.ts; parent owns this ledger. Delegated worker because style+rendered regression tests are coupled; forecast30–70 authored lines, advisory only. Use existing confirmed layout/interaction seam; observe structural/computed-style RED→GREEN, while actual geometry remains Windows evidence. Preserve existing exact W9 profiles: this smaller acquired set may require separately authorized bounded policy; user subsequently authorized an independent exact four-path toolbar profile through structured answer. Additional writable policy surface: src/ui/w9-evidence-audit.test.ts only. Preserve all prior profiles/history/protected checks; no artificial extra-file writes.
+Local work-unit commit permission and feature-branch-chain strategy remain; prior push request covered prior correction only. No new push/PR/merge authority.
+
+## C4 implementation evidence and blocker
+Writer mvbopcm1-f-4jdy returned partial: styles.css + base-styles.mounted.test.ts,44 additions1 deletion (45lines). Existing Catalog form now has Inventory-equivalent surface,border32px radius,16px padding/gap,nonshrinking form. No markup or behavior changed; headings/results/header/navigation remain outside. RED154pass6intended surface failures, GREEN160/160. Both modes tested structurally at340/900/1440widths and540height; no real-browser geometry certification. Types/build PASS (mixed-import/chunk warnings), npm754/754 PASS, diff-check PASS. W9 FAIL69pass2ownership failures,0skips: actual acquired3paths are this ledger,styles.css,base-styles.mounted.test.ts; no audit changes and no fake extra edits. Native review/local commit not done.
+
+## C4 settled verification
+Audit writer mvbp6ces-g-cois completed exact four-path toolbar-surface profile with independent expected example,selector,validator and CURRENT routing. Prior9/8/historical profiles,hashes,normalizers,validators and protected allowlist unchanged. RED16pass2intended ownershipfail then GREEN19/19; fullW9 PASS72/SKIP1owner/FAIL0,types/build PASS(existingwarnings),npm754/754 PASS,diff-check PASS. Combined119changedlines before this update. Parent spot-read Catalog-only form CSS uses same surface/border32px/16pxpaddinggap as Inventory and flex0 0auto; no markup/results changes.
+ASSESSmediumlarge runtimewriter,selfverificationstands,reviewDuefalseunderbudget. Optional spot verifier mvbpdhyo-h-ikoj runs styles/W9 and audits scoped changes. Native review not started for intermediate ledger-only/3path candidates.
+
 ## Next step
-C2 awaits corrected Windows screenshots (table/gallery), hover/focus, actual scroll, same-scale cross-screen comparison and human acceptance. Request explicit push authorization for3663e67 and closure documentation before claiming the correction is available on Windows. Preserve initial rejected screenshots as prior evidence; do not infer acceptance from green checks.
+Collect independent spot evidence, record local C4 unit with tests and evidence, then freeze final candidate for native review. C2 awaits new toolbar Windows evidence and remaining runtime checks; preserve prior accepted screenshot and original rejection separately. No new push authorization.

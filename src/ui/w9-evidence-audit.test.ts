@@ -1063,10 +1063,32 @@ function assertCatalogVisualCorrectionCurrentCandidate(changedPaths: string[]) {
   assert.match(styles, /\[data-ui-catalog-workspace\] \[data-ui-catalog-toolbar-item="views"\] > \[data-ui-action\]\[aria-pressed="true"\]:is\(:hover, :active, :focus-visible\) \{[^}]*background: var\(--color-action\);/);
 }
 
+const catalogToolbarSurfaceCandidatePaths = [
+  "src/ui/styles.css",
+  "src/ui/visual-system/base-styles.mounted.test.ts",
+  "odd/tasks/catalog-listing-parity.md",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+
+// CURRENT bounded ownership/structure, not byte approval or runtime visual acceptance.
+function assertCatalogToolbarSurfaceCurrentCandidate(changedPaths: string[]) {
+  assert.deepEqual([...changedPaths].sort(), [...catalogToolbarSurfaceCandidatePaths].sort(), "CURRENT toolbar-surface exact whole profile");
+  assert.deepEqual(selectCurrentCandidate(changedPaths), { status: "SELECTED", profile: "toolbar-surface", owner: "catalog" });
+  const styles = read("src/ui/styles.css");
+  const toolbar = styles.match(/\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{([^}]+)\}/)?.[1];
+  assert.ok(toolbar, "CURRENT scoped Catalog toolbar rule");
+  for (const declaration of ["flex: 0 0 auto;", "gap: var(--space-4);", "padding: var(--space-4);", "border: 1px solid var(--color-border);", "border-radius: 32px;", "background: var(--color-surface);"]) {
+    assert.ok(toolbar.includes(declaration), `CURRENT toolbar declaration: ${declaration}`);
+  }
+  assert.match(styles, /\[data-ui-catalog-workspace\] :is\(\[data-ui-catalog-table-scroll\], \[data-ui-catalog-results\]\) \{[^}]*overflow: auto;/);
+  assert.match(styles, /\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\] \{[^}]*overflow: visible;/);
+  assert.match(styles, /@container catalog-browse \(min-width: 68rem\) \{[^}]*\}[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+}
+
 type CurrentCandidateSelection =
   | { status: "NO_CANDIDATE" }
   | { status: "SELECTED"; profile: "desktop-fixture" | "R4" | "R3"; owner: "operations" }
-  | { status: "SELECTED"; profile: "T3" | "responsive-table" | "catalog-access" | "listing-parity" | "visual-correction"; owner: "catalog" }
+  | { status: "SELECTED"; profile: "T3" | "responsive-table" | "catalog-access" | "listing-parity" | "visual-correction" | "toolbar-surface"; owner: "catalog" }
   | { status: "REJECTED"; reason: "NO_COMPLETE_PROFILE" | "AMBIGUOUS_PROFILE" };
 
 // Path selection is not byte acceptance or historical execution evidence.
@@ -1088,6 +1110,7 @@ function selectCurrentCandidate(acquiredPaths: readonly string[]): CurrentCandid
   if (complete(catalogAccessCandidatePaths)) matches.push({ status: "SELECTED", profile: "catalog-access", owner: "catalog" });
   if (complete(catalogListingParityCandidatePaths)) matches.push({ status: "SELECTED", profile: "listing-parity", owner: "catalog" });
   if (complete(catalogVisualCorrectionCandidatePaths)) matches.push({ status: "SELECTED", profile: "visual-correction", owner: "catalog" });
+  if (complete(catalogToolbarSurfaceCandidatePaths)) matches.push({ status: "SELECTED", profile: "toolbar-surface", owner: "catalog" });
   if (matches.length > 1) return { status: "REJECTED", reason: "AMBIGUOUS_PROFILE" };
   return matches[0] ?? { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" };
 }
@@ -1173,6 +1196,12 @@ const currentCandidatePolicyExamples: {
     "src/ui/styles.css",
     "src/ui/catalog/product-browser.test.ts",
     "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
+    "src/ui/visual-system/base-styles.mounted.test.ts",
+    "odd/tasks/catalog-listing-parity.md",
+    "src/ui/w9-evidence-audit.test.ts",
+  ] },
+  { profile: "toolbar-surface", owner: "catalog", paths: [
+    "src/ui/styles.css",
     "src/ui/visual-system/base-styles.mounted.test.ts",
     "odd/tasks/catalog-listing-parity.md",
     "src/ui/w9-evidence-audit.test.ts",
@@ -1275,6 +1304,25 @@ test("W9 current candidate policy bounds correction self-ownership and rejects u
   const withNeighbor = [...acquired, "odd/tasks/catalog-listing-parity-unrelated.md"];
   assert.deepEqual(selectCurrentCandidate(withNeighbor), { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" });
   assert.throws(() => assertW9ProtectedDiffPolicy(withNeighbor, currentPackage, baselinePackage, currentLock, baselineLock, ""), /unexpected protected-path drift/);
+});
+
+test("W9 current candidate policy bounds toolbar self-ownership and rejects neighbor paths", () => {
+  const example = currentCandidatePolicyExamples.find(({ profile }) => profile === "toolbar-surface")!;
+  const acquired = changedPathsFromGitOutput(
+    example.paths.filter(path => path !== "odd/tasks/catalog-listing-parity.md").join("\n"),
+    "odd/tasks/catalog-listing-parity.md\n",
+  );
+  assert.deepEqual(acquired, [...example.paths].sort());
+  assert.doesNotThrow(() => assertW9ProtectedDiffPolicy(acquired, currentPackage, baselinePackage, currentLock, baselineLock, ""));
+  assert.doesNotThrow(() => assertCatalogToolbarSurfaceCurrentCandidate(acquired));
+  for (const omitted of example.paths) {
+    assert.throws(() => assertCatalogToolbarSurfaceCurrentCandidate(acquired.filter(path => path !== omitted)), /CURRENT toolbar-surface exact whole profile/);
+  }
+  for (const extra of ["src/ui/app-shell.mounted.test.ts", "src/ui/catalog/product-browser.ts", "odd/tasks/catalog-listing-parity-unrelated.md"]) {
+    assert.deepEqual(selectCurrentCandidate([...acquired, extra]), { status: "REJECTED", reason: "NO_COMPLETE_PROFILE" });
+    assert.throws(() => assertCatalogToolbarSurfaceCurrentCandidate([...acquired, extra]), /CURRENT toolbar-surface exact whole profile/);
+  }
+  assert.throws(() => assertW9ProtectedDiffPolicy([...acquired, "odd/tasks/catalog-listing-parity-unrelated.md"], currentPackage, baselinePackage, currentLock, baselineLock, ""), /unexpected protected-path drift/);
 });
 
 test("W9 current candidate policy keeps protected content checks independent of selected ownership", () => {
@@ -1774,6 +1822,9 @@ test("W9 binds every changed Windows desktop-fix file and task byte to exact has
   } else if (selection.status === "SELECTED" && selection.profile === "visual-correction") {
     assertCatalogVisualCorrectionCurrentCandidate(changedPaths);
     assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, "");
+  } else if (selection.status === "SELECTED" && selection.profile === "toolbar-surface") {
+    assertCatalogToolbarSurfaceCurrentCandidate(changedPaths);
+    assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, "");
   } else {
     assertWindowsDesktopFixDiffAllowlist(diffs);
   }
@@ -1832,6 +1883,9 @@ test("W9 binds every changed backup-integrity file to its exact unified-zero dif
     assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, "");
   } else if (selection.status === "SELECTED" && selection.profile === "visual-correction") {
     assertCatalogVisualCorrectionCurrentCandidate(changedPaths);
+    assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, "");
+  } else if (selection.status === "SELECTED" && selection.profile === "toolbar-surface") {
+    assertCatalogToolbarSurfaceCurrentCandidate(changedPaths);
     assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, "");
   } else {
     assertBackupIntegrityDiffAllowlist(diffs);
@@ -2012,6 +2066,10 @@ test("W9 binds the exact Catalog access candidate diff and untracked task bytes"
   }
   if (selection.profile === "visual-correction") {
     assertCatalogVisualCorrectionCurrentCandidate(changedPaths);
+    return;
+  }
+  if (selection.profile === "toolbar-surface") {
+    assertCatalogToolbarSurfaceCurrentCandidate(changedPaths);
     return;
   }
   if (selection.profile === "T3") {

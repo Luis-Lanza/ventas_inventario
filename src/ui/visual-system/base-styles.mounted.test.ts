@@ -642,6 +642,44 @@ function catalogBrowser(mode: CatalogViewMode) {
   });
 }
 
+for (const width of [340, 900, 1440]) {
+  for (const mode of ["table", "gallery"] as const) {
+    test(`Catalog ${mode} groups only its controls on a rounded surface at ${width}px (cascade only)`, async () => {
+      const style = await mountBaseStyles(width, width, 540);
+      try {
+        render(createElement("div", { "data-ui-catalog-workspace": true },
+          createElement(ProductBrowser, { ...catalogBrowser(mode).props, showActivity: true, onActivityChange() {} })));
+        const browser = document.querySelector('[data-ui-product-browser="catalog"]')!;
+        const form = browser.querySelector("form")!;
+        assert.equal(styleOf(form, "background"), "#fffcf7");
+        assert.equal(styleOf(form, "border-radius"), "32px");
+        assert.equal(styleOf(form, "gap"), "16px");
+        assert.equal(styleOf(form, "flex-shrink"), "0");
+        // jsdom cannot reliably resolve variable-valued padding/borders over resets.
+        const rules = Array.from(style.sheet!.cssRules).filter((rule): rule is CSSStyleRule =>
+          rule.type === 1 && form.matches((rule as CSSStyleRule).selectorText));
+        assert.equal(rules.filter(rule => rule.style.getPropertyValue("padding")).at(-1)?.style.getPropertyValue("padding"), "var(--space-4)");
+        assert.equal(rules.filter(rule => rule.style.getPropertyValue("border")).at(-1)?.style.getPropertyValue("border"), "1px solid var(--color-border)");
+        assert.equal(styleOf(form, "grid-template-columns"), width >= 1088
+          ? "minmax(12rem, 2fr) minmax(10rem, 1.2fr) minmax(8rem, 1fr) auto auto"
+          : width >= 544 ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)");
+        for (const control of [screen.getByLabelText("Buscar en el catálogo"), screen.getByLabelText("Categoría"),
+          screen.getByLabelText("Actividad"), screen.getByRole("button", { name: "Buscar" }),
+          screen.getByRole("group", { name: "Presentación del catálogo" })]) assert.ok(form.contains(control));
+        for (const control of form.querySelectorAll("input, select, button")) assert.equal(styleOf(control, "border-radius"), "999px");
+        const results = browser.querySelector("[data-ui-catalog-table-scroll], [data-ui-catalog-results]")!;
+        assert.equal(form.contains(results), false);
+        assert.equal(results.parentElement, form.parentElement);
+        assert.equal(styleOf(results, "overflow-y"), "auto");
+        assert.notEqual(styleOf(browser, "background"), "#fffcf7");
+        assert.notEqual(styleOf(results, "background"), "#fffcf7");
+        const headings = browser.querySelector("[data-ui-catalog-table-headings]");
+        if (headings) assert.equal(form.contains(headings), false);
+      } finally { style.remove(); }
+    });
+  }
+}
+
 for (const width of [1440, 961, 960, 600, 340]) {
   test(`Catalog table wrapper alone owns both scroll axes at ${width}px; Gallery and Edit retain scrolling`, async () => {
     const style = await mountBaseStyles(width);
