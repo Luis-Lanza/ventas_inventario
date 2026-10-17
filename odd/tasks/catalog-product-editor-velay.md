@@ -10,7 +10,7 @@ Align Catalog's Edit product modal with the approved Velay reference and reuse e
 - Reuse checkout-motion's geometry driver; no text scaling, transaction dependency on animation or new packages.
 - Preserve reduced motion, cleanup, pending guards, nested confirmation focus, opener restoration and authoritative detail loading.
 - Bounded responsive modal; one native scrolling body, reachable heading/footer, uniform viewport backdrop and background scroll lock.
-- No Rust, IPC or persistence changes. Prior implementation commit/push was authorized and delivered. Follow-up fixes are authorized; no new commit/push/merge without explicit request.
+- No Rust, IPC or persistence changes. Prior implementation commit/push was authorized and delivered. User explicitly authorized follow-up commit and feature-branch push; no merge authorized.
 
 ## Tasks
 - [x] T1: Implement product-only Velay layout and opener-linked entrance/exit with focused test-first regression coverage.
@@ -56,7 +56,8 @@ Align Catalog's Edit product modal with the approved Velay reference and reuse e
 - Native follow-up review review-9eba10f7fba1c524 approved and acknowledged target sha256:1e2a6e672241a9a41d7fb9cf72c33692bae60485cd76e0148e2af87b8cf8fea0; authority burned. R3-001 at catalog-edit-dialog.mounted.test.ts:138–140 is informational/nonblocking, no correction offered. This subsequent tracking-only update was not in frozen tree; source unchanged.
 - ASSESS failed on intended-untracked declaration, triggering independent high-risk verification now completed; no tooling repair attempted.
 - Existing test act/localStorage/deliberate-error logs and mixed-import/510.86 kB build chunk warnings remain non-failing.
-- No actual browser/Windows geometry checks executed; DOM/CSS assertions are not visual acceptance. No follow-up commits, staging or push.
+- No actual browser/Windows geometry checks executed; DOM/CSS assertions are not visual acceptance.
+- Follow-up commit: 8aac5b7 fix(ui): correct product modal opening and field layout. User explicitly authorized commit and push.
 
 ## Next step
-Await explicit commit/push request to deliver follow-up for Windows acceptance. Check prices, slow-load opening/close motion, focus/reduced motion, preview balance, short/narrow windows, many attributes and invalid-field visibility. Category editing remains deferred.
+Deliver authorized feature-branch push for Windows acceptance. Check prices, slow-load opening/close motion, focus/reduced motion, preview balance, short/narrow windows, many attributes and invalid-field visibility. No merge authorized; category editing remains deferred.
