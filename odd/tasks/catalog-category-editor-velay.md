@@ -12,7 +12,7 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - Preserve Spanish UI, accessible checkbox, pending dismissal locks, request identity, validation/focus, keyboard/nested dialog ownership, reduced motion and cleanup.
 - Capture eligible opener before loading lock; exactly one opening tween; stable loading/error/detail geometry. Close discards business draft immediately, animating only empty inert presentation.
 - Single bounded native body scroll; reachable heading/footer; full viewport overlay and background scroll lock. Responsive controls must not overflow intrinsic tracks.
-- No Rust/IPC/persistence/dependency changes. Prior modal/listing deliveries published through 1b251f7. Category archive confirmation visual polish authorized; no fresh commit/push/merge authorization.
+- No Rust/IPC/persistence/dependency changes. Prior modal/listing deliveries published through 1b251f7. User explicitly authorized category archive confirmation polish commit and feature-branch push; no merge authorized.
 
 ## Tasks
 - [x] T1: Implement category-only Velay layout and shared Catalog motion/focus integration with test-first regressions.
@@ -89,8 +89,8 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - Parent shared confirmation spot check 24/24 passed; writer's 358-test GREEN, production/test typechecks, build and diff check remain verification record.
 - Native review review-4e783579628b4d31 approved and acknowledged exact target sha256:14223938c1d2f4e7f5ac1d2e654e0471300c64ff0b8613b93c50b744dd76a703; acknowledgement returned authority burned, no blockers.
 - ASSESS derived consumed=true/closed, medium risk and already_reviewed; no separate independent verifier required.
-- This subsequent passive task closure was outside frozen tree; source unchanged. No archive-polish commits/stage/push.
+- This subsequent passive task closure was outside frozen tree; source unchanged. Archive-polish commit: 3c9d44c fix(ui): align category archive confirmation with Velay; user explicitly authorized commit/push.
 - Windows visual acceptance of compact rounded frame, pill actions, long names, focus outline and narrow/short scrolling remains pending.
 
 ## Next step
-Await explicit commit/push request to deliver archive confirmation polish for Windows testing. Other category UI accepted generally by user; no merge authorized.
+Deliver authorized archive confirmation polish push for Windows testing. Other category UI accepted generally by user; no merge authorized.
