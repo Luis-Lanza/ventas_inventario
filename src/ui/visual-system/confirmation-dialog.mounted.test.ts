@@ -30,6 +30,19 @@ function opener(label = "Abrir") {
   return button;
 }
 
+test("archive motion presentation cannot attach to product, retirement or routine category dialogs", () => {
+  let attachments = 0;
+  const presentation = { frameRef: (node: HTMLDivElement | null) => { if (node) attachments++; }, ready: false, restoreFocusFallback: () => null };
+  for (const extra of [ {}, { dialogDataAttribute: "catalog-edit-dialog" as const, purpose: "routine" as const }, { dialogDataAttribute: "catalog-category-archive-dialog" as const, purpose: "restore" as const } ]) {
+    const view = render(dialog({ ...extra, catalogCategoryArchivePresentation: presentation }));
+    const frame = screen.getByRole("dialog");
+    assert.equal(attachments, 0);
+    assert.equal(frame.hasAttribute("data-ui-catalog-category-archive-opening"), false);
+    assert.equal(document.activeElement, screen.getByRole("button", { name: "Volver" }));
+    view.unmount();
+  }
+});
+
 test("category archive marker is explicit, cancellation-only and preserves safe destructive controls", async () => {
   for (const purpose of ["cancellation", "restore", "routine"] as const) {
     const view = render(dialog({ purpose, dialogDataAttribute: "catalog-category-archive-dialog" }));

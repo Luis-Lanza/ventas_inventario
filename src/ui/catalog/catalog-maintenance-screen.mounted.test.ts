@@ -1066,12 +1066,88 @@ test("category opening survives the loading lock without replay on detail, error
   assert.equal(surface.querySelector("input, button, form, [role=dialog]"), null);
   assert.equal(writes, 0);
   assert.equal(document.activeElement, opener);
-  assert.equal(tweens, 2);
+  assert.equal(tweens, 4, "editor and archive each open and retire once");
   act(() => complete?.());
   assert.equal(document.querySelector("[data-ui-catalog-category-retirement]"), null);
   await userEvent.click(opener);
   act(() => complete?.());
   assert.equal((await screen.findByRole("textbox", { name: "Nombre de la categoría" }) as HTMLInputElement).value, "Filtros");
+});
+
+for (const context of ["list", "detail"] as const)
+for (const outcome of ["cancel", "success", "blocked", "failure"] as const) test(`category archive ${context} ${outcome} preserves source and immediate persistence ordering`, async (t) => {
+  const completions: Array<() => void> = [];
+  const targets: HTMLElement[] = [];
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", function (this: HTMLElement) {
+    return (this.tagName === "BUTTON" ? { left: 30, top: 50, width: 120, height: 40, right: 150, bottom: 90 } : { left: 100, top: 20, width: 560, height: 240, right: 660, bottom: 260 }) as DOMRect;
+  });
+  t.mock.method(gsap, "to", (target: unknown, vars: gsap.TweenVars) => { targets.push(target as HTMLElement); completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
+  let writes = 0, lists = 0; let resolveMutation!: (value: unknown) => void; let resolveRefresh!: (value: unknown) => void;
+  let category: Omit<typeof activeCategory, "activity"> & { activity: "active" | "archived" } = activeCategory;
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") return categoryDetail;
+    if (command === "maintain_catalog_command") { writes++; return new Promise((resolve) => { resolveMutation = resolve; }); }
+    if (command === "list_catalog_categories_command") { lists++; if (lists > 1) return new Promise((resolve) => { resolveRefresh = resolve; }); return { kind: "success", records: [category] }; }
+    return baseIPC(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  const editor = await openCategoryEditor();
+  if (context === "detail") { await userEvent.click(editor); assert.equal(completions.length, 1); act(() => completions[0]!()); }
+  const source = context === "detail" ? within(screen.getByRole("dialog")).getByRole("button", { name: "Archivar" }) : screen.getByRole("button", { name: "Archivar Filtros" });
+  const before = completions.length;
+  await userEvent.click(source);
+  const confirmation = screen.getByRole("dialog", { name: "Archivar Filtros" });
+  assert.equal(completions.length, before + 1);
+  assert.equal(targets.at(-1), confirmation);
+  assert.equal(confirmation.style.left, "30px", "the real clicked Archivar supplies opening geometry");
+  if (outcome === "cancel") {
+    await userEvent.keyboard("{Escape}");
+    assert.equal(screen.queryByRole("dialog", { name: "Archivar Filtros" }), null);
+    assert.equal(writes, 0);
+    const surface = document.querySelector("[data-ui-catalog-category-archive-retirement]")!;
+    assert.equal(surface.textContent, ""); assert.equal(surface.querySelector("button,[role=dialog]"), null);
+    assert.equal(document.activeElement, source);
+    // Reopen before retirement completes: the old completion must not touch the new dialog.
+    const old = completions.at(-1)!;
+    await userEvent.click(source);
+    act(() => old());
+    assert.ok(screen.getByRole("dialog", { name: "Archivar Filtros" }));
+    assert.equal(document.querySelector("[data-ui-catalog-category-archive-retirement]"), null);
+    return;
+  }
+  await userEvent.click(within(confirmation).getByRole("button", { name: "Confirmar archivo" }));
+  assert.equal(writes, 1, "mutation starts before opening completion");
+  assert.equal(completions.length, before + 1, "pending never replays opening");
+  await userEvent.keyboard("{Escape}");
+  assert.equal(screen.getByRole("dialog", { name: "Archivar Filtros" }), confirmation);
+  if (outcome === "success") {
+    category = { ...activeCategory, activity: "archived", revision: 3 };
+    await act(async () => resolveMutation({ kind: "success", ...category }));
+    assert.equal(confirmation.getAttribute("aria-busy"), "true");
+    assert.equal(completions.length, before + 1);
+    await act(async () => resolveRefresh({ kind: "success", records: [category] }));
+    assert.equal(document.querySelector("[data-ui-catalog-category-archive-retirement]"), null, "Reactivar is not a reverse destination");
+  } else {
+    await act(async () => resolveMutation({ kind: "error", code: outcome === "blocked" ? "lifecycle_blocked" : "persistence_failure" }));
+    assert.equal(completions.length, before + 2, "failed archive still closes with presentation-only retirement");
+  }
+  assert.equal(screen.queryByRole("dialog", { name: "Archivar Filtros" }), null);
+  assert.equal(writes, 1);
+});
+
+for (const context of ["list", "detail"] as const) test(`category archive ${context} falls back safely when its invoker disappears`, async () => {
+  mockIPC((command) => command === "catalog_metadata_detail_command" ? categoryDetail : baseIPC(command));
+  render(createElement(CatalogMaintenanceScreen));
+  const edit = await openCategoryEditor();
+  if (context === "detail") await userEvent.click(edit);
+  const parent = context === "detail" ? screen.getByRole("dialog") : null;
+  const source = parent ? within(parent).getByRole("button", { name: "Archivar" }) : screen.getByRole("button", { name: "Archivar Filtros" });
+  await userEvent.click(source);
+  source.hidden = true;
+  await userEvent.keyboard("{Escape}");
+  assert.equal(screen.queryByRole("dialog", { name: "Archivar Filtros" }), null);
+  assert.equal(document.activeElement, parent ? within(parent).getByRole("button", { name: "Volver" }) : screen.getByRole("heading", { name: "Gestión de categorías" }));
+  assert.equal(document.querySelector("[data-ui-catalog-category-archive-retirement]"), null);
 });
 
 test("keeps browsing free of the inline editor and opens a named category modal with authoritative detail", async () => {

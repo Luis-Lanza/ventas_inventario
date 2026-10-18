@@ -1,4 +1,4 @@
-import { createElement, Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type FormEvent, type RefObject, type ReactNode } from "react";
+import { createElement, Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type MouseEvent, type FormEvent, type RefObject, type ReactNode } from "react";
 
 import { createPortal } from "react-dom";
 import { startCatalogProductMotion, type CatalogProductOpening } from "./catalog-product-motion.ts";
@@ -27,7 +27,7 @@ export interface CatalogEditDialogProps {
   locationsStatus?: "loading" | "ready" | "error";
   onChange: (field: string, value: string) => void;
   onSubmit: () => void;
-  onLifecycle: () => void;
+  onLifecycle: (event: MouseEvent<HTMLButtonElement>) => void;
   onAddCategoryField?: () => void;
   onChangeCategoryField?: (index: number, field: string, value: string | boolean) => void;
   onRetireCategoryField?: (index: number) => void;
@@ -147,8 +147,9 @@ export function CatalogEditDialog({ record, opening, restoreFocusFallback = () =
   useEffect(() => {
     if (!detail || loading || !ready || hasFocusedDetail.current) return;
     hasFocusedDetail.current = true;
-    nameRef.current?.focus();
-  }, [detail, loading, ready]);
+    const activeDialog = document.activeElement?.closest('[role="dialog"]');
+    if (product || !activeDialog || activeDialog.id === "catalog-edit-dialog") nameRef.current?.focus();
+  }, [detail, loading, ready, product]);
 
   const dialog = createElement(ConfirmationDialog, {
     open: true,
@@ -182,7 +183,7 @@ export function CatalogEditDialog({ record, opening, restoreFocusFallback = () =
           imageFeedback ? createElement(Feedback, { kind: imageFeedbackKind } as never, imageFeedback) : null) : null,
         createElement("section", { "aria-label": "Acciones de ciclo de vida", "data-ui-catalog-lifecycle": true },
           createElement("h3", null, "Acciones de ciclo de vida"),
-          createElement(Action, { variant: detail.activity === "active" ? "destructive" : "secondary", disabled: dialogPending || imagePending || recoveryRequired, onClick: onLifecycle, "data-ui-catalog-lifecycle-action": detail.activity }, detail.activity === "active" ? "Archivar" : "Reactivar"),
+          createElement(Action, { variant: detail.activity === "active" ? "destructive" : "secondary", disabled: dialogPending || imagePending || recoveryRequired, onClick: onLifecycle, "data-ui-catalog-lifecycle-action": detail.activity, ...{ "data-ui-catalog-lifecycle-category": detail.target === "category" ? detail.entity_id : undefined } }, detail.activity === "active" ? "Archivar" : "Reactivar"),
           lifecycleFeedback ? createElement(Feedback, { kind: lifecycleFeedback === "Catálogo actualizado." ? "success" : "error" } as never, lifecycleFeedback) : null,
           recoveryRequired ? createElement(Action, { variant: "secondary", disabled: dialogPending || imagePending, onClick: onReload }, "Reintentar actualización") : null)))
       : loading ? product

@@ -12,7 +12,7 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - Preserve Spanish UI, accessible checkbox, pending dismissal locks, request identity, validation/focus, keyboard/nested dialog ownership, reduced motion and cleanup.
 - Capture eligible opener before loading lock; exactly one opening tween; stable loading/error/detail geometry. Close discards business draft immediately, animating only empty inert presentation.
 - Single bounded native body scroll; reachable heading/footer; full viewport overlay and background scroll lock. Responsive controls must not overflow intrinsic tracks.
-- No Rust/IPC/persistence/dependency changes. Prior modal/listing deliveries published through 1b251f7. User explicitly authorized category archive confirmation polish commit and feature-branch push; no merge authorized.
+- No Rust/IPC/persistence/dependency changes. Prior modal/listing deliveries published through 1b251f7. Archive visual polish delivered through bc09747. User now authorized category archive button-linked motion; no fresh commit/push/merge authorization.
 
 ## Tasks
 - [x] T1: Implement category-only Velay layout and shared Catalog motion/focus integration with test-first regressions.
@@ -21,6 +21,8 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - [x] T4: Verify listing and modal/product regressions; review candidate and document Windows visual acceptance.
 - [x] T5: Give category archive confirmation a scoped coherent Velay presentation with regression coverage.
 - [x] T6: Verify archive presentation and unchanged destructive safeguards; review and document visual acceptance limits.
+- [x] T7: Animate category archive confirmation from its actual source button, with safe close retirement and test-first regressions.
+- [x] T8: Verify motion lifecycle and isolation, review candidate and document Windows acceptance limits.
 
 ## Acceptance and checks
 - Rounded wide modal, identity strip with feminine status, editable name, active schema cards, dashed new-draft blocks with heading/discard, muted history and separate lifecycle section.
@@ -92,5 +94,30 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - This subsequent passive task closure was outside frozen tree; source unchanged. Archive-polish commit: 3c9d44c fix(ui): align category archive confirmation with Velay; user explicitly authorized commit/push.
 - Windows visual acceptance of compact rounded frame, pill actions, long names, focus outline and narrow/short scrolling remains pending.
 
+## Archive motion follow-up
+- User visually accepted archive design ('simon! esta bonito') and explicitly requested button-linked animation matching other modals. Preserve accepted appearance and exact copy.
+- Scope category archive from listing and editor only. Capture actual Archivar currentTarget before locks, keep one stable opening epoch, reuse shared Catalog/Checkout driver and reduced-motion/cleanup policy.
+- Preserve existing confirm lifecycle: mutation starts immediately, confirmation remains pending through mutation and refresh, finally closes including failure. Animation must neither delay nor replay persistence.
+- Cancel clears confirmation synchronously. Closing may retain only an empty inert aria-hidden surface, no interactive confirmation or dialog registration.
+- Closing target must remain eligible and represent the same Archivar action; if refreshed source becomes Reactivar, disappears or is disabled/hidden/offscreen, skip reverse rather than animate to the wrong action.
+- Preserve safe Volver focus, topmost Escape/Tab/nested editor ownership and invoker/fallback restoration; stale animation callbacks cannot retire reopened dialogs.
+- Product archive and field retirement remain unchanged. No global destructive motion redesign, extra wrappers affecting accepted layout, new dependencies/Rust/IPC.
+- Cover actual tween scheduling, pending/refresh rerenders, immediate cancel/zero writes, success/failure close, empty retirement, changed origin, reduced motion/resize/unmount/reopen cleanup; real browser animation acceptance remains pending.
+
+## Archive motion implementation evidence
+- Writer observed RED: valid geometry scheduled zero opening tweens (0/1 pass); same test GREEN 1/1 after implementation.
+- Final required suite 381/381 passed, zero failures/skips; production/test TypeScript checks, build (87 modules) and diff check passed.
+- Dedicated component captures actual list/detail Archivar source, keeps one opening, retires only empty inert surface, validates live action/category identity and handles safe nested fallback. Product archive/field retirement excluded.
+- Mutation starts before opening completion; pending persists through refresh; finally-close ordering preserved. Cancel immediate/zero writes, Reactivar target rejection, stale callbacks and cleanup covered.
+- Existing act/intentional invalid-prop diagnostics and mixed-import/chunk-size build warnings remain non-failing. Browser motion/geometry not accepted; no commits/staging/push.
+
+## Archive motion verification closure
+- Independent verifier observed 381/381 tests passing with no failures/cancellations/skips; both TypeScript checks, build (87 modules) and diff check passed. No blocking regression found in inspected scope.
+- Parent new archive component spot check 12/12 passed.
+- Native review review-1e28be92603f87a7 approved and acknowledged exact target sha256:5edd8c117372324b7384fccc4500a0db836e8715098b6e2b3fdde4a820636402; authority burned. Subsequent passive closure doc outside frozen tree; source unchanged.
+- ASSESS failed intended-untracked declaration and requested high-risk independent verification, now fulfilled; no tooling repair attempted.
+- Independent checks confirm actual list/detail capture, one opening, immediate mutation/pending through refresh/finally-close, immediate cancellation, empty inert retirement, live category/action eligibility, nested focus and stale callback isolation. Product archive and retirement regressions passed.
+- Existing act/intentional invalid-prop diagnostics and mixed-import/large-chunk warnings remain non-failing. No measured browser/native Windows motion acceptance; no commits/staging/push.
+
 ## Next step
-Deliver authorized archive confirmation polish push for Windows testing. Other category UI accepted generally by user; no merge authorized.
+Await explicit commit/push request to deliver archive motion for Windows verification. User has accepted existing design; actual opening/closing animation, list/detail focus, reduced motion and changed/disappearing origin behavior remain manual checks. No merge authorized.

@@ -1,4 +1,4 @@
-import { createElement, type ReactElement, type ChangeEvent, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
+import { createElement, type ReactElement, type ChangeEvent, type MouseEvent, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
 
 import { createPortal } from "react-dom";
 
@@ -8,6 +8,7 @@ import { Action, Feedback } from "../visual-system/controls.ts";
 import { captureCatalogProductOpening, type CatalogProductOpening } from "../visual-system/catalog-product-motion.ts";
 import { captureCatalogEditorOpening } from "../visual-system/catalog-editor-motion.ts";
 import { CatalogEditDialog, CatalogMetadataEditor, CatalogProductRetirement } from "../visual-system/catalog-edit-dialog.ts";
+import { CatalogCategoryArchiveDialog, CatalogCategoryArchiveRetirement, categoryArchiveFocusFallback } from "../visual-system/catalog-category-archive-dialog.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
 import { createCatalogEditRequest, createCategorySchemaEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState, type CatalogEditFieldErrors, type CatalogEditForm, type CatalogMaintenanceAction } from "./catalog-maintenance-flow.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, readCatalogViewMode, writeCatalogViewMode, type CatalogViewMode, type ProductBrowserState } from "./product-browser.ts";
@@ -108,6 +109,20 @@ export function CatalogMaintenanceScreen() {
   const [categoryActionFeedback, setCategoryActionFeedback] = useState<Record<number, string>>({});
   const [archiveConfirmation, setArchiveConfirmation] = useState<{ record: CatalogMaintenanceRecord; context: "category-list" | "detail" } | null>(null);
   const [archivePending, setArchivePending] = useState(false);
+  const archiveEpoch = useRef(0);
+  const archiveOpening = useRef<{ opening: CatalogProductOpening; sourceLabel: string | null; sourceCategory: string | null } | null>(null);
+  const [retiringArchive, setRetiringArchive] = useState<{ opening: CatalogProductOpening; snapshot: CatalogProductOpening; sourceLabel: string | null; sourceCategory: string | null } | null>(null);
+  const captureArchive = (source: HTMLElement) => {
+    setRetiringArchive(null);
+    archiveOpening.current = { opening: captureCatalogEditorOpening(source, ++archiveEpoch.current), sourceLabel: source.getAttribute("aria-label"), sourceCategory: source.getAttribute("data-ui-catalog-lifecycle-category") };
+  };
+  const closeArchive = () => {
+    const captured = archiveOpening.current;
+    const frame = document.getElementById("catalog-archive-confirmation-dialog");
+    if (captured && frame) setRetiringArchive({ ...captured, snapshot: captureCatalogEditorOpening(frame, captured.opening.id) });
+    archiveOpening.current = null;
+    setArchiveConfirmation(null);
+  };
   const [retirementConfirmation, setRetirementConfirmation] = useState<{ index: number; label: string } | null>(null);
   const catalogMainHeading = useRef<HTMLHeadingElement>(null);
   const categoryManagementHeading = useRef<HTMLHeadingElement>(null);
@@ -279,9 +294,10 @@ export function CatalogMaintenanceScreen() {
     if (routine) notifications?.publish({ severity: "error", message });
     return routine;
   };
-  const manageCategoryLifecycle = async (record: CatalogMaintenanceRecord, confirmedArchive = false) => {
+  const manageCategoryLifecycle = async (record: CatalogMaintenanceRecord, confirmedArchive = false, source?: HTMLElement) => {
     if (record.target !== "category" || mutationLocked.current || state.recovery_required || state.status === "pending") return;
     if (record.activity === "active" && !confirmedArchive) {
+      if (source) captureArchive(source);
       setArchiveConfirmation({ record, context: "category-list" });
       return;
     }
@@ -327,10 +343,11 @@ export function CatalogMaintenanceScreen() {
     refreshDetailAfterRecovery.current = false;
     await refreshCatalogList();
   };
-  const requestDetailLifecycle = () => {
+  const requestDetailLifecycle = (event: MouseEvent<HTMLButtonElement>) => {
     const detail = state.detail;
     if (!detail) return;
     if (detail.activity === "active") {
+      if (detail.target === "category") captureArchive(event.currentTarget);
       setArchiveConfirmation({ record: { entity_id: detail.entity_id, target: detail.target, label: detail.target === "product" ? `${detail.sku} — ${detail.name}` : detail.name, activity: detail.activity, revision: detail.revision }, context: "detail" });
       return;
     }
@@ -339,14 +356,15 @@ export function CatalogMaintenanceScreen() {
   const confirmArchive = async () => {
     const confirmation = archiveConfirmation;
     if (!confirmation || archivePending || mutationLocked.current) return;
+    const epoch = archiveEpoch.current;
     setArchivePending(true);
     try {
       if (confirmation.context === "category-list") await manageCategoryLifecycle(confirmation.record, true);
       else await maintain(confirmation.record);
     } finally {
-      if (mounted.current) {
+      if (mounted.current && epoch === archiveEpoch.current) {
         setArchivePending(false);
-        setArchiveConfirmation(null);
+        closeArchive();
       }
     }
   };
@@ -539,7 +557,7 @@ export function CatalogMaintenanceScreen() {
                 productOpening.current = captureCatalogEditorOpening(event.currentTarget, attempt.current + 1);
                 void loadDetail(record);
               }, "aria-label": `Editar ${record.label}` }, "Editar"),
-              createElement(Action, { variant: record.activity === "active" ? "destructive" : "secondary", disabled: state.status === "pending" || state.recovery_required || categoryActionPending !== null, onClick: () => void manageCategoryLifecycle(record), "aria-label": `${record.activity === "active" ? "Archivar" : "Reactivar"} ${record.label}`, "data-ui-catalog-lifecycle-action": record.activity }, record.activity === "active" ? "Archivar" : "Reactivar"))),
+              createElement(Action, { variant: record.activity === "active" ? "destructive" : "secondary", disabled: state.status === "pending" || state.recovery_required || categoryActionPending !== null, onClick: (event) => void manageCategoryLifecycle(record, false, event.currentTarget), "aria-label": `${record.activity === "active" ? "Archivar" : "Reactivar"} ${record.label}`, "data-ui-catalog-lifecycle-action": record.activity, ...{ "data-ui-catalog-lifecycle-category": record.entity_id } }, record.activity === "active" ? "Archivar" : "Reactivar"))),
           categoryActionPending === record.entity_id ? createElement(Feedback, { kind: "loading" } as never, "Actualizando categoría…") : null,
           categoryActionFeedback[record.entity_id] ? createElement(Feedback, { kind: "error" } as never, categoryActionFeedback[record.entity_id]) : null))))
       ) : null,
@@ -592,7 +610,16 @@ export function CatalogMaintenanceScreen() {
       onCancel: () => setRetirementConfirmation(null),
       onConfirm: confirmCategoryFieldRetirement,
     }), document.body) : null,
-    archiveConfirmation ? renderArchive(createElement(ConfirmationDialog, {
+    retiringArchive ? createElement(CatalogCategoryArchiveRetirement, { ...retiringArchive, key: retiringArchive.opening.id, onRetired: () => setRetiringArchive((current) => current?.opening.id === retiringArchive.opening.id ? null : current) }) : null,
+    archiveConfirmation && archiveConfirmation.record.target === "category" && archiveOpening.current ? renderArchive(createElement(CatalogCategoryArchiveDialog, {
+      key: archiveOpening.current.opening.id,
+      label: archiveConfirmation.record.label,
+      opening: archiveOpening.current.opening,
+      pending: archivePending,
+      restoreFocusFallback: () => categoryArchiveFocusFallback(categoryManagementHeading.current),
+      onCancel: () => { if (!archivePending) closeArchive(); },
+      onConfirm: () => void confirmArchive(),
+    })) : archiveConfirmation ? renderArchive(createElement(ConfirmationDialog, {
       open: true,
       purpose: "cancellation",
       title: `Archivar ${archiveConfirmation.record.label}`,
