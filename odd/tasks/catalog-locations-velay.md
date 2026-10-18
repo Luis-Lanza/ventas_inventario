@@ -13,7 +13,7 @@ Align Catalog Locations with approved filled/empty Velay mockups and established
 - Cancellation clears business confirmation immediately. Existing mutation starts immediately and closes on accepted response/error; animation never gates/replays persistence. Retire only empty inert aria-hidden surface, no live dialog/controls/state.
 - Preserve safe initial return focus, topmost Escape/Tab, pending dismissal lock, eligible invoker/heading fallback, reduced motion, resize/deadline/unmount/reopen cleanup.
 - Do not change accepted product/category UI or global shell. No new search/pagination/rename/manual codes/occupancy/features, generic confirmation framework rewrite, Rust/IPC/dependencies.
-- No commit/push/merge without explicit user request.
+- User explicitly authorized commit and feature-branch push; no merge authorized.
 
 ## Tasks
 - [x] T1: Implement Locations filled/empty presentation and scoped deactivate/delete confirmation motion with test-first regression coverage.
@@ -43,5 +43,8 @@ Align Catalog Locations with approved filled/empty Velay mockups and established
 - Independent checks confirmed all-location schema freeze/last-delete unfreeze, saved-schema creation/clear-only-success, duplicate and in-use/revision guards, notifications, immediate mutation/cancel, empty inert retirement, live source identity/focus and category/product/default isolation.
 - Non-failing localStorage/act/intentional invalid-content logs and mixed-import/large-chunk warnings remain. Browser/Windows actual geometry and animation unverified. No commits/staging/push.
 
+## Delivery evidence
+- Implementation commit: e93486d feat(ui): align catalog locations with Velay design and motion. User explicitly requested commit and push.
+
 ## Next step
-Await explicit commit/push request to deliver feat/catalog-locations-velay for Windows validation. Check filled/empty mockup parity, editable/protected schema, long labels/codes, narrow/short windows, reachable controls/scroll, keyboard/focus and actual deactivate/delete animations. No merge authorized.
+Deliver authorized feat/catalog-locations-velay push for Windows validation. Check filled/empty mockup parity, editable/protected schema, long labels/codes, narrow/short windows, reachable controls/scroll, keyboard/focus and actual deactivate/delete animations. No merge authorized.
