@@ -65,6 +65,65 @@ async function mountBaseStyles(width?: number, browseWidth?: number, height = 90
   return style;
 }
 
+for (const width of [1440, 960, 340]) {
+  test(`Category listing aligns cells, wraps controls and bounds only results at ${width}px (structural cascade only)`, async () => {
+    const style = await mountBaseStyles(width);
+    try {
+      render(createElement("main", { "data-ui-catalog": true },
+        createElement("section", { "data-ui-category-management": true },
+          createElement("div", { "data-ui-category-management-header": true }, createElement("h2", null, "Gestión de categorías")),
+          createElement("label", { "data-ui-category-search": true }, "Buscar categorías", createElement("input", { type: "search" })),
+          createElement("div", { "data-ui-category-results": true },
+            createElement("div", { "data-ui-category-columns": true }, ...["Categoría", "Productos activos", "Estado", "Acciones"].map(label => createElement("span", { key: label }, label))),
+            createElement("ul", { "data-ui-category-list": true },
+              createElement("li", { "data-ui-category-row": true },
+                createElement("div", { "data-ui-category-cell": "name", "data-label": "Categoría" }, "Nombre muy largo sin truncar"),
+                createElement("div", { "data-ui-category-cell": "count", "data-label": "Productos activos" }, "37 productos activos"),
+                createElement("div", { "data-ui-category-cell": "state", "data-label": "Estado" },
+                  createElement("span", { "data-ui-category-state": "active" }, "Activa"),
+                  createElement("span", { "data-ui-category-state": "archived" }, "Archivada")),
+                createElement("div", { "data-ui-category-cell": "actions", "data-label": "Acciones" },
+                  createElement("div", { "data-ui-category-actions": true }, createElement(Action, { variant: "secondary" }, "Editar"), createElement(Action, { variant: "destructive" }, "Archivar"))),
+                createElement("p", { "data-ui-feedback": "loading" }, "Actualizando categoría…")))))));
+      const node = (hook: string) => document.querySelector(`[data-ui-category-${hook}]`)!;
+      const headings = node("columns"); const row = node("row"); const results = node("results");
+      assert.equal(styleOf(node("management"), "display"), "flex");
+      assert.equal(styleOf(node("management"), "min-block-size"), "0px");
+      assert.equal(styleOf(results, "overflow-y"), "auto");
+      assert.equal(styleOf(results, "min-block-size"), "0px");
+      assert.equal(styleOf(results, "flex"), "1 1 0px");
+      assert.equal(styleOf(node("list"), "overflow-y"), "visible");
+      assert.equal(styleOf(node("search"), "flex-shrink"), "0");
+      assert.equal(results.contains(node("search")), false);
+      assert.equal(styleOf(row, "border-radius"), "32px");
+      assert.equal(styleOf(row, "background"), "#fffcf7");
+      assert.equal(styleOf(row, "text-align"), "start");
+      assert.equal(styleOf(node("cell"), "min-inline-size"), "0px");
+      assert.equal(styleOf(node("cell"), "overflow-wrap"), "anywhere");
+      for (const pill of document.querySelectorAll("[data-ui-category-state], [data-ui-category-actions] button, [data-ui-category-search] input")) {
+        assert.equal(styleOf(pill, "border-radius"), "999px");
+      }
+      assert.notEqual(styleOf(document.querySelector('[data-ui-category-state="active"]')!, "background"), styleOf(document.querySelector('[data-ui-category-state="archived"]')!, "background"));
+      assert.equal(styleOf(row.querySelector("[data-ui-feedback]")!, "grid-column"), "1 / -1");
+      if (width > 960) {
+        assert.equal(styleOf(headings, "grid-template-columns"), "minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.5fr)");
+        assert.equal(styleOf(row, "grid-template-columns"), styleOf(headings, "grid-template-columns"));
+        assert.equal(styleOf(headings, "padding-inline"), styleOf(row, "padding-inline"));
+      } else {
+        assert.equal(styleOf(headings, "display"), "none");
+        assert.equal(styleOf(row, "grid-template-columns"), "minmax(0, 1fr)");
+        const labelRule = Array.from(style.sheet!.cssRules).find(rule => rule.type === 1 && (rule as CSSStyleRule).selectorText === "[data-ui-category-cell]::before") as CSSStyleRule;
+        assert.ok(labelRule, "narrow cells expose their column labels");
+        // jsdom drops attr() content while serializing the stylesheet. Check
+        // the source declaration alongside the active responsive rule instead.
+        assert.match(await readFile(new URL("../styles.css", import.meta.url), "utf8"), /\[data-ui-category-cell\]::before\s*\{\s*content:\s*attr\(data-label\)/);
+        assert.equal(styleOf(node("cell"), "display"), "grid");
+        assert.equal(styleOf(node("actions").querySelector("button")!, "flex"), "1 1 7rem");
+      }
+    } finally { style.remove(); }
+  });
+}
+
 function activateForcedColors(style: HTMLStyleElement) {
   // jsdom does not evaluate forced-colors queries. Unwrap every matching block
   // in place so declarations retain their original cascade order.

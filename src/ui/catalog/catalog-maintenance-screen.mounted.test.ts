@@ -788,6 +788,76 @@ test("shows authoritative category count, state, searchable rows, archive confir
   assert.equal(within(management).queryByRole("button", { name: /Crear|Sincronizar/ }), null);
 });
 
+test("category results expose four separate labelled cells and state badges without replacing list semantics", async () => {
+  const longName = "Filtros para vehículos y maquinaria con un nombre muy largo";
+  const archived = { ...activeCategory, entity_id: 5, label: "Pastillas", activity: "archived" as const, active_product_count: 0 };
+  mockIPC((command) => command === "list_catalog_categories_command"
+    ? { kind: "success", records: [{ ...activeCategory, label: longName, active_product_count: 37 }, archived] }
+    : baseIPC(command));
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await screen.findByRole("button", { name: "Gestionar categorías" }));
+  const results = screen.getByRole("region", { name: "Resultados de categorías" });
+  assert.equal(results.tabIndex, 0);
+  const headings = results.querySelector("[data-ui-category-columns]")!;
+  assert.deepEqual(Array.from(headings.children, child => child.textContent), ["Categoría", "Productos activos", "Estado", "Acciones"]);
+  const list = within(results).getByRole("list", { name: "Categorías" });
+  const row = within(list).getByRole("listitem", { name: `${longName}, Activa` });
+  assert.deepEqual(Array.from(row.querySelectorAll(":scope > [data-ui-category-cell]"), cell => cell.getAttribute("data-label")), ["Categoría", "Productos activos", "Estado", "Acciones"]);
+  assert.equal(row.querySelector('[data-ui-category-cell="name"]')?.textContent, longName);
+  assert.equal(row.querySelector('[data-ui-category-cell="count"]')?.textContent, "37 productos activos");
+  assert.equal(row.querySelector('[data-ui-category-state="active"]')?.textContent, "Activa");
+  const archivedRow = within(list).getByRole("listitem", { name: "Pastillas, Archivada" });
+  assert.equal(archivedRow.querySelector('[data-ui-category-state="archived"]')?.textContent, "Archivada");
+  assert.equal(archivedRow.querySelector('[data-ui-category-cell="count"]')?.textContent, "0 productos activos");
+  assert.ok(within(row).getByRole("button", { name: `Editar ${longName}` }));
+  assert.ok(within(archivedRow).getByRole("button", { name: "Reactivar Pastillas" }));
+});
+
+for (const activity of ["active", "archived"] as const) {
+  test(`category list locks duplicate ${activity === "active" ? "archive" : "reactivate"} actions while the native result is deferred`, async () => {
+    let finish!: (value: unknown) => void;
+    const deferred = new Promise(resolve => { finish = resolve; });
+    const requests: Record<string, unknown>[] = [];
+    let record = { ...activeCategory, activity, active_product_count: 0 };
+    mockIPC((command, payload) => {
+      if (command === "list_catalog_categories_command") return { kind: "success", records: [record, { ...activeCategory, entity_id: 5, label: "Pastillas" }] };
+      if (command === "browse_products_command") return browse();
+      if (command === "maintain_catalog_command") { requests.push(requestRecord(payload)); return deferred; }
+      throw new Error(command);
+    });
+    render(createElement(CatalogMaintenanceScreen));
+    await userEvent.click(await screen.findByRole("button", { name: "Gestionar categorías" }));
+    const management = screen.getByRole("region", { name: "Gestión de categorías" });
+    const row = within(management).getByRole("listitem", { name: /Filtros/ });
+    const action = within(row).getByRole("button", { name: `${activity === "active" ? "Archivar" : "Reactivar"} Filtros` });
+    await userEvent.click(action);
+    if (activity === "active") {
+      const dialog = screen.getByRole("dialog", { name: "Archivar Filtros" });
+      assert.equal(requests.length, 0);
+      await userEvent.click(within(dialog).getByRole("button", { name: "Confirmar archivo" }));
+      const pendingConfirm = within(dialog).getByRole("button", { name: "Archivando…" });
+      assert.equal(pendingConfirm.hasAttribute("disabled"), true);
+      await userEvent.click(pendingConfirm);
+      await userEvent.keyboard("{Escape}");
+      assert.ok(screen.getByRole("dialog", { name: "Archivar Filtros" }));
+    } else {
+      assert.equal(screen.queryByRole("dialog"), null);
+    }
+    assert.ok(within(row).getByText("Actualizando categoría…"));
+    for (const button of management.querySelectorAll("[data-ui-category-actions] button")) {
+      assert.equal(button.hasAttribute("disabled"), true);
+      await userEvent.click(button);
+    }
+    assert.deepEqual(requests, [{ target: "category", entity_id: 4, intent: activity === "active" ? "archive" : "reactivate", expected_revision: 2 }]);
+    record = { ...record, activity: activity === "active" ? "archived" : "active", revision: 3 };
+    await act(async () => { finish({ kind: "success", ...record }); });
+    await waitFor(() => assert.equal(screen.queryByText("Actualizando categoría…"), null));
+    const refreshed = within(management).getByRole("listitem", { name: `Filtros, ${activity === "active" ? "Archivada" : "Activa"}` });
+    assert.equal(within(refreshed).getByRole("button", { name: "Editar Filtros" }).hasAttribute("disabled"), false);
+    assert.equal(requests.length, 1);
+  });
+}
+
 test("reports blocked category archive in context and retries unavailable category loading", async () => {
   let listCalls = 0;
   mockIPC((command) => {

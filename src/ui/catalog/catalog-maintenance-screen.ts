@@ -519,23 +519,29 @@ export function CatalogMaintenanceScreen() {
     catalogSubview === "categories" ? createElement("section", { "aria-labelledby": "catalog-category-management-heading", "data-ui-category-management": true },
       createElement("div", { "data-ui-category-management-header": true },
         createElement("h2", { id: "catalog-category-management-heading", ref: categoryManagementHeading, tabIndex: -1 }, "Gestión de categorías")),
-      createElement("label", { "data-ui-category-search": true }, "Buscar categorías", createElement("input", { type: "search", value: categoryQuery, onChange: (event: ChangeEvent<HTMLInputElement>) => setCategoryQuery(event.currentTarget.value), "aria-label": "Buscar categorías" })),
+      createElement("label", { "data-ui-category-search": true }, "Buscar categorías", createElement("input", { type: "search", value: categoryQuery, onChange: (event: ChangeEvent<HTMLInputElement>) => setCategoryQuery(event.currentTarget.value), "aria-label": "Buscar categorías", placeholder: "Nombre de categoría" })),
       state.status === "loading" && !state.selected ? createElement(Feedback, { kind: "loading" } as never, "Cargando categorías…") : null,
       state.status === "unavailable" && !state.selected ? createElement(Feedback, { kind: "unavailable" } as never, createElement("span", null, "Las categorías no están disponibles. ", createElement(Action, { variant: "tertiary", onClick: () => void load() }, "Reintentar categorías"))) : null,
       state.status === "ready" && visibleCategories.length === 0 ? createElement(Feedback, { kind: "empty" } as never, categoryQuery ? "No hay categorías que coincidan con la búsqueda." : "Todavía no hay categorías.") : null,
       inlineLifecycleFeedback ? createElement(Feedback, { kind: state.recovery_required ? state.status === "loading" ? "loading" : "error" : "success" } as never, inlineLifecycleFeedback) : null,
       state.recovery_required ? createElement(Action, { variant: "secondary", disabled: pending, onClick: () => void refreshCatalogList() }, "Reintentar categorías") : null,
-      createElement("ul", { "aria-label": "Categorías", "data-ui-category-list": true }, visibleCategories.map((record) => createElement("li", { key: record.entity_id, "aria-label": `${record.label}, ${record.activity === "active" ? "Activa" : "Archivada"}`, "data-ui-category-row": true },
-        createElement("div", { "data-ui-category-identity": true }, createElement("strong", null, record.label), createElement("span", null, `${record.active_product_count} productos activos`), createElement("span", { "data-ui-category-state": record.activity }, record.activity === "active" ? "Activa" : "Archivada")),
-        createElement("div", { "data-ui-category-actions": true },
-          createElement(Action, { variant: "secondary", disabled: interactionLocked || categoryActionPending !== null, onClick: (event) => {
-            setRetiringProduct(null);
-            productOpening.current = captureCatalogEditorOpening(event.currentTarget, attempt.current + 1);
-            void loadDetail(record);
-          }, "aria-label": `Editar ${record.label}` }, "Editar"),
-          createElement(Action, { variant: record.activity === "active" ? "destructive" : "secondary", disabled: state.status === "pending" || state.recovery_required || categoryActionPending !== null, onClick: () => void manageCategoryLifecycle(record), "aria-label": `${record.activity === "active" ? "Archivar" : "Reactivar"} ${record.label}`, "data-ui-catalog-lifecycle-action": record.activity }, record.activity === "active" ? "Archivar" : "Reactivar")),
-        categoryActionPending === record.entity_id ? createElement(Feedback, { kind: "loading" } as never, "Actualizando categoría…") : null,
-        categoryActionFeedback[record.entity_id] ? createElement(Feedback, { kind: "error" } as never, categoryActionFeedback[record.entity_id]) : null)))
+      createElement("div", { "data-ui-category-results": true, role: "region", "aria-label": "Resultados de categorías", tabIndex: 0 },
+        createElement("div", { "data-ui-category-columns": true, role: "group", "aria-label": "Columnas de categorías" },
+          ...["Categoría", "Productos activos", "Estado", "Acciones"].map((label) => createElement("span", { key: label }, label))),
+        createElement("ul", { "aria-label": "Categorías", "data-ui-category-list": true }, visibleCategories.map((record) => createElement("li", { key: record.entity_id, "aria-label": `${record.label}, ${record.activity === "active" ? "Activa" : "Archivada"}`, "data-ui-category-row": true },
+          createElement("div", { "data-ui-category-cell": "name", "data-label": "Categoría" }, createElement("strong", null, record.label)),
+          createElement("div", { "data-ui-category-cell": "count", "data-label": "Productos activos" }, `${record.active_product_count} productos activos`),
+          createElement("div", { "data-ui-category-cell": "state", "data-label": "Estado" }, createElement("span", { "data-ui-category-state": record.activity }, record.activity === "active" ? "Activa" : "Archivada")),
+          createElement("div", { "data-ui-category-cell": "actions", "data-label": "Acciones" },
+            createElement("div", { "data-ui-category-actions": true },
+              createElement(Action, { variant: "secondary", disabled: interactionLocked || categoryActionPending !== null, onClick: (event) => {
+                setRetiringProduct(null);
+                productOpening.current = captureCatalogEditorOpening(event.currentTarget, attempt.current + 1);
+                void loadDetail(record);
+              }, "aria-label": `Editar ${record.label}` }, "Editar"),
+              createElement(Action, { variant: record.activity === "active" ? "destructive" : "secondary", disabled: state.status === "pending" || state.recovery_required || categoryActionPending !== null, onClick: () => void manageCategoryLifecycle(record), "aria-label": `${record.activity === "active" ? "Archivar" : "Reactivar"} ${record.label}`, "data-ui-catalog-lifecycle-action": record.activity }, record.activity === "active" ? "Archivar" : "Reactivar"))),
+          categoryActionPending === record.entity_id ? createElement(Feedback, { kind: "loading" } as never, "Actualizando categoría…") : null,
+          categoryActionFeedback[record.entity_id] ? createElement(Feedback, { kind: "error" } as never, categoryActionFeedback[record.entity_id]) : null))))
       ) : null,
     createElement(CatalogSuccessNotice, { notice: notifications ? null : state.success_notice }),
     state.status === "loading" && !state.selected ? createElement(Feedback, { kind: "loading" } as never, "Cargando registros del catálogo…") : null,
