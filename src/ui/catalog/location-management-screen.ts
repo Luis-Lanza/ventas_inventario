@@ -3,7 +3,8 @@ import { createElement, useEffect, useReducer, useRef, useState, type ChangeEven
 import { productLocationCommands, type ProductLocationRecord } from "../../commands/catalog.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
-import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
+import { captureCatalogEditorOpening, type CatalogEditorOpening } from "../visual-system/catalog-editor-motion.ts";
+import { CatalogLocationLifecycleDialog, CatalogLocationLifecycleRetirement, type LocationOperation } from "../visual-system/catalog-location-lifecycle-dialog.ts";
 import { createLocationManagementFlow, generateLocationCode, initialLocationManagementState, LOCATION_TEMPLATES, validateLocationSchema, validateLocationValues } from "./location-management-flow.ts";
 
 const locationError = (code: string) => code === "validation_error" ? "Revisá los nombres de segmentos y valores; no pueden estar vacíos ni repetirse." : code === "location_schema_in_use" ? "Ya existen ubicaciones físicas. El esquema y su orden no se pueden cambiar." : code === "duplicate_location_code" ? "Ya existe una ubicación con ese código. Elegí otros valores." : code === "location_in_use" ? "Esta ubicación está asignada a un producto. Para desactivarla o eliminarla, quitá la asignación desde la edición del producto y después volvé a intentarlo." : code === "stale_location" ? "La ubicación cambió. Recargá los datos antes de volver a intentar." : code === "location_unavailable" ? "La ubicación ya no está disponible. Recargá los datos." : "No se pudo completar el cambio de ubicación.";
@@ -20,6 +21,21 @@ export function LocationManagementScreen() {
   const [includeInactive, setIncludeInactive] = useState(true);
   const [confirm, setConfirm] = useState<{ location: ProductLocationRecord; operation: "deactivate" | "delete" } | null>(null);
   const [pending, setPending] = useState(false);
+  const epoch = useRef(0);
+  const opening = useRef<CatalogEditorOpening | null>(null);
+  const [retiring, setRetiring] = useState<{ opening: CatalogEditorOpening; snapshot: CatalogEditorOpening; locationId: number; operation: LocationOperation; sourceLabel: string } | null>(null);
+  const openConfirmation = (location: ProductLocationRecord, operation: LocationOperation, source: HTMLElement) => {
+    if (locked.current) return;
+    setRetiring(null);
+    opening.current = captureCatalogEditorOpening(source, ++epoch.current);
+    setConfirm({ location, operation });
+  };
+  const closeConfirmation = () => {
+    const frame = document.getElementById("location-lifecycle-confirmation");
+    if (opening.current && confirm && frame) setRetiring({ opening: opening.current, snapshot: captureCatalogEditorOpening(frame, opening.current.id), locationId: confirm.location.location_id, operation: confirm.operation, sourceLabel: `${confirm.operation === "delete" ? "Eliminar" : "Desactivar"} ${confirm.location.code}` });
+    opening.current = null;
+    setConfirm(null);
+  };
   const mounted = useRef(true);
   const locked = useRef(false);
   const request = useRef(0);
@@ -86,7 +102,7 @@ export function LocationManagementScreen() {
     const current = request.current;
     const response = active ? await productLocationCommands.activate({ location_id: location.location_id, expected_revision: location.revision }) : await productLocationCommands.deactivate({ location_id: location.location_id, expected_revision: location.revision });
     if (!mounted.current || current !== request.current) return;
-    locked.current = false; setPending(false); setConfirm(null);
+    locked.current = false; setPending(false); closeConfirmation();
     if (response.kind === "error") fail(response.code);
     else if (response.kind === "location_success") succeed({ type: "succeeded", notice: `Ubicación ${response.location.code} ${active ? "activada" : "desactivada"}.`, location: response.location });
     else { setRoutineError(false); dispatch({ type: "failed", message: "No se pudo confirmar el estado actualizado." }); }
@@ -98,7 +114,7 @@ export function LocationManagementScreen() {
     const current = request.current;
     const response = await productLocationCommands.delete({ location_id: location.location_id, expected_revision: location.revision });
     if (!mounted.current || current !== request.current) return;
-    locked.current = false; setPending(false); setConfirm(null);
+    locked.current = false; setPending(false); closeConfirmation();
     if (response.kind === "error") fail(response.code);
     else if (response.kind === "deleted") succeed({ type: "succeeded", notice: `Ubicación ${location.code} eliminada.`, location_id: location.location_id });
     else { setRoutineError(false); dispatch({ type: "failed", message: "No se pudo confirmar la eliminación." }); }
@@ -118,14 +134,16 @@ export function LocationManagementScreen() {
   };
   const shownLocations = state.locations.filter((location) => includeInactive || location.active);
   const physicalLocationList = createElement("section", { "aria-labelledby": "location-list-heading", "data-ui-location-list": true },
-    createElement("h3", { id: "location-list-heading" }, "Ubicaciones físicas"),
-    createElement("label", null, createElement("input", { type: "checkbox", checked: includeInactive, onChange: (event) => setIncludeInactive(event.currentTarget.checked) }), " Mostrar inactivas"),
+    createElement("div", { "data-ui-location-list-header": true },
+      createElement("h3", { id: "location-list-heading" }, "Ubicaciones físicas"),
+      createElement("label", null, createElement("input", { type: "checkbox", checked: includeInactive, onChange: (event) => setIncludeInactive(event.currentTarget.checked) }), " Mostrar inactivas")),
+    shownLocations.length ? createElement("div", { "data-ui-location-columns": true, "aria-hidden": true }, ["Código", "Valores", "Estado", "Acciones"].map((label) => createElement("span", { key: label }, label))) : null,
     shownLocations.length === 0 ? createElement(Feedback, { kind: "empty" }, state.locations.length ? "No hay ubicaciones que coincidan con este filtro." : "Todavía no hay ubicaciones físicas.") : null,
     createElement("ul", { "aria-label": "Ubicaciones físicas", "data-ui-location-rows": true }, shownLocations.map((location) => createElement("li", { key: location.location_id, "data-ui-location-row": true },
       createElement("code", null, location.code), createElement("span", null, location.values.join(" · ")), createElement("span", { "data-ui-location-state": location.active ? "active" : "inactive" }, location.active ? "Activa" : "Inactiva"),
       createElement("div", null,
-        createElement(Action, { variant: location.active ? "destructive" : "secondary", disabled: pending, onClick: () => location.active ? setConfirm({ location, operation: "deactivate" }) : void updateActivity(location, true), "aria-label": `${location.active ? "Desactivar" : "Activar"} ${location.code}` }, location.active ? "Desactivar" : "Activar"),
-        createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => setConfirm({ location, operation: "delete" }), "aria-label": `Eliminar ${location.code}` }, "Eliminar"))))));
+        createElement(Action, { variant: location.active ? "destructive" : "secondary", disabled: pending, onClick: (event) => location.active ? openConfirmation(location, "deactivate", event.currentTarget) : void updateActivity(location, true), ...{ "data-ui-location-id": location.location_id, "data-ui-location-operation": location.active ? "deactivate" : "activate" }, "aria-label": `${location.active ? "Desactivar" : "Activar"} ${location.code}` }, location.active ? "Desactivar" : "Activar"),
+        createElement(Action, { variant: "tertiary", disabled: pending, onClick: (event) => openConfirmation(location, "delete", event.currentTarget), ...{ "data-ui-location-id": location.location_id, "data-ui-location-operation": "delete" }, "aria-label": `Eliminar ${location.code}` }, "Eliminar"))))));
 
   return createElement("section", { "aria-labelledby": "catalog-location-heading", "data-ui-location-management": true },
     createElement("h2", { id: "catalog-location-heading", ref: locationHeading, tabIndex: -1 }, "Gestionar ubicaciones"),
@@ -136,8 +154,8 @@ export function LocationManagementScreen() {
     state.notice && !notifications ? createElement(Feedback, { kind: "success" }, state.notice) : null,
     state.status === "ready" && state.schema ? createElement("div", { "data-ui-location-workspace": true },
       createElement("section", { "aria-labelledby": "location-schema-heading", "data-ui-location-schema": true },
-        createElement("h3", { id: "location-schema-heading" }, "Esquema de ubicaciones"),
-        schemaFrozen ? createElement(Feedback, { kind: "advisory" }, "El esquema queda protegido porque ya existe una ubicación física. Podés seguir creando ubicaciones y administrar su estado.") : null,
+        createElement("div", { "data-ui-location-schema-header": true }, createElement("h3", { id: "location-schema-heading" }, "Esquema de ubicaciones"), schemaFrozen ? createElement("span", { "data-ui-location-protected": true }, "Protegido") : null),
+        createElement(Feedback, { kind: "advisory" }, schemaFrozen ? "El esquema queda protegido porque ya existe una ubicación física. Podés seguir creando ubicaciones y administrar su estado." : "Podés editar el esquema mientras no existan ubicaciones físicas. Al crear la primera ubicación, el esquema queda protegido."),
         createElement(Field, { kind: "select", label: "Plantilla", control: createElement("select", { value: template, disabled: schemaFrozen || pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => selectTemplate(event.currentTarget.value) }, [...(template === "Personalizado" ? [{ name: "Personalizado", segments: [] as string[] }] : []), ...LOCATION_TEMPLATES].map((item) => createElement("option", { key: item.name, value: item.name }, item.name))) }),
         createElement("ol", { "aria-label": "Segmentos ordenados", "data-ui-location-segments": true }, segments.map((segment, index) => createElement("li", { key: index, "data-ui-location-segment": true },
           createElement(Field, { kind: "text", label: `Segmento ${index + 1}`, error: schemaErrors[`segment-${index}`], control: createElement("input", { value: segment, maxLength: 40, disabled: schemaFrozen || pending, onChange: (event: ChangeEvent<HTMLInputElement>) => { const value = event.currentTarget.value; setSegments((current) => current.map((label, position) => position === index ? value : label)); } }) }),
@@ -145,15 +163,16 @@ export function LocationManagementScreen() {
           createElement(Action, { variant: "tertiary", disabled: schemaFrozen || pending || index === segments.length - 1, "aria-label": `Bajar segmento ${index + 1}`, onClick: () => moveSegment(index, 1) }, "Bajar"),
           createElement(Action, { variant: "tertiary", disabled: schemaFrozen || pending || segments.length <= 1, "aria-label": `Quitar segmento ${index + 1}`, onClick: () => { setSegments((current) => current.filter((_, position) => position !== index)); setValues((current) => current.filter((_, position) => position !== index)); } }, "Quitar")))),
         schemaErrors.segments ? createElement(Feedback, { kind: "error" }, schemaErrors.segments) : null,
-        createElement("div", { "data-ui-location-schema-actions": true }, createElement(Action, { variant: "secondary", disabled: schemaFrozen || pending || segments.length >= 8, onClick: addSegment }, "Agregar segmento"), createElement(Action, { variant: "primary", disabled: schemaFrozen || pending, onClick: saveSchema }, "Guardar esquema")),
-        createElement("p", { "data-ui-location-preview": true, "aria-live": "polite" }, "Vista previa del código: ", createElement("code", null, generateLocationCode(segments.map((_, index) => values[index] ?? "")) || "Completá los valores"))),
+        createElement("p", { "data-ui-location-preview": true, "aria-live": "polite" }, "Vista previa del código: ", createElement("code", null, generateLocationCode(segments.map((_, index) => values[index] ?? "")) || "Completá los valores")),
+        createElement("div", { "data-ui-location-schema-actions": true }, createElement(Action, { variant: "secondary", disabled: schemaFrozen || pending || segments.length >= 8, onClick: addSegment }, "Agregar segmento"), createElement(Action, { variant: "primary", disabled: schemaFrozen || pending, onClick: saveSchema }, "Guardar esquema"))),
       createElement("section", { "aria-labelledby": "location-create-heading", "data-ui-location-create": true },
         createElement("h3", { id: "location-create-heading" }, "Nueva ubicación física"),
         createElement("form", { onSubmit: (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); createLocation(); } },
-          state.schema.segments.map((segment, index) => createElement(Field, { key: segment.id, kind: "text", label: segment.label, error: valueErrors[`value-${index}`], control: createElement("input", { value: values[index] ?? "", maxLength: 40, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => { const nextValue = event.currentTarget.value; setValues((current) => current.map((value, position) => position === index ? nextValue : value)); } }) })),
+          createElement("div", { "data-ui-location-create-fields": true }, state.schema.segments.map((segment, index) => createElement(Field, { key: segment.id, kind: "text", label: segment.label, error: valueErrors[`value-${index}`], control: createElement("input", { value: values[index] ?? "", maxLength: 40, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => { const nextValue = event.currentTarget.value; setValues((current) => current.map((value, position) => position === index ? nextValue : value)); } }) }))),
           valueErrors.values ? createElement(Feedback, { kind: "error" }, valueErrors.values) : null,
-          createElement("p", null, "Código generado: ", createElement("code", null, generateLocationCode(values.slice(0, state.schema.segments.length)) || "Completá los valores")),
+          createElement("p", { "data-ui-location-generated-code": true, "aria-live": "polite" }, "Código generado: ", createElement("code", null, generateLocationCode(values.slice(0, state.schema.segments.length)) || "Completá los valores")),
           createElement(Action, { variant: "primary", type: "submit", disabled: pending }, "Crear ubicación"))),
       physicalLocationList) : null,
-    confirm ? createElement(ConfirmationDialog, { open: true, purpose: "cancellation", title: `${confirm.operation === "delete" ? "Eliminar" : "Desactivar"} ${confirm.location.code}`, description: confirm.operation === "delete" ? `¿Eliminar la ubicación ${confirm.location.code}? Si está asignada a un producto, la operación será rechazada.` : `¿Desactivar ${confirm.location.code}? Si está asignada a un producto, no se podrá desactivar.`, confirmLabel: confirm.operation === "delete" ? "Confirmar eliminación" : "Confirmar desactivación", pending, pendingLabel: "Actualizando…", dialogId: "location-lifecycle-confirmation", onCancel: () => { if (!pending && !locked.current) setConfirm(null); }, onConfirm: () => confirm.operation === "delete" ? void deleteLocation() : void updateActivity(confirm.location, false) }) : null);
+    retiring ? createElement(CatalogLocationLifecycleRetirement, { ...retiring, key: retiring.opening.id, onRetired: () => setRetiring((current) => current?.opening.id === retiring.opening.id ? null : current) }) : null,
+    confirm && opening.current ? createElement(CatalogLocationLifecycleDialog, { key: opening.current.id, opening: opening.current, code: confirm.location.code, locationId: confirm.location.location_id, operation: confirm.operation, pending, restoreFocusFallback: () => locationHeading.current, onCancel: () => { if (!pending && !locked.current) closeConfirmation(); }, onConfirm: () => confirm.operation === "delete" ? void deleteLocation() : void updateActivity(confirm.location, false) }) : null);
 }

@@ -30,6 +30,19 @@ function opener(label = "Abrir") {
   return button;
 }
 
+test("location presentation is explicit and cannot defer unrelated dialog families", () => {
+  let attachments = 0;
+  const presentation = { frameRef: (node: HTMLDivElement | null) => { if (node) attachments++; }, ready: false, restoreFocusFallback: () => null, isSourceCurrent: () => true };
+  for (const extra of [{}, { dialogDataAttribute: "catalog-edit-dialog" as const, purpose: "routine" as const }, { dialogDataAttribute: "catalog-category-archive-dialog" as const }, { dialogDataAttribute: "location-lifecycle-dialog" as const, purpose: "restore" as const }]) {
+    const view = render(dialog({ ...extra, catalogLocationPresentation: presentation }));
+    assert.equal(attachments, 0);
+    assert.equal(screen.getByRole("dialog").hasAttribute("data-ui-location-lifecycle-opening"), false);
+    assert.equal(screen.getByRole("dialog").hasAttribute("data-ui-location-lifecycle-dialog"), false);
+    assert.equal(document.activeElement, screen.getByRole("button", { name: "Volver" }));
+    view.unmount();
+  }
+});
+
 test("archive motion presentation cannot attach to product, retirement or routine category dialogs", () => {
   let attachments = 0;
   const presentation = { frameRef: (node: HTMLDivElement | null) => { if (node) attachments++; }, ready: false, restoreFocusFallback: () => null };

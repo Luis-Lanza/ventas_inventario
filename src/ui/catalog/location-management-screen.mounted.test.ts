@@ -218,6 +218,104 @@ test("hydrates a custom stored schema and saves validated template selection wit
   await screen.findByRole("textbox", { name: "Gaveta" });
 });
 
+test("inactive-only locations protect schema until the last confirmed deletion, with heading fallback and no reload", async () => {
+  let listCalls = 0, deleteCalls = 0;
+  let finish!: (value: unknown) => void;
+  mockIPC((command, payload) => {
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 4, segments: [{ id: 1, label: "Sector", position: 0 }] } };
+    if (command === "list_product_locations_command") { listCalls++; return { kind: "locations_success", locations: [inactiveRow] }; }
+    if (command === "delete_product_location_command") {
+      deleteCalls++; assert.deepEqual(payload, { request: { location_id: 10, expected_revision: 1 } });
+      return new Promise((resolve) => { finish = resolve; });
+    }
+    throw new Error(command);
+  });
+  render(createElement(LocationManagementScreen));
+  const source = await screen.findByRole("button", { name: "Eliminar PA-2" });
+  assert.ok(document.querySelector('[data-ui-location-protected]'));
+  assert.equal((screen.getByRole("button", { name: "Guardar esquema" }) as HTMLButtonElement).disabled, true);
+  await userEvent.click(source);
+  assert.equal(deleteCalls, 0);
+  await userEvent.click(screen.getByRole("button", { name: "Volver" }));
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(deleteCalls, 0);
+  assert.equal(document.activeElement, source);
+  await userEvent.click(source);
+  const confirm = screen.getByRole("button", { name: "Confirmar eliminación" });
+  act(() => { fireEvent.click(confirm); fireEvent.click(confirm); });
+  assert.equal(deleteCalls, 1);
+  await userEvent.keyboard("{Escape}");
+  assert.ok(screen.getByRole("dialog"));
+  assert.equal((screen.getByRole("button", { name: "Volver" }) as HTMLButtonElement).disabled, true);
+  await act(async () => finish({ kind: "deleted" }));
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(document.querySelector('[data-ui-location-protected]'), null);
+  assert.equal((screen.getByRole("button", { name: "Guardar esquema" }) as HTMLButtonElement).disabled, false);
+  assert.equal(document.activeElement, screen.getByRole("heading", { name: "Gestionar ubicaciones" }));
+  assert.equal(listCalls, 1);
+});
+
+test("creation retains values on error, uses saved labels despite drafts and clears only accepted success", async () => {
+  let succeeds = false;
+  const requests: unknown[] = [];
+  mockIPC((command, payload) => {
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 4, segments: [{ id: 1, label: "Sector", position: 0 }] } };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    if (command === "create_product_location_command") { requests.push(payload); return succeeds ? { kind: "location_success", location: row } : { kind: "error", code: "duplicate_location_code", message: "private" }; }
+    throw new Error(command);
+  });
+  render(createElement(LocationManagementScreen));
+  const value = await screen.findByRole("textbox", { name: "Sector" }) as HTMLInputElement;
+  await userEvent.clear(screen.getByRole("textbox", { name: "Segmento 1" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "Segmento 1" }), "Borrador");
+  assert.equal(screen.queryByRole("textbox", { name: "Borrador" }), null);
+  await userEvent.type(value, "PB");
+  await userEvent.click(screen.getByRole("button", { name: "Crear ubicación" }));
+  await screen.findByText(/Ya existe una ubicación con ese código/);
+  assert.equal(value.value, "PB");
+  succeeds = true;
+  await userEvent.click(screen.getByRole("button", { name: "Crear ubicación" }));
+  await screen.findByText("Ubicación PB-12 creada.");
+  assert.equal(value.value, "");
+  assert.deepEqual(requests, [{ request: { values: ["PB"] } }, { request: { values: ["PB"] } }]);
+});
+
+for (const operation of ["cancel", "deactivate", "filter"] as const) test(`location confirmation ${operation} restores only a still eligible source`, async () => {
+  let calls = 0;
+  mockIPC((command) => {
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 4, segments: [{ id: 1, label: "Sector", position: 0 }] } };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [row] };
+    if (command === "deactivate_product_location_command") { calls++; return { kind: "location_success", location: { ...row, active: false, revision: 3 } }; }
+    throw new Error(command);
+  });
+  render(createElement(LocationManagementScreen));
+  const source = await screen.findByRole("button", { name: "Desactivar PB-12" });
+  if (operation === "filter") await userEvent.click(screen.getByRole("checkbox", { name: "Mostrar inactivas" }));
+  await userEvent.click(source);
+  if (operation === "cancel") await userEvent.keyboard("{Escape}");
+  else await userEvent.click(screen.getByRole("button", { name: "Confirmar desactivación" }));
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+  assert.equal(calls, operation === "cancel" ? 0 : 1);
+  assert.equal(document.activeElement, operation === "cancel" ? source : screen.getByRole("heading", { name: "Gestionar ubicaciones" }));
+});
+
+test("renders editable advisory and preview before actions without a premature location state", async () => {
+  mockIPC((command) => {
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }] } };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    throw new Error(command);
+  });
+  render(createElement(LocationManagementScreen));
+  await screen.findByRole("textbox", { name: "Sector" });
+  assert.match(document.querySelector('[data-ui-location-schema] [data-ui-feedback="advisory"]')?.textContent ?? "", /Podés editar el esquema/);
+  const preview = document.querySelector('[data-ui-location-preview]')!;
+  const actions = document.querySelector('[data-ui-location-schema-actions]')!;
+  assert.ok(preview.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING);
+  assert.ok(document.querySelector('[data-ui-location-create-fields]'));
+  assert.ok(document.querySelector('[data-ui-location-generated-code]'));
+  assert.equal(document.querySelector('[data-ui-location-state]'), null);
+});
+
 test("recovers from unavailable location loading and exposes retry feedback", async () => {
   let schemaCalls = 0;
   mockIPC((command) => {

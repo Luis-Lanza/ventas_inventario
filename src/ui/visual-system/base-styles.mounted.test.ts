@@ -66,6 +66,22 @@ async function mountBaseStyles(width?: number, browseWidth?: number, height = 90
   return style;
 }
 
+for (const width of [1440, 340]) test(`Locations keep independent rounded rows and a transparent full-width list at ${width}px (cascade only)`, async () => {
+  const style = await mountBaseStyles(width);
+  try {
+    const view = render(createElement("div", { "data-ui-location-workspace": true },
+      createElement("section", { "data-ui-location-schema": true }, "Esquema"),
+      createElement("section", { "data-ui-location-list": true }, createElement("ul", { "data-ui-location-rows": true }, createElement("li", { "data-ui-location-row": true }, "A-01")))));
+    const list = view.container.querySelector('[data-ui-location-list]')!;
+    assert.equal(styleOf(list, "grid-column"), "1 / -1");
+    assert.equal(styleOf(list, "background-color"), "rgba(0, 0, 0, 0)");
+    assert.equal(styleOf(view.container.querySelector('li')!, "border-radius"), "32px");
+    view.rerender(createElement(ConfirmationDialog, { open: true, purpose: "cancellation", dialogDataAttribute: "location-lifecycle-dialog", title: "Eliminar A-01", description: "¿Eliminar?", confirmLabel: "Confirmar eliminación", onCancel() {}, onConfirm() {} }));
+    assert.equal(styleOf(screen.getByRole("dialog"), "border-radius"), "32px");
+    assert.equal(styleOf(screen.getByRole("button", { name: "Volver" }), "border-radius"), "999px");
+  } finally { style.remove(); }
+});
+
 for (const [width, height] of [[1440, 900], [340, 320]]) {
   test(`category archive has compact wrapped Velay styling at ${width}x${height} (cascade only)`, async () => {
     const style = await mountBaseStyles(width, undefined, height);
