@@ -12,7 +12,7 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - Preserve Spanish UI, accessible checkbox, pending dismissal locks, request identity, validation/focus, keyboard/nested dialog ownership, reduced motion and cleanup.
 - Capture eligible opener before loading lock; exactly one opening tween; stable loading/error/detail geometry. Close discards business draft immediately, animating only empty inert presentation.
 - Single bounded native body scroll; reachable heading/footer; full viewport overlay and background scroll lock. Responsive controls must not overflow intrinsic tracks.
-- No Rust/IPC/persistence/dependency changes. Prior modal/listing deliveries published through 1b251f7. Archive visual polish delivered through bc09747. User now authorized category archive button-linked motion; no fresh commit/push/merge authorization.
+- No Rust/IPC/persistence/dependency changes. Prior modal/listing deliveries published through 1b251f7. Archive visual polish delivered through bc09747. User explicitly authorized category archive motion commit and feature-branch push; no merge authorized.
 
 ## Tasks
 - [x] T1: Implement category-only Velay layout and shared Catalog motion/focus integration with test-first regressions.
@@ -117,7 +117,7 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - Native review review-1e28be92603f87a7 approved and acknowledged exact target sha256:5edd8c117372324b7384fccc4500a0db836e8715098b6e2b3fdde4a820636402; authority burned. Subsequent passive closure doc outside frozen tree; source unchanged.
 - ASSESS failed intended-untracked declaration and requested high-risk independent verification, now fulfilled; no tooling repair attempted.
 - Independent checks confirm actual list/detail capture, one opening, immediate mutation/pending through refresh/finally-close, immediate cancellation, empty inert retirement, live category/action eligibility, nested focus and stale callback isolation. Product archive and retirement regressions passed.
-- Existing act/intentional invalid-prop diagnostics and mixed-import/large-chunk warnings remain non-failing. No measured browser/native Windows motion acceptance; no commits/staging/push.
+- Existing act/intentional invalid-prop diagnostics and mixed-import/large-chunk warnings remain non-failing. No measured browser/native Windows motion acceptance. Motion commit: 0d48184 feat(ui): animate category archive confirmation from its button; user explicitly authorized commit/push.
 
 ## Next step
-Await explicit commit/push request to deliver archive motion for Windows verification. User has accepted existing design; actual opening/closing animation, list/detail focus, reduced motion and changed/disappearing origin behavior remain manual checks. No merge authorized.
+Deliver authorized archive motion push for Windows verification. User has accepted existing design; actual opening/closing animation, list/detail focus, reduced motion and changed/disappearing origin behavior remain manual checks. No merge authorized.
