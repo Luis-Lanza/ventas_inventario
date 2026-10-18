@@ -12,13 +12,15 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - Preserve Spanish UI, accessible checkbox, pending dismissal locks, request identity, validation/focus, keyboard/nested dialog ownership, reduced motion and cleanup.
 - Capture eligible opener before loading lock; exactly one opening tween; stable loading/error/detail geometry. Close discards business draft immediately, animating only empty inert presentation.
 - Single bounded native body scroll; reachable heading/footer; full viewport overlay and background scroll lock. Responsive controls must not overflow intrinsic tracks.
-- No Rust/IPC/persistence/dependency changes. Prior modal commit/push delivered at 9717136; user explicitly authorized listing follow-up commit and feature-branch push; no merge authorized.
+- No Rust/IPC/persistence/dependency changes. Prior modal/listing deliveries published through 1b251f7. Category archive confirmation visual polish authorized; no fresh commit/push/merge authorization.
 
 ## Tasks
 - [x] T1: Implement category-only Velay layout and shared Catalog motion/focus integration with test-first regressions.
 - [x] T2: Reconcile focused verification/native review and document running-app acceptance limitations.
 - [x] T3: Align category listing with four-column Velay rows, badges, pill controls and bounded responsive results; add regression tests.
 - [x] T4: Verify listing and modal/product regressions; review candidate and document Windows visual acceptance.
+- [x] T5: Give category archive confirmation a scoped coherent Velay presentation with regression coverage.
+- [x] T6: Verify archive presentation and unchanged destructive safeguards; review and document visual acceptance limits.
 
 ## Acceptance and checks
 - Rounded wide modal, identity strip with feminine status, editable name, active schema cards, dashed new-draft blocks with heading/discard, muted history and separate lifecycle section.
@@ -67,5 +69,28 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - This subsequent passive task update was outside frozen candidate; source unchanged. Listing commit: 3b41971 feat(ui): align category listing with Velay mockup; user explicitly authorized commit/push.
 - Windows actual geometry, long names, results overflow, short/narrow windows, keyboard scrolling and modal visual acceptance remain pending; no real-browser checks performed.
 
+## Archive confirmation follow-up
+- User says 'lo demas esta bien' after Windows testing: general acceptance of category editor/listing recorded; detailed geometry/overflow checklist not individually proven.
+- Screenshot /tmp/screenshot-2026-10-18_16-37-55.png shows category Archive confirmation still using small-radius legacy frame and rectangular actions. User requests visual coherence.
+- Apply rounded frame, matching surface/typography/spacing, clear separated footer and pill actions to category archive only (list and category-detail entry). Preserve destructive action color/emphasis and visible keyboard focus.
+- Keep compact confirmation scale; do not turn it into the large editing modal. Bound to viewport with wrapping/scroll and reachable actions.
+- Preserve exact copy, archive confirmation/cancellation, safe initial Volver focus, Escape/Tab ownership, invoker restoration, pending locks, duplicate suppression, errors and active-product guardrails. Product archive, field retirement, restore/cancellation elsewhere remain unchanged.
+- No new animation or business rules in this presentation-only follow-up. Do not make shared destructive-dialog styling global.
+- Checks: focused screen/shared confirmation/base-style tests plus modal/product regressions, both typechecks, build, diff check. Real Windows visual acceptance remains needed.
+
+## Archive implementation evidence
+- Writer RED: two category marker assertions failed (67/69 screen tests pass), then GREEN 69/69. Two style/dialog radii assertions failed (124/126 pass) before fixes.
+- Final required regressions 358/358 passed, zero skips; npx tsc --noEmit, npm run typecheck:tests, npm run build (86 modules) and git diff --check passed.
+- Category list/detail marker coverage passed; product archive, retirement/default dialogs stay unmarked. Pending locks, duplicate suppression, safe Volver focus, Tab containment, invoker restoration, no outside dismissal, blocked archive and no premature writes passed.
+- Existing act/localStorage/intentional invalid-prop logs and mixed-import/chunk-size warnings remain non-failing.
+- Browser unavailable: real Windows geometry, long-name wrapping, narrow/short scrolling, footer reachability and visible focus remain manual acceptance. No commits/stage/push.
+
+## Archive verification closure
+- Parent shared confirmation spot check 24/24 passed; writer's 358-test GREEN, production/test typechecks, build and diff check remain verification record.
+- Native review review-4e783579628b4d31 approved and acknowledged exact target sha256:14223938c1d2f4e7f5ac1d2e654e0471300c64ff0b8613b93c50b744dd76a703; acknowledgement returned authority burned, no blockers.
+- ASSESS derived consumed=true/closed, medium risk and already_reviewed; no separate independent verifier required.
+- This subsequent passive task closure was outside frozen tree; source unchanged. No archive-polish commits/stage/push.
+- Windows visual acceptance of compact rounded frame, pill actions, long names, focus outline and narrow/short scrolling remains pending.
+
 ## Next step
-Deliver authorized listing follow-up push on feat/catalog-category-editor-velay for Windows verification. No merge authorized.
+Await explicit commit/push request to deliver archive confirmation polish for Windows testing. Other category UI accepted generally by user; no merge authorized.

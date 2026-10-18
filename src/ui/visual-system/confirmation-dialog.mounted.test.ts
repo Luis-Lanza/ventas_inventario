@@ -30,6 +30,40 @@ function opener(label = "Abrir") {
   return button;
 }
 
+test("category archive marker is explicit, cancellation-only and preserves safe destructive controls", async () => {
+  for (const purpose of ["cancellation", "restore", "routine"] as const) {
+    const view = render(dialog({ purpose, dialogDataAttribute: "catalog-category-archive-dialog" }));
+    const frame = screen.getByRole("dialog");
+    assert.equal(frame.hasAttribute("data-ui-catalog-category-archive-dialog"), purpose === "cancellation");
+    assert.equal(frame.hasAttribute("data-ui-catalog-category-dialog"), false);
+    assert.equal(document.activeElement, screen.getByRole("button", { name: "Volver" }));
+    view.unmount();
+  }
+  const view = render(dialog());
+  assert.equal(screen.getByRole("dialog").hasAttribute("data-ui-catalog-category-archive-dialog"), false);
+  view.unmount();
+  const source = opener();
+  let cancels = 0; let confirms = 0;
+  const props = { dialogDataAttribute: "catalog-category-archive-dialog" as const, onCancel: () => { cancels++; }, onConfirm: () => { confirms++; } };
+  const scoped = render(dialog(props));
+  const frame = screen.getByRole("dialog");
+  const back = screen.getByRole("button", { name: "Volver" });
+  const confirm = screen.getByRole("button", { name: "Cancelar venta" });
+  assert.equal(confirm.getAttribute("data-ui-action"), "destructive");
+  assert.equal(document.activeElement, back);
+  confirm.focus(); fireEvent.keyDown(confirm, { key: "Tab" });
+  assert.equal(document.activeElement, back);
+  fireEvent.mouseDown(frame.parentElement!);
+  assert.equal(cancels, 0);
+  scoped.rerender(dialog({ ...props, pending: true }));
+  await userEvent.click(back); await userEvent.click(confirm);
+  fireEvent.keyDown(frame, { key: "Escape" });
+  assert.equal(cancels, 0); assert.equal(confirms, 0);
+  scoped.unmount();
+  assert.equal(document.activeElement, source);
+  source.remove();
+});
+
 test("persisted receipt owns keys under StrictMode and cleanup never steals the next focus", async () => {
   let newSales = 0;
   const invoker = opener();

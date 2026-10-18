@@ -601,6 +601,7 @@ export function CatalogMaintenanceScreen() {
       pending: archivePending,
       pendingLabel: "Archivando…",
       dialogId: "catalog-archive-confirmation-dialog",
+      dialogDataAttribute: archiveConfirmation.record.target === "category" ? "catalog-category-archive-dialog" : undefined,
       onCancel: () => { if (!archivePending) setArchiveConfirmation(null); },
       onConfirm: () => void confirmArchive(),
     })) : null,

@@ -7,6 +7,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { InventoryScreen } from "../inventory/inventory-screen.ts";
 import userEvent from "@testing-library/user-event";
 
+import { ConfirmationDialog } from "./confirmation-dialog.ts";
 import { CheckoutDialog } from "./checkout-dialog.ts";
 import { PersistedSaleSummaryView } from "../sales/persisted-summary.ts";
 import { Action, Badge, Field } from "./controls.ts";
@@ -63,6 +64,44 @@ async function mountBaseStyles(width?: number, browseWidth?: number, height = 90
     style.textContent = activeRules(style.sheet!.cssRules).join("\n");
   }
   return style;
+}
+
+for (const [width, height] of [[1440, 900], [340, 320]]) {
+  test(`category archive has compact wrapped Velay styling at ${width}x${height} (cascade only)`, async () => {
+    const style = await mountBaseStyles(width, undefined, height);
+    try {
+      const view = render(createElement(ConfirmationDialog, {
+        open: true, purpose: "cancellation", dialogDataAttribute: "catalog-category-archive-dialog",
+        title: "Archivar categoría con nombre largo", description: "¿Querés archivar esta categoría? Podés reactivarlo más adelante.",
+        confirmLabel: "Confirmar archivo", onCancel() {}, onConfirm() {},
+      }));
+      const frame = screen.getByRole("dialog");
+      const footer = frame.querySelector("[data-ui-dialog-actions]")!;
+      assert.equal(styleOf(frame, "border-radius"), "32px");
+      assert.equal(styleOf(frame, "inline-size"), "min(560px, 100%)");
+      assert.equal(styleOf(frame, "max-block-size"), "100%");
+      assert.equal(styleOf(frame, "overflow-y"), "auto");
+      assert.equal(styleOf(frame, "background"), "#fffcf7");
+      assert.equal(styleOf(frame.querySelector("h2")!, "overflow-wrap"), "anywhere");
+      assert.equal(styleOf(frame.querySelector("p")!, "overflow-wrap"), "anywhere");
+      assert.equal(styleOf(footer, "border-block-start"), "1px solid var(--color-border)");
+      assert.equal(styleOf(footer, "gap"), "16px");
+      for (const button of footer.querySelectorAll("button")) {
+        assert.equal(styleOf(button, "border-radius"), "999px");
+        assert.equal(styleOf(button, "max-inline-size"), "100%");
+        assert.equal(styleOf(button, "white-space"), "normal");
+      }
+      assert.equal(styleOf(frame.parentElement!, "position"), "fixed");
+      assert.equal(styleOf(frame.parentElement!, "inset"), "0px");
+      const destructive = within(frame).getByRole("button", { name: "Confirmar archivo" });
+      assert.equal(styleOf(destructive, "background"), "#a33f46");
+      view.rerender(createElement(ConfirmationDialog, {
+        open: true, purpose: "cancellation", title: "Otro archivo", description: "Sin presentación especial.",
+        confirmLabel: "Confirmar", onCancel() {}, onConfirm() {},
+      }));
+      assert.equal(styleOf(screen.getByRole("dialog"), "border-radius"), "10px");
+    } finally { style.remove(); }
+  });
 }
 
 for (const width of [1440, 960, 340]) {

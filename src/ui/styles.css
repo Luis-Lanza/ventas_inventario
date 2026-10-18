@@ -212,6 +212,18 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
 [data-ui-form-dialog] [data-ui-history-return], [data-ui-form-dialog] [data-ui-history-cancellation] { padding: 0; border: 0; background: transparent; }
 [data-ui-dialog-actions] { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); margin-block-start: var(--space-6); }
 
+/* Category archive is a compact confirmation, not a routine editor presentation.
+   One native frame scroll keeps the footer reachable even in short windows. */
+[data-ui-dialog-backdrop]:has(> [data-ui-catalog-category-archive-dialog]) { padding: 16px; overscroll-behavior: contain; }
+html:has([data-ui-catalog-category-archive-dialog]), body:has([data-ui-catalog-category-archive-dialog]) { overflow: hidden; }
+[data-ui-catalog-category-archive-dialog] { inline-size: min(560px, 100%); min-inline-size: 0; max-block-size: 100%; overflow: auto; overscroll-behavior: contain; padding: clamp(16px, 4vw, 32px); border-color: var(--color-border); border-radius: 32px; background: var(--color-surface); }
+[data-ui-catalog-category-archive-dialog] > :is(h2, p) { min-inline-size: 0; margin: 0; overflow-wrap: anywhere; }
+[data-ui-catalog-category-archive-dialog] > h2 { font-size: var(--type-h1-size); line-height: var(--type-h1-line); }
+[data-ui-catalog-category-archive-dialog] > p { margin-block-start: var(--space-3); }
+[data-ui-catalog-category-archive-dialog] > [data-ui-dialog-actions] { gap: var(--space-4); margin-block-start: var(--space-6); padding-block-start: var(--space-5); border-block-start: 1px solid var(--color-border); }
+[data-ui-catalog-category-archive-dialog] > [data-ui-dialog-actions] > button { min-inline-size: 0; max-inline-size: 100%; min-block-size: 44px; padding: var(--space-3) var(--space-5); border-radius: 999px; white-space: normal; overflow-wrap: anywhere; }
+
+
 [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"]:focus {
   outline-color: var(--color-focus);
   outline-style: solid;

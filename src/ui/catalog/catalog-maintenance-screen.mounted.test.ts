@@ -260,6 +260,7 @@ test("product close immediately discards the draft while only an empty surface r
   const archive = within(dialog).getByRole("button", { name: "Archivar" });
   await userEvent.click(archive);
   const confirmation = screen.getByRole("dialog", { name: /Archivar .*Filtro Premium/ });
+  assert.equal(confirmation.hasAttribute("data-ui-catalog-category-archive-dialog"), false);
   assert.equal(confirmation.parentElement?.parentElement, document.body, "nested confirmation paints above the portaled editor");
   await userEvent.keyboard("{Escape}");
   assert.equal(screen.queryByRole("dialog", { name: /Archivar .*Filtro Premium/ }), null);
@@ -770,6 +771,7 @@ test("shows authoritative category count, state, searchable rows, archive confir
   const archive = within(activeRow).getByRole("button", { name: "Archivar Filtros" });
   await userEvent.click(archive);
   const confirmation = await screen.findByRole("dialog", { name: "Archivar Filtros" });
+  assert.equal(confirmation.getAttribute("data-ui-catalog-category-archive-dialog"), "true");
   assert.equal(requests.length, 1);
   await userEvent.click(within(confirmation).getByRole("button", { name: "Volver" }));
   assert.equal(requests.length, 1);
@@ -1050,6 +1052,7 @@ test("category opening survives the loading lock without replay on detail, error
   const archive = within(frame).getByRole("button", { name: "Archivar" });
   await userEvent.click(archive);
   const confirmation = screen.getByRole("dialog", { name: "Archivar Filtros" });
+  assert.equal(confirmation.getAttribute("data-ui-catalog-category-archive-dialog"), "true");
   assert.equal(confirmation.parentElement?.parentElement, document.body);
   await userEvent.keyboard("{Escape}");
   assert.equal(document.activeElement, archive);
@@ -1127,7 +1130,9 @@ test("adds category fields and retires existing fields only after confirmation",
   await userEvent.click(within(await screen.findByRole("dialog", { name: "Retirar Material" })).getByRole("button", { name: "Volver" }));
   assert.ok(within(dialog).getByRole("button", { name: "Retirar Material" }));
   await userEvent.click(within(dialog).getByRole("button", { name: "Retirar Material" }));
-  await userEvent.click(within(await screen.findByRole("dialog", { name: "Retirar Material" })).getByRole("button", { name: "Confirmar retiro" }));
+  const retirement = await screen.findByRole("dialog", { name: "Retirar Material" });
+  assert.equal(retirement.hasAttribute("data-ui-catalog-category-archive-dialog"), false);
+  await userEvent.click(within(retirement).getByRole("button", { name: "Confirmar retiro" }));
   await userEvent.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
   const draft = within(dialog).getByRole("group", { name: "Campo nuevo 1" });
   const fieldNames = within(draft).getAllByRole("textbox", { name: "Nombre del campo" });

@@ -25,7 +25,7 @@ export type ConfirmationDialogProps = {
   catalogCategoryPresentation?: InventoryPresentation;
   cancelLabel?: ReactNode;
   dialogId?: string;
-  dialogDataAttribute?: "catalog-edit-dialog";
+  dialogDataAttribute?: "catalog-edit-dialog" | "catalog-category-archive-dialog";
   onCancel: () => void;
   onConfirm: () => void;
   children?: ReactNode;
@@ -67,7 +67,7 @@ type DialogFrameProps = {
   initialFocusRef?: RefObject<HTMLElement>;
   invokerRef?: RefObject<HTMLElement>;
   dialogId?: string;
-  dialogDataAttribute?: "catalog-edit-dialog";
+  dialogDataAttribute?: ConfirmationDialogProps["dialogDataAttribute"];
   purpose?: DialogPurpose;
   layout?: DialogLayout;
   kind: "confirmation" | "form" | "persisted-sale";
@@ -230,6 +230,7 @@ function DialogFrame({
       "data-ui-checkout-dialog": purpose === "routine" && layout !== "inventory" && dialogDataAttribute !== "catalog-edit-dialog" || undefined,
       "data-ui-inventory-dialog": !!inventory || undefined,
       "data-ui-catalog-edit-dialog": dialogDataAttribute === "catalog-edit-dialog" || undefined,
+      "data-ui-catalog-category-archive-dialog": kind === "confirmation" && purpose === "cancellation" && dialogDataAttribute === "catalog-category-archive-dialog" || undefined,
       "data-ui-persisted-summary": kind === "persisted-sale" || undefined,
       "data-ui-dialog-layout": layout,
       "data-ui-purpose": purpose,
