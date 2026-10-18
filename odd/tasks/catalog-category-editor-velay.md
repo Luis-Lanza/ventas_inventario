@@ -12,7 +12,7 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - Preserve Spanish UI, accessible checkbox, pending dismissal locks, request identity, validation/focus, keyboard/nested dialog ownership, reduced motion and cleanup.
 - Capture eligible opener before loading lock; exactly one opening tween; stable loading/error/detail geometry. Close discards business draft immediately, animating only empty inert presentation.
 - Single bounded native body scroll; reachable heading/footer; full viewport overlay and background scroll lock. Responsive controls must not overflow intrinsic tracks.
-- No Rust/IPC/persistence/dependency changes. Prior modal commit/push delivered at 9717136; follow-up listing implementation authorized, no fresh commit/push/merge authorization.
+- No Rust/IPC/persistence/dependency changes. Prior modal commit/push delivered at 9717136; user explicitly authorized listing follow-up commit and feature-branch push; no merge authorized.
 
 ## Tasks
 - [x] T1: Implement category-only Velay layout and shared Catalog motion/focus integration with test-first regressions.
@@ -64,8 +64,8 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - Parent reran base-styles.mounted.test.ts: 100/100 passed; diff check passed. Writer's 355-test GREEN and both typechecks/build remain functional verification record.
 - Native review review-470b35635167e057 approved and acknowledged exact target sha256:fb40d56aec36311f3d765f90f911974ec7a4b97209abc7fc9b780582c5579526; returned authority burned, no blockers.
 - ASSESS derived closed/consumed=true, risk medium, reviewDue=false/already_reviewed; writer self-verification plus native review stands, no separate verifier required.
-- This subsequent passive task update was outside frozen candidate; source unchanged. No listing commit/push performed.
+- This subsequent passive task update was outside frozen candidate; source unchanged. Listing commit: 3b41971 feat(ui): align category listing with Velay mockup; user explicitly authorized commit/push.
 - Windows actual geometry, long names, results overflow, short/narrow windows, keyboard scrolling and modal visual acceptance remain pending; no real-browser checks performed.
 
 ## Next step
-Await explicit commit/push authorization to deliver listing follow-up on feat/catalog-category-editor-velay for Windows verification. No merge authorized.
+Deliver authorized listing follow-up push on feat/catalog-category-editor-velay for Windows verification. No merge authorized.
