@@ -943,6 +943,64 @@ test("does not let delayed initial browse replace a newer submitted search", asy
   assert.ok(screen.getByText("Pastilla de freno"));
 });
 
+test("category opening survives the loading lock without replay on detail, error, or reload; close retires only an empty surface", async (t) => {
+  let resolveDetail!: (value: unknown) => void;
+  let details = 0, writes = 0, tweens = 0;
+  let complete: (() => void) | undefined;
+  t.mock.method(HTMLElement.prototype, "getBoundingClientRect", function (this: HTMLElement) {
+    return (this.tagName === "BUTTON" ? { left: 30, top: 50, width: 120, height: 40, right: 150, bottom: 90 } : { left: 100, top: 20, width: 900, height: 600, right: 1000, bottom: 620 }) as DOMRect;
+  });
+  t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { tweens++; complete = vars.onComplete as () => void; return {} as gsap.core.Tween; });
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") {
+      details++;
+      return details === 1 ? new Promise((resolve) => { resolveDetail = resolve; }) : categoryDetail;
+    }
+    if (command === "edit_catalog_command" || command === "edit_category_schema_command") { writes++; throw Error("Unexpected persistence"); }
+    return baseIPC(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  const opener = await openCategoryEditor();
+  await userEvent.click(opener);
+  assert.equal((opener as HTMLButtonElement).disabled, true);
+  assert.equal(tweens, 1);
+  const frame = screen.getByRole("dialog");
+  assert.equal(frame.parentElement?.parentElement, document.body);
+  assert.ok(frame.querySelector("[data-ui-catalog-category-body]"));
+  act(() => complete?.());
+  await userEvent.keyboard("{Escape}");
+  assert.equal(screen.getByRole("dialog"), frame, "loading remains dismissal-locked");
+  await act(async () => { resolveDetail({ kind: "error", code: "persistence_failure" }); });
+  assert.equal(tweens, 1);
+  assert.equal(screen.getByRole("dialog"), frame);
+  await userEvent.click(within(frame).getByRole("button", { name: "Recargar registro" }));
+  const name = await within(frame).findByRole("textbox", { name: "Nombre de la categoría" });
+  assert.equal(screen.getByRole("dialog"), frame);
+  assert.equal(tweens, 1, "reload and authoritative detail do not replay opening");
+  const archive = within(frame).getByRole("button", { name: "Archivar" });
+  await userEvent.click(archive);
+  const confirmation = screen.getByRole("dialog", { name: "Archivar Filtros" });
+  assert.equal(confirmation.parentElement?.parentElement, document.body);
+  await userEvent.keyboard("{Escape}");
+  assert.equal(document.activeElement, archive);
+  await userEvent.type(name, " discarded draft");
+  await userEvent.click(within(frame).getByRole("button", { name: "Volver" }));
+  assert.equal(screen.queryByRole("dialog"), null);
+  const surface = document.querySelector("[data-ui-catalog-category-retirement]");
+  assert.ok(surface);
+  assert.ok(surface.hasAttribute("inert"));
+  assert.equal(surface.textContent, "");
+  assert.equal(surface.querySelector("input, button, form, [role=dialog]"), null);
+  assert.equal(writes, 0);
+  assert.equal(document.activeElement, opener);
+  assert.equal(tweens, 2);
+  act(() => complete?.());
+  assert.equal(document.querySelector("[data-ui-catalog-category-retirement]"), null);
+  await userEvent.click(opener);
+  act(() => complete?.());
+  assert.equal((await screen.findByRole("textbox", { name: "Nombre de la categoría" }) as HTMLInputElement).value, "Filtros");
+});
+
 test("keeps browsing free of the inline editor and opens a named category modal with authoritative detail", async () => {
   mockIPC((command) => command === "catalog_metadata_detail_command" ? categoryDetail : baseIPC(command));
   render(createElement(CatalogMaintenanceScreen));
@@ -955,6 +1013,17 @@ test("keeps browsing free of the inline editor and opens a named category modal 
   assert.equal(screen.queryByRole("region", { name: "Detalle y edición" }), null);
   await userEvent.keyboard("{Escape}");
   await waitFor(() => assert.equal(document.activeElement, opener));
+});
+
+test("category close restores its management heading when the captured opener is no longer eligible", async () => {
+  mockIPC((command) => command === "catalog_metadata_detail_command" ? categoryDetail : baseIPC(command));
+  render(createElement(CatalogMaintenanceScreen));
+  const opener = await openCategoryEditor();
+  await userEvent.click(opener);
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
+  opener.hidden = true;
+  await userEvent.click(within(dialog).getByRole("button", { name: "Volver" }));
+  assert.equal(document.activeElement?.id, "catalog-category-management-heading");
 });
 
 test("adds category fields and retires existing fields only after confirmation", async () => {
@@ -980,7 +1049,12 @@ test("adds category fields and retires existing fields only after confirmation",
   await userEvent.click(within(dialog).getByRole("button", { name: "Retirar Material" }));
   const confirmation = await screen.findByRole("dialog", { name: "Retirar Material" });
   assert.equal(schemaRequest, undefined);
-  await userEvent.click(within(confirmation).getByRole("button", { name: "Volver" }));
+  assert.equal(confirmation.parentElement?.parentElement, document.body);
+  await userEvent.keyboard("{Escape}");
+  assert.ok(screen.getByRole("dialog", { name: "Editar Filtros" }));
+  assert.equal(document.activeElement, within(dialog).getByRole("button", { name: "Retirar Material" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Retirar Material" }));
+  await userEvent.click(within(await screen.findByRole("dialog", { name: "Retirar Material" })).getByRole("button", { name: "Volver" }));
   assert.ok(within(dialog).getByRole("button", { name: "Retirar Material" }));
   await userEvent.click(within(dialog).getByRole("button", { name: "Retirar Material" }));
   await userEvent.click(within(await screen.findByRole("dialog", { name: "Retirar Material" })).getByRole("button", { name: "Confirmar retiro" }));
@@ -994,7 +1068,7 @@ test("adds category fields and retires existing fields only after confirmation",
   await waitFor(() => assert.deepEqual(schemaRequest, { category_id: 4, expected_revision: 2, fields: [{ definition_id: null, label: "Length", field_type: "text", required: false, options: [] }] }));
 });
 
-test("keeps category identity out of the sticky scroll layer and supports discarding only an unsaved draft", async () => {
+test("keeps category identity in the single body and supports discarding only an unsaved draft", async () => {
   mockIPC((command) => command === "catalog_metadata_detail_command" ? categoryDetail : baseIPC(command));
   render(createElement(CatalogMaintenanceScreen));
   await userEvent.click(await openCategoryEditor());
@@ -1011,8 +1085,11 @@ test("keeps category identity out of the sticky scroll layer and supports discar
   assert.equal(discard.textContent, "×");
   assert.equal(discard.getAttribute("data-ui-category-schema-discard"), "true");
   assert.equal(firstDraft.querySelector("fieldset"), null);
-  assert.equal(firstDraft.querySelector("[data-ui-category-schema-draft-heading]"), null);
-  assert.equal(firstDraft.querySelectorAll("[data-ui-category-schema-draft-controls] > *").length, 4);
+  const draftHeading = firstDraft.querySelector("[data-ui-category-schema-draft-heading]");
+  assert.ok(draftHeading);
+  assert.ok(draftHeading.contains(discard));
+  assert.match(draftHeading.textContent ?? "", /Campo nuevo.*Borrador/);
+  assert.equal(firstDraft.querySelectorAll("[data-ui-category-schema-draft-controls] > *").length, 3);
   assert.equal(within(firstDraft).queryByRole("textbox", { name: "Opciones (separadas por coma)" }), null);
   await userEvent.selectOptions(within(firstDraft).getByRole("combobox", { name: "Tipo" }), "option");
   assert.ok(within(firstDraft).getByRole("textbox", { name: "Opciones (separadas por coma)" }));
@@ -1024,21 +1101,25 @@ test("keeps category identity out of the sticky scroll layer and supports discar
   assert.equal(dialog.querySelectorAll("[data-ui-category-schema-draft]").length, 1);
   assert.equal((within(dialog).getByRole("textbox", { name: "Nombre del campo" }) as HTMLInputElement).value, "Keep this draft");
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
-  assert.match(css, /\[data-ui-catalog-identity\] \{(?![^}]*position:\s*sticky)[^}]*display:\s*flex/);
-  assert.match(css, /\[data-ui-category-schema-draft-name\] \{ flex: 1 1 0; min-inline-size: 0; \}/);
-  assert.match(css, /\[data-ui-category-schema-draft-controls\] \{ display: flex; flex-wrap: nowrap/);
-  assert.match(css, /\[data-ui-category-schema-draft-controls\] > \[data-ui-field="select"\] \{ flex: 0 0 9rem; min-inline-size: 9rem; \}/);
-  assert.match(css, /\[data-ui-category-schema-draft-controls\] \[data-ui-kind="checkbox"\] > label \{ min-inline-size: 0; min-height: 0; white-space: nowrap; \}/);
-  assert.match(css, /@media \(max-width: 699px\) \{\s*\[data-ui-category-schema-draft-controls\] \{ flex-wrap: wrap; \}\s*\[data-ui-category-schema-draft-name\] \{ flex-basis: 100%; \}/);
-  assert.match(css, /\[data-ui-category-schema-draft-controls\] \[data-ui-kind="checkbox"\] input\[type="checkbox"\] \{ inline-size: 1rem; block-size: 1rem; flex: 0 0 1rem; appearance: auto/);
-  assert.match(css, /\[data-ui-category-schema-discard\] \{ flex: 0 0 auto; inline-size: 2\.5rem; min-block-size: 2\.5rem/);
-  assert.match(css, /\[data-ui-category-schema-existing\] \{ min-block-size: 3rem/);
-  assert.match(css, /\[data-ui-retired-category-field\] \{ display: flex; min-block-size: 3rem/);
-  assert.match(css, /@media \(min-width: 700px\) \{\s*\[data-ui-catalog-edit-dialog\] \{ inline-size: min\(680px, 100%\)/);
-  assert.match(css, /\[data-ui-category-schema-options\] \{ inline-size: 100%; min-inline-size: 0/);
+  const style = document.createElement("style"); style.textContent = css; document.head.append(style);
+  try {
+    const body = dialog.querySelector("[data-ui-catalog-category-body]")!;
+    assert.ok(body.contains(dialog.querySelector("[data-ui-catalog-identity]")));
+    assert.equal(getComputedStyle(body).overflowY, "auto");
+    assert.equal(getComputedStyle(dialog.querySelector("[data-ui-catalog-edit-content]")!).overflow, "visible");
+    assert.equal(getComputedStyle(dialog).inlineSize, "min(1040px, 100%)");
+    const draft = dialog.querySelector("[data-ui-category-schema-draft]")!;
+    assert.equal(getComputedStyle(draft).borderStyle, "dashed");
+    const checkbox = draft.querySelector('[data-ui-field="checkbox"]')!;
+    assert.equal(getComputedStyle(checkbox).display, "flex");
+    assert.equal(getComputedStyle(checkbox.querySelector("input")!).inlineSize, "16px");
+    assert.equal(getComputedStyle(draft.querySelector("input:not([type=checkbox])")!).minInlineSize, "0px");
+    assert.equal(dialog.querySelector("[data-ui-catalog-product-rail]"), null);
+    assert.equal(getComputedStyle(document.body).overflow, "hidden");
+  } finally { style.remove(); }
 });
 
-test("keeps one compact scroll region and one category save action", async () => {
+test("keeps one bounded body scroll region and one category save action", async () => {
   mockIPC((command) => command === "catalog_metadata_detail_command" ? { ...categoryDetail, attribute_definitions: [{ definition_id: 11, label: "Material", field_type: "text" as const, required: false, options: [], active: true }] } : baseIPC(command));
   render(createElement(CatalogMaintenanceScreen));
   await userEvent.click(await openCategoryEditor());
@@ -1047,7 +1128,9 @@ test("keeps one compact scroll region and one category save action", async () =>
   assert.equal(dialog.querySelectorAll("[data-ui-catalog-edit-content]").length, 1);
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /\[data-ui-catalog-edit-dialog\][^{]*\{[^}]*overflow: hidden/);
-  assert.match(css, /\[data-ui-catalog-edit-dialog\] \[data-ui-catalog-edit-content\][^{]*\{[^}]*overflow-y: auto/);
+  assert.ok(dialog.querySelector("[data-ui-catalog-category-body]"));
+  assert.match(css, /\[data-ui-catalog-category-body\][^{]*\{[^}]*overflow-y: auto/);
+  assert.match(css, /\[data-ui-catalog-category-dialog\] \[data-ui-catalog-edit-content\][^{]*\{[^}]*overflow: visible/);
 });
 
 test("reloads authoritative category fields after a stale schema result without repeating the mutation", async () => {
@@ -1126,10 +1209,11 @@ test("keeps the newest selected detail when requests resolve in reverse order", 
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
-  await userEvent.click(await openCategoryEditor());
-  await waitFor(() => assert.ok(resolveFirst));
-  await userEvent.click(screen.getByRole("button", { name: "Editar Pastillas" }));
-  await waitFor(() => assert.ok(resolveSecond));
+  const first = await openCategoryEditor();
+  const second = screen.getByRole("button", { name: "Editar Pastillas" });
+  // Both native events precede the loading-lock commit; response identity still decides authority.
+  act(() => { first.click(); second.click(); });
+  await waitFor(() => { assert.ok(resolveFirst); assert.ok(resolveSecond); });
   await act(async () => { resolveSecond(secondDetail); });
   await act(async () => { resolveFirst(firstDetail); });
   const dialog = await screen.findByRole("dialog", { name: "Editar Pastillas B" });

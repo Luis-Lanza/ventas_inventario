@@ -2,6 +2,7 @@ import { createElement, Fragment, useCallback, useEffect, useLayoutEffect, useRe
 
 import { createPortal } from "react-dom";
 import { startCatalogProductMotion, type CatalogProductOpening } from "./catalog-product-motion.ts";
+import { startCatalogEditorMotion } from "./catalog-editor-motion.ts";
 
 import { ATTRIBUTE_FIELD_TYPE, productLocationCommands, type CatalogMaintenanceRecord, type CatalogMetadataDetail, type ProductLocationRecord, type ProductLocationSegment } from "../../commands/catalog.ts";
 import { Action, Badge, Feedback, Field } from "./controls.ts";
@@ -82,7 +83,7 @@ export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback
   },
     detail.target === "category" ? createElement("div", { "data-ui-catalog-identity": true },
       createElement("strong", null, detail.name),
-      createElement(Badge, { kind: detail.activity, text: detail.activity === "active" ? "Activo" : "Archivado" }),
+      createElement(Badge, { kind: detail.activity, text: detail.activity === "active" ? "Activa" : "Archivada" }),
       createElement("span", null, "Categoría")) : null,
     detail.activity === "archived" ? createElement(Feedback, { kind: "advisory" } as never, "Registro archivado. Editar metadatos no lo reactiva.") : null,
     createElement(Field, { kind: "text", label: detail.target === "category" ? "Nombre de la categoría" : "Nombre del producto", error: fieldErrors.name, control: createElement("input", { id: "catalog-edit-name", ref: nameRef, disabled: pending, value: form.name, onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("name", event.target.value) }) } as never),
@@ -98,11 +99,14 @@ export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback
             createElement("span", null, field.required ? "Obligatorio" : "Opcional"),
             createElement(Action, { variant: "destructive", disabled: pending, onClick: () => onRetireCategoryField?.(index), "aria-label": `Retirar ${field.label}` }, "Retirar"))
           : createElement("div", { key: `new-${index}`, role: "group", "aria-label": `Campo nuevo ${(form.category_fields ?? []).slice(0, index).filter((item) => item.definition_id === null).length + 1}`, "data-ui-category-schema-field": true, "data-ui-category-schema-draft": true },
+            createElement("div", { "data-ui-category-schema-draft-heading": true },
+              createElement("strong", null, "Campo nuevo"),
+              createElement("span", null, "Borrador"),
+              createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => onRemoveCategoryFieldDraft?.(index), "aria-label": `Descartar campo nuevo ${(form.category_fields ?? []).slice(0, index).filter((item) => item.definition_id === null).length + 1}`, "data-ui-category-schema-discard": true }, "×")),
             createElement("div", { "data-ui-category-schema-draft-controls": true },
               createElement("div", { "data-ui-category-schema-draft-name": true }, createElement(Field, { kind: "text", label: "Nombre del campo", control: createElement("input", { disabled: pending, value: field.label, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "label", event.currentTarget.value) }) } as never)),
               createElement(Field, { kind: "select", label: "Tipo", control: createElement("select", { disabled: pending, value: field.field_type, onChange: (event: ChangeEvent<HTMLSelectElement>) => onChangeCategoryField?.(index, "field_type", event.currentTarget.value) }, createElement("option", { value: "text" }, "Texto"), createElement("option", { value: "number" }, "Número"), createElement("option", { value: "option" }, "Opciones")) } as never),
-              createElement(Field, { kind: "checkbox", label: "Obligatorio", control: createElement("input", { type: "checkbox", disabled: pending, checked: field.required, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "required", event.currentTarget.checked) }) } as never),
-              createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => onRemoveCategoryFieldDraft?.(index), "aria-label": `Descartar campo nuevo ${(form.category_fields ?? []).slice(0, index).filter((item) => item.definition_id === null).length + 1}`, "data-ui-category-schema-discard": true }, "×")),
+              createElement(Field, { kind: "checkbox", label: "Obligatorio", control: createElement("input", { type: "checkbox", disabled: pending, checked: field.required, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "required", event.currentTarget.checked) }) } as never)),
             field.field_type === "option" ? createElement("div", { "data-ui-category-schema-options": true }, createElement(Field, { kind: "text", label: "Opciones (separadas por coma)", control: createElement("input", { disabled: pending, value: field.options, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "options", event.currentTarget.value) }) } as never)) : null)
         : createElement("p", { key: field.definition_id ?? `new-${index}`, "data-ui-retired-category-field": true }, `${field.label} — Retirado (histórico; no editable ni reactivable)`)),
       createElement(Action, { variant: "secondary", disabled: pending, onClick: onAddCategoryField }, "Agregar campo")) : null,
@@ -128,9 +132,9 @@ export function CatalogEditDialog({ record, opening, restoreFocusFallback = () =
   const frameRef = useCallback((node: HTMLDivElement | null) => setFrame(node), []);
   const [ready, setReady] = useState(!opening);
   useLayoutEffect(() => {
-    if (!product || !frame || !opening) return;
+    if (!frame || !opening) return;
     setReady(false);
-    const driver = startCatalogProductMotion(frame, opening, () => setReady(true));
+    const driver = (product ? startCatalogProductMotion : startCatalogEditorMotion)(frame, opening, () => setReady(true));
     return () => driver.dispose();
   }, [product, frame, opening]);
   const invokerRef = useRef<HTMLElement | null>(opening?.trigger ?? null);
@@ -150,11 +154,12 @@ export function CatalogEditDialog({ record, opening, restoreFocusFallback = () =
     open: true,
     purpose: "routine",
     catalogProductPresentation: product ? { frameRef, ready, restoreFocusFallback } : undefined,
-    initialFocusRef: product ? nameRef : undefined,
-    invokerRef: product ? invokerRef : undefined,
+    catalogCategoryPresentation: !product ? { frameRef, ready, restoreFocusFallback } : undefined,
+    initialFocusRef: nameRef,
+    invokerRef,
     title,
     description: detail ? "Editá los metadatos del registro seleccionado y guardá los cambios." : loading ? "Cargando el detalle autorizado del registro seleccionado…" : "No se pudo cargar el detalle del registro seleccionado.",
-    confirmLabel: detail?.target === "category" ? "Guardar cambios" : "Guardar metadatos",
+    confirmLabel: !product ? "Guardar cambios" : "Guardar metadatos",
     pending: dialogPending || imagePending,
     pendingLabel: imagePending ? "Procesando imagen…" : loading ? "Cargando detalle…" : "Guardando metadatos…",
     confirmDisabled: !ready || !detail || !form || recoveryRequired || imagePending,
@@ -176,7 +181,7 @@ export function CatalogEditDialog({ record, opening, restoreFocusFallback = () =
           imageThumbnail ? createElement(Action, { variant: "tertiary", disabled: dialogPending || imagePending || recoveryRequired, onClick: onRemoveImage }, "Quitar imagen") : null,
           imageFeedback ? createElement(Feedback, { kind: imageFeedbackKind } as never, imageFeedback) : null) : null,
         createElement("section", { "aria-label": "Acciones de ciclo de vida", "data-ui-catalog-lifecycle": true },
-          product ? createElement("h3", null, "Acciones de ciclo de vida") : null,
+          createElement("h3", null, "Acciones de ciclo de vida"),
           createElement(Action, { variant: detail.activity === "active" ? "destructive" : "secondary", disabled: dialogPending || imagePending || recoveryRequired, onClick: onLifecycle, "data-ui-catalog-lifecycle-action": detail.activity }, detail.activity === "active" ? "Archivar" : "Reactivar"),
           lifecycleFeedback ? createElement(Feedback, { kind: lifecycleFeedback === "Catálogo actualizado." ? "success" : "error" } as never, lifecycleFeedback) : null,
           recoveryRequired ? createElement(Action, { variant: "secondary", disabled: dialogPending || imagePending, onClick: onReload }, "Reintentar actualización") : null)))
@@ -187,19 +192,19 @@ export function CatalogEditDialog({ record, opening, restoreFocusFallback = () =
           createElement(Feedback, { kind: "error" } as never, feedback ?? "No se pudo cargar el registro."),
           createElement(Action, { variant: "secondary", onClick: onReload }, "Recargar registro")),
   });
-  return product ? createPortal(dialog, document.body) : dialog;
+  return createPortal(dialog, document.body);
 }
 
 /** An empty, inert surface retires after the screen has already discarded the draft. */
-export function CatalogProductRetirement({ opening, snapshot, onRetired }: { opening: CatalogProductOpening; snapshot: CatalogProductOpening; onRetired: () => void }) {
+export function CatalogProductRetirement({ opening, snapshot, onRetired, target = "product" }: { opening: CatalogProductOpening; snapshot: CatalogProductOpening; onRetired: () => void; target?: "product" | "category" }) {
   const frame = useRef<HTMLDivElement>(null);
   const retire = useRef(onRetired); retire.current = onRetired;
   useLayoutEffect(() => {
     if (!frame.current) return;
-    const driver = startCatalogProductMotion(frame.current, opening, () => retire.current(), "close", snapshot);
+    const driver = (target === "product" ? startCatalogProductMotion : startCatalogEditorMotion)(frame.current, opening, () => retire.current(), "close", snapshot);
     return () => driver.dispose();
-  }, [opening, snapshot]);
-  return createPortal(createElement("div", { "data-ui-dialog-backdrop": true, "data-ui-catalog-product-retirement": true, "aria-hidden": true },
-    createElement("div", { ref: frame, "data-ui-catalog-product-dialog": true },
-      createElement("div", { "data-ui-catalog-product-body": true }), createElement("div", { "data-ui-dialog-actions": true }))), document.body);
+  }, [opening, snapshot, target]);
+  return createPortal(createElement("div", { "data-ui-dialog-backdrop": true, [`data-ui-catalog-${target}-retirement`]: true, "aria-hidden": true, inert: "" },
+    createElement("div", { ref: frame, [`data-ui-catalog-${target}-dialog`]: true },
+      createElement("div", { [`data-ui-catalog-${target}-body`]: true }), createElement("div", { "data-ui-dialog-actions": true }))), document.body);
 }

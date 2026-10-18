@@ -22,6 +22,7 @@ export type ConfirmationDialogProps = {
   checkoutPresentation?: CheckoutPresentation;
   inventoryPresentation?: InventoryPresentation;
   catalogProductPresentation?: InventoryPresentation;
+  catalogCategoryPresentation?: InventoryPresentation;
   cancelLabel?: ReactNode;
   dialogId?: string;
   dialogDataAttribute?: "catalog-edit-dialog";
@@ -40,8 +41,8 @@ function currentDialog(owner: Document) {
   return connected[connected.length - 1] ?? null;
 }
 
-function isEligible(element: HTMLElement | null, dialog: HTMLElement): element is HTMLElement {
-  if (!element?.isConnected || !dialog.contains(element) || element.tabIndex < 0) return false;
+function isEligible(element: HTMLElement | null, dialog: HTMLElement, programmatic = false): element is HTMLElement {
+  if (!element?.isConnected || !dialog.contains(element) || (!programmatic && element.tabIndex < 0)) return false;
   if (element.matches(":disabled") || element.getAttribute("aria-disabled") === "true") return false;
   if (element.tagName === "INPUT" && (element as HTMLInputElement).type === "hidden") return false;
   for (let node: HTMLElement | null = element; node; node = node.parentElement) {
@@ -74,6 +75,7 @@ type DialogFrameProps = {
   checkoutPresentation?: CheckoutPresentation;
   inventoryPresentation?: InventoryPresentation;
   catalogProductPresentation?: InventoryPresentation;
+  catalogCategoryPresentation?: InventoryPresentation;
   onCancel: () => void;
   children?: ReactNode;
   actions: ReactNode;
@@ -81,7 +83,7 @@ type DialogFrameProps = {
 
 function DialogFrame({
   open, title, description, pending, initialFocusRef, invokerRef: externalInvokerRef, dialogId, dialogDataAttribute,
-  purpose, layout = "default", kind, focusFirstControl = false, checkoutPresentation, inventoryPresentation, catalogProductPresentation, onCancel, children, actions,
+  purpose, layout = "default", kind, focusFirstControl = false, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, onCancel, children, actions,
 }: DialogFrameProps) {
   const generated = useId().replace(/:/g, "");
   const titleId = `${kind === "confirmation" ? "confirmation" : "form"}-title-${generated}`;
@@ -89,7 +91,8 @@ function DialogFrame({
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const inventory = purpose === "routine" && layout === "inventory" && dialogDataAttribute !== "catalog-edit-dialog" ? inventoryPresentation : undefined;
   const product = purpose === "routine" && dialogDataAttribute === "catalog-edit-dialog" ? catalogProductPresentation : undefined;
-  const presentation = product ?? (purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog" ? checkoutPresentation : inventory);
+  const category = purpose === "routine" && dialogDataAttribute === "catalog-edit-dialog" ? catalogCategoryPresentation : undefined;
+  const presentation = product ?? category ?? (purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog" ? checkoutPresentation : inventory);
   const ready = presentation?.ready ?? true;
   const readyRef = useRef(ready);
   readyRef.current = ready;
@@ -176,15 +179,17 @@ function DialogFrame({
       if (kind !== "persisted-sale" && !checkoutReplacement
         && (current === previousDialogRef.current || (current !== container && !replacement))) {
         const invoker = invokerRef.current;
-        if (inventory || product) {
+        if (inventory || product || category) {
           const root = owner.documentElement;
           const inViewport = (node: HTMLElement) => {
             if (!root.getClientRects().length) return true;
             const rect = node.getBoundingClientRect();
             return rect.bottom > 0 && rect.right > 0 && rect.top < owner.defaultView!.innerHeight && rect.left < owner.defaultView!.innerWidth;
           };
-          const target = isEligible(invoker, root) && inViewport(invoker) ? invoker : (inventory ?? product)!.restoreFocusFallback();
-          if (isEligible(target, root) && inViewport(target)) restore(target);
+          const target = isEligible(invoker, root) && inViewport(invoker) ? invoker : (inventory ?? product ?? category)!.restoreFocusFallback();
+          // Category's management heading is an intentional tabIndex=-1 focus destination,
+          // never an extra stop in the dialog's live Tab loop.
+          if (isEligible(target, root, !!category) && inViewport(target)) restore(target);
         } else if (!presentation?.restoreFocusFallback) restore(invoker);
         else {
           // Checkout may discard its cart: a disabled source remains geometry, not focus.
@@ -210,7 +215,9 @@ function DialogFrame({
     createElement("div", {
       id: dialogId ?? (purpose === "routine" ? "checkout-dialog" : undefined),
       ref: attachFrame, role: "dialog", tabIndex: -1,
-      "data-ui-checkout-opening": !inventory && !product && !ready || undefined,
+      "data-ui-checkout-opening": !inventory && !product && !category && !ready || undefined,
+      "data-ui-catalog-category-dialog": !!category || undefined,
+      "data-ui-catalog-category-opening": !!category && !ready || undefined,
       "data-ui-catalog-product-dialog": !!product || undefined,
       "data-ui-catalog-product-opening": !!product && !ready || undefined,
       "data-ui-checkout-closing": !inventory && presentation?.closing || undefined,
@@ -231,13 +238,13 @@ function DialogFrame({
       kind === "persisted-sale" ? createElement("span", { className: "sale-summary-success-icon", "aria-hidden": true, "data-ui-summary-success-icon": true }, "✓") : null,
       title),
     createElement("p", { id: descriptionId }, description),
-    product ? createElement("div", { "data-ui-catalog-product-body": true }, children) : inventory ? createElement("div", { "data-ui-inventory-dialog-body": true }, children) : children,
+    product ? createElement("div", { "data-ui-catalog-product-body": true }, children) : category ? createElement("div", { "data-ui-catalog-category-body": true }, children) : inventory ? createElement("div", { "data-ui-inventory-dialog-body": true }, children) : children,
     actions));
 }
 
 export function ConfirmationDialog({
   open, purpose, layout = "default", title, description, confirmLabel, confirmDisabled = false, pending = false,
-  pendingLabel = "Procesando…", initialFocusRef, invokerRef, checkoutPresentation, inventoryPresentation, catalogProductPresentation, cancelLabel = "Volver", dialogId, dialogDataAttribute, onCancel, onConfirm, children,
+  pendingLabel = "Procesando…", initialFocusRef, invokerRef, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, cancelLabel = "Volver", dialogId, dialogDataAttribute, onCancel, onConfirm, children,
 }: ConfirmationDialogProps) {
   if (typeof title !== "string" || !title.trim()) throw new TypeError("ConfirmationDialog requires a nonblank title");
   if (!(typeof description === "string" && description.trim()) && !isValidElement(description)) {
@@ -247,7 +254,7 @@ export function ConfirmationDialog({
     ? checkoutPresentation?.onBack ?? onCancel : onCancel;
   const inventoryClosing = purpose === "routine" && layout === "inventory" && dialogDataAttribute !== "catalog-edit-dialog" && inventoryPresentation?.closing;
   return createElement(DialogFrame, {
-    open, purpose, layout, title, description, pending, initialFocusRef, invokerRef, checkoutPresentation, inventoryPresentation, catalogProductPresentation, dialogId, dialogDataAttribute,
+    open, purpose, layout, title, description, pending, initialFocusRef, invokerRef, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, dialogId, dialogDataAttribute,
     kind: "confirmation", onCancel, children,
     actions: createElement("div", { "data-ui-dialog-actions": true },
       createElement(Action, { variant: "secondary", disabled: pending || inventoryClosing, onClick: () => { if (!pending && !inventoryClosing) onBack(); } }, cancelLabel),

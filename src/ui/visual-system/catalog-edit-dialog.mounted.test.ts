@@ -33,6 +33,14 @@ function view(recoveryRequired: boolean, onReload = () => undefined) {
 
 test("category editing names the schema definition group", () => {
   view(false);
+  const dialog = screen.getByRole("dialog");
+  const body = dialog.querySelector("[data-ui-catalog-category-body]");
+  assert.ok(body, "category owns a bounded body independently of product presentation");
+  assert.equal(dialog.parentElement?.parentElement, document.body);
+  assert.ok(within(dialog).getByText("Activa"));
+  assert.ok(body.contains(screen.getByRole("textbox", { name: "Nombre de la categoría" })));
+  assert.equal(body.contains(screen.getByRole("button", { name: "Guardar cambios" })), false);
+  assert.ok(within(body as HTMLElement).getByRole("heading", { name: "Acciones de ciclo de vida" }));
   const definitions = screen.getByRole("group", { name: "Definición de atributos de la categoría" });
   assert.ok(within(definitions).getByRole("button", { name: "Agregar campo" }));
   assert.match(definitions.textContent ?? "", /nombre, tipo, obligatoriedad y opciones/);
