@@ -11,7 +11,7 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - Preserve Spanish UI, accessible checkbox, pending dismissal locks, request identity, validation/focus, keyboard/nested dialog ownership, reduced motion and cleanup.
 - Capture eligible opener before loading lock; exactly one opening tween; stable loading/error/detail geometry. Close discards business draft immediately, animating only empty inert presentation.
 - Single bounded native body scroll; reachable heading/footer; full viewport overlay and background scroll lock. Responsive controls must not overflow intrinsic tracks.
-- No Rust/IPC/persistence/dependency changes. No commits, push or merge without explicit user request.
+- No Rust/IPC/persistence/dependency changes. User explicitly authorized commit and feature-branch push; no merge authorized.
 
 ## Tasks
 - [x] T1: Implement category-only Velay layout and shared Catalog motion/focus integration with test-first regressions.
@@ -35,7 +35,7 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - Existing act/localStorage/expected invalid-prop diagnostics and mixed-import/large-chunk build warnings remain non-failing.
 - Category schema/rename partial persistence, authoritative reload without auto-close, nested confirmation focus and product regressions passed deterministic checks.
 - Browser unavailable; actual geometry, animation, short/narrow scrolling, long labels/options, checkbox readability and invalid-field focus remain Windows acceptance checks.
-- No commits, staging or push.
+- Implementation commit: ceebb9b feat(ui): align category editor with Velay modal design. User explicitly requested commit and push.
 
 ## Verification closure
 - Independent verifier observed 252/252 tests passing, no failures/skips; both TypeScript checks, production build and diff check passed. Build transformed 86 modules. No blocking defect found in inspected scope.
@@ -47,4 +47,4 @@ Implement the approved Edit category modal presentation and existing action-to-m
 - Browser unavailable: no measured geometry, native motion, short/narrow scrolling or Windows visual acceptance. No commits/staging/push.
 
 ## Next step
-Await user authorization to commit/push feature branch for Windows validation. Check approved mockup hierarchy, long labels/options, many fields, checkbox readability, invalid-field focus, full overlay, reachable footer and real opening/closing animation. No merge authorized.
+Deliver authorized feature-branch push for Windows validation. Check approved mockup hierarchy, long labels/options, many fields, checkbox readability, invalid-field focus, full overlay, reachable footer and real opening/closing animation. No merge authorized.
