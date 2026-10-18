@@ -624,10 +624,29 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-catalog-header] p { margin: var(--space-2) 0 0; color: var(--color-text-muted); }
 [data-ui-catalog-header] > [data-ui-action] { flex: 0 0 auto; max-inline-size: 100%; border-radius: 999px; }
 [data-ui-catalog-password-change] { flex: 0 0 auto; min-inline-size: 0; margin-block-end: var(--space-4); }
-[data-ui-catalog-password-change] > summary { inline-size: fit-content; max-inline-size: 100%; min-block-size: var(--size-control-default); padding: var(--space-2) var(--space-4); border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-subtle); color: var(--color-text-muted); cursor: pointer; }
+[data-ui-catalog-password-change] > summary { display: flex; align-items: center; gap: var(--space-3); list-style: none; overflow-wrap: anywhere; inline-size: fit-content; max-inline-size: 100%; min-block-size: var(--size-control-default); padding: var(--space-2) var(--space-4); border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-subtle); color: var(--color-text-muted); cursor: pointer; }
 [data-ui-catalog-password-change] > summary:hover { background: var(--color-surface); color: var(--color-text); }
 [data-ui-catalog-password-change] > summary:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
-[data-ui-catalog-password-change][open] > summary { margin-block-end: var(--space-3); }
+[data-ui-catalog-password-change] > summary::-webkit-details-marker { display: none; }
+[data-ui-catalog-password-change] > summary svg { inline-size: 1.5rem; block-size: 1.5rem; flex: 0 0 auto; }
+[data-ui-catalog-password-chevron] { margin-inline-start: auto; flex: 0 0 auto; }
+[data-ui-catalog-password-change][open] { border: 1px solid var(--color-border); border-radius: 28px; background: var(--color-surface); box-shadow: 0 2px 3px rgb(41 37 43 / 5%); }
+[data-ui-catalog-password-change][open] > summary { inline-size: 100%; border: 0; border-radius: 28px; padding: var(--space-5); background: transparent; color: var(--color-text); font-weight: 600; }
+[data-ui-catalog-password-change][open] [data-ui-catalog-password-chevron] { transform: rotate(180deg); }
+[data-ui-catalog-password-viewport] { min-inline-size: 0; }
+[data-ui-catalog-password-viewport] > form { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-2) var(--space-5) var(--space-5); }
+[data-ui-catalog-password-fields] { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+[data-ui-catalog-password-fields] label { display: flex; flex-direction: column; gap: var(--space-2); min-inline-size: 0; overflow-wrap: anywhere; }
+[data-ui-catalog-password-fields] input { inline-size: 100%; min-inline-size: 0; min-block-size: var(--size-control-default); border-radius: 999px; background: var(--color-surface-subtle); }
+[data-ui-catalog-password-footer] { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-4); }
+[data-ui-catalog-password-footer] p { flex: 1 1 24rem; margin: 0; color: var(--color-text-muted); overflow-wrap: anywhere; }
+[data-ui-catalog-password-footer] > button { flex: 0 0 auto; max-inline-size: 100%; border-radius: 999px; }
+[data-ui-catalog-password-viewport] [data-ui-feedback] { overflow-wrap: anywhere; }
+@media (max-width: 960px) {
+  [data-ui-catalog-password-fields] { grid-template-columns: minmax(0, 1fr); }
+  [data-ui-catalog-password-change][open] > summary { padding: var(--space-4); }
+  [data-ui-catalog-password-viewport] > form { padding: var(--space-2) var(--space-4) var(--space-4); }
+}
 [data-ui-catalog-navigation] { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: var(--space-2); margin-block-end: var(--space-4); padding-block-end: var(--space-3); border-block-end: 1px solid var(--color-border); }
 [data-ui-catalog-navigation] > [data-ui-action] { min-block-size: var(--size-control-default); border-radius: 999px; background: var(--color-surface-subtle); }
 [data-ui-catalog-navigation] > [data-ui-action][aria-current="page"],

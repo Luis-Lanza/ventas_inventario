@@ -66,6 +66,26 @@ async function mountBaseStyles(width?: number, browseWidth?: number, height = 90
   return style;
 }
 
+for (const width of [1440, 340]) test(`Password card keeps responsive fields and nonshrinking actions at ${width}px (cascade only)`, async () => {
+  const style = await mountBaseStyles(width);
+  try {
+    const view = render(createElement("details", { open: true, "data-ui-catalog-password-change": true },
+      createElement("summary", null, "Cambiar contraseña"),
+      createElement("div", { "data-ui-catalog-password-viewport": true }, createElement("form", null,
+        createElement("div", { "data-ui-catalog-password-fields": true },
+          ...["Actual", "Nueva", "Confirmar"].map(label => createElement("label", { key: label }, label, createElement("input", { type: "password" })))),
+        createElement("div", { "data-ui-catalog-password-footer": true }, createElement("p", null, "Minimum and matching hint"), createElement(Action, { variant: "secondary" }, "Guardar contraseña"))))));
+    const fields = view.container.querySelector("[data-ui-catalog-password-fields]")!;
+    assert.equal(getComputedStyle(fields).gridTemplateColumns, width > 960 ? "repeat(3, minmax(0, 1fr))" : "minmax(0, 1fr)");
+    const footer = view.container.querySelector("[data-ui-catalog-password-footer]")!;
+    assert.equal(getComputedStyle(footer).flexWrap, "wrap");
+    assert.equal(getComputedStyle(footer.querySelector("button")!).flexShrink, "0");
+    assert.equal(getComputedStyle(footer.querySelector("p")!).overflowWrap, "anywhere");
+    assert.equal(getComputedStyle(view.container.querySelector("details")!).borderRadius, "28px");
+    assert.equal(getComputedStyle(view.container.querySelector("summary")!).inlineSize, "100%");
+  } finally { style.remove(); }
+});
+
 for (const width of [1440, 340]) test(`Locations keep independent rounded rows and a transparent full-width list at ${width}px (cascade only)`, async () => {
   const style = await mountBaseStyles(width);
   try {

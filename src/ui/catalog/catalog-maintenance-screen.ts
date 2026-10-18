@@ -7,6 +7,7 @@ import { useActionNotifications } from "../visual-system/action-notifications.ts
 import { Action, Feedback } from "../visual-system/controls.ts";
 import { captureCatalogProductOpening, type CatalogProductOpening } from "../visual-system/catalog-product-motion.ts";
 import { captureCatalogEditorOpening } from "../visual-system/catalog-editor-motion.ts";
+import { attachCatalogPasswordMotion } from "../visual-system/catalog-password-motion.ts";
 import { CatalogEditDialog, CatalogMetadataEditor, CatalogProductRetirement } from "../visual-system/catalog-edit-dialog.ts";
 import { CatalogCategoryArchiveDialog, CatalogCategoryArchiveRetirement, categoryArchiveFocusFallback } from "../visual-system/catalog-category-archive-dialog.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
@@ -24,6 +25,12 @@ type BrowserSnapshot = Pick<ProductBrowserState<CatalogProductBrowseResult>, "qu
 
 function CatalogPasswordChange() {
   const notifications = useActionNotifications();
+  const disclosure = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (!disclosure.current) return;
+    const motion = attachCatalogPasswordMotion(disclosure.current);
+    return () => motion.dispose();
+  }, []);
   const [current, setCurrent] = useState(""); const [next, setNext] = useState(""); const [confirm, setConfirm] = useState(""); const [feedback, setFeedback] = useState<string | null>(null); const [pending, setPending] = useState(false);
   const pendingRef = useRef(false); const mounted = useRef(true); const requestId = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; requestId.current += 1; }; }, []);
@@ -48,7 +55,24 @@ function CatalogPasswordChange() {
       if (mounted.current && request === requestId.current) { pendingRef.current = false; setPending(false); }
     }
   };
-  return createElement("details", { "data-ui-catalog-password-change": true }, createElement("summary", null, "Cambiar contraseña del catálogo"), createElement("form", { onSubmit: (event: FormEvent) => void submit(event) }, createElement("label", null, "Contraseña actual", createElement("input", { type: "password", autoComplete: "current-password", value: current, onChange: (event: ChangeEvent<HTMLInputElement>) => setCurrent(event.currentTarget.value), required: true, maxLength: 1024, disabled: pending })), createElement("label", null, "Nueva contraseña", createElement("input", { type: "password", autoComplete: "new-password", value: next, onChange: (event: ChangeEvent<HTMLInputElement>) => setNext(event.currentTarget.value), required: true, minLength: 8, maxLength: 1024, disabled: pending })), createElement("label", null, "Confirmar nueva contraseña", createElement("input", { type: "password", autoComplete: "new-password", value: confirm, onChange: (event: ChangeEvent<HTMLInputElement>) => setConfirm(event.currentTarget.value), required: true, minLength: 8, maxLength: 1024, disabled: pending })), feedback ? createElement(Feedback, { kind: feedback === "Contraseña actualizada." ? "success" : "error" } as never, feedback) : null, createElement(Action, { variant: "secondary", type: "submit", disabled: pending }, pending ? "Guardando…" : "Guardar contraseña")));
+  const hintId = "catalog-password-hint";
+  return createElement("details", { ref: disclosure, "data-ui-catalog-password-change": true },
+    createElement("summary", null,
+      createElement("svg", { "aria-hidden": true, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8 },
+        createElement("path", { d: "M3 10a9 9 0 1 1 0 5M3 4v6h6M10 12v-2a2 2 0 0 1 4 0v2m-5 0h6v6H9z" })),
+      createElement("span", null, "Cambiar contraseña del catálogo"),
+      createElement("span", { "data-ui-catalog-password-chevron": true, "aria-hidden": true }, "⌄")),
+    createElement("div", { "data-ui-catalog-password-viewport": true },
+      createElement("form", { onSubmit: (event: FormEvent) => void submit(event) },
+        createElement("div", { "data-ui-catalog-password-fields": true },
+          createElement("label", null, "Contraseña actual", createElement("input", { type: "password", autoComplete: "current-password", placeholder: "Ingresá tu contraseña actual", value: current, onChange: (event: ChangeEvent<HTMLInputElement>) => setCurrent(event.currentTarget.value), required: true, maxLength: 1024, disabled: pending })),
+          createElement("label", null, "Nueva contraseña", createElement("input", { type: "password", autoComplete: "new-password", placeholder: "Nueva contraseña", "aria-describedby": hintId, value: next, onChange: (event: ChangeEvent<HTMLInputElement>) => setNext(event.currentTarget.value), required: true, minLength: 8, maxLength: 1024, disabled: pending })),
+          createElement("label", null, "Confirmar nueva contraseña", createElement("input", { type: "password", autoComplete: "new-password", placeholder: "Repetí la nueva contraseña", "aria-describedby": hintId, value: confirm, onChange: (event: ChangeEvent<HTMLInputElement>) => setConfirm(event.currentTarget.value), required: true, minLength: 8, maxLength: 1024, disabled: pending }))),
+        createElement("div", { "data-ui-catalog-password-footer": true },
+          createElement("p", { id: hintId }, "La nueva contraseña debe tener al menos 8 caracteres y coincidir con la confirmación."),
+          createElement(Action, { variant: "secondary", type: "submit", disabled: pending }, pending ? "Guardando…" : "Guardar contraseña")),
+        feedback ? createElement(Feedback, { kind: feedback === "Contraseña actualizada." ? "success" : "error" } as never, feedback) : null)));
+
 }
 
 export function CatalogMaintenanceRecovery({ required, onReload }: { required: boolean; onReload: () => void }) {

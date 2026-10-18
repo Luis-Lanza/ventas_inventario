@@ -27,7 +27,7 @@ function mockIPC(handler: (command: string, payload: Record<string, unknown> | u
   nativeMockIPC(callback);
   return callback;
 }
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { ProductBrowseResult } from "../../commands/catalog.ts";
@@ -78,7 +78,7 @@ test("Catalog groups its title and lock in a header while disclosure and current
     assert.equal(getComputedStyle(header).justifyContent, "space-between");
     assert.equal(getComputedStyle(lock).flexGrow, "0");
     assert.equal(getComputedStyle(lock).borderRadius, "999px");
-    const summary = screen.getByText("Cambiar contraseña del catálogo");
+    const summary = screen.getByText("Cambiar contraseña del catálogo").closest("summary")!;
     assert.equal(getComputedStyle(summary).inlineSize, "fit-content");
     assert.equal(getComputedStyle(summary).borderRadius, "999px");
     const navigation = screen.getByRole("navigation", { name: "Vistas del catálogo" });
@@ -105,6 +105,15 @@ test("Catalog groups its title and lock in a header while disclosure and current
   await userEvent.click(screen.getByText("Cambiar contraseña del catálogo"));
   assert.equal(disclosure.open, true);
   assert.ok(screen.getByLabelText("Contraseña actual"));
+  assert.equal(disclosure.querySelectorAll("form").length, 1);
+  assert.equal(disclosure.querySelectorAll("[data-ui-catalog-password-fields] input").length, 3);
+  assert.ok(disclosure.querySelector("[data-ui-catalog-password-footer]"));
+  assert.ok(screen.getByText("La nueva contraseña debe tener al menos 8 caracteres y coincidir con la confirmación."));
+  for (const input of disclosure.querySelectorAll("input")) {
+    assert.equal(input.type, "password");
+    assert.equal(input.required, true);
+    assert.equal(input.maxLength, 1024);
+  }
 });
 
 test("Catalog mock rejects outer arrays before fixture dispatch", async () => {
@@ -2019,7 +2028,13 @@ test("serializes password changes, preserves secrets on failure, and clears them
   assert.equal(current.disabled, true);
   assert.equal(submit.getAttribute("data-ui-action"), "secondary");
   assert.equal((submit as HTMLButtonElement).disabled, true);
+  const summary = screen.getByText("Cambiar contraseña del catálogo").closest("summary")!;
+  await userEvent.click(summary);
+  assert.equal(summary.closest("details")!.open, false, "pending work does not block collapsing");
+  assert.ok(screen.getByRole("button", { name: "Bloquear catálogo" }));
+  assert.equal(current.value, "current-secret");
   await act(async () => { resolveChange({ kind: "error", code: "invalid_credentials", message: "private detail" }); });
+  await userEvent.click(summary);
   assert.equal(current.value, "current-secret");
   assert.equal(next.value, "replacement-secret");
   assert.equal(confirm.value, "replacement-secret");
@@ -2030,6 +2045,45 @@ test("serializes password changes, preserves secrets on failure, and clears them
   assert.equal(next.value, "");
   assert.equal(confirm.value, "");
   assert.equal(screen.getByText("Contraseña actualizada.").getAttribute("role"), "status");
+});
+
+test("password disclosure validates without IPC and keeps draft/feedback across keyboard collapse without moving outside focus", async () => {
+  let changes = 0;
+  mockIPC((command) => {
+    if (command === "catalog_access_change_password_command") { changes++; return { kind: "success" }; }
+    return baseIPC(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await screen.findByRole("searchbox", { name: "Buscar en el catálogo" });
+  const summary = screen.getByText("Cambiar contraseña del catálogo").closest("summary")!;
+  summary.focus();
+  await userEvent.keyboard("{Enter}");
+  const current = screen.getByLabelText("Contraseña actual") as HTMLInputElement;
+  const next = screen.getByLabelText("Nueva contraseña") as HTMLInputElement;
+  const confirm = screen.getByLabelText("Confirmar nueva contraseña") as HTMLInputElement;
+  await userEvent.type(current, "current-secret");
+  await userEvent.type(next, "short");
+  await userEvent.type(confirm, "short");
+  // Submit at the React boundary to exercise explicit checks independently of native constraints.
+  fireEvent.submit(current.closest("form")!);
+  assert.equal(changes, 0);
+  assert.match(screen.getByRole("alert").textContent!, /al menos 8/);
+  await userEvent.clear(next); await userEvent.type(next, "replacement-secret");
+  fireEvent.submit(current.closest("form")!);
+  assert.equal(changes, 0);
+  current.focus();
+  fireEvent.click(summary);
+  assert.equal(document.activeElement, summary);
+  const viewport = current.closest("[data-ui-catalog-password-viewport]")!;
+  assert.equal(viewport.hasAttribute("inert"), true);
+  await userEvent.keyboard(" ");
+  assert.equal(viewport.hasAttribute("inert"), false);
+  assert.equal(next.value, "replacement-secret");
+  assert.match(screen.getByRole("alert").textContent!, /confirmación/);
+  const search = screen.getByRole("searchbox", { name: "Buscar en el catálogo" });
+  search.focus();
+  fireEvent.click(summary);
+  assert.equal(document.activeElement, search, "collapse never steals unrelated focus");
 });
 
 test("does not apply a password-change response after its editor unmounts", async () => {
