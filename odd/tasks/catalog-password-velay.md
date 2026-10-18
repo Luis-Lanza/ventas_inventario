@@ -12,7 +12,7 @@ Align the inline Catalog password-change disclosure with its approved Velay mock
 - Existing frontend UTF-16 length vs backend UTF-8 byte validation difference is out of scope; no business validation redefinition.
 - Animate measured normal-flow wrapper height and restore natural height; do not use fixed/source-button modal geometry. Native details must not hide content before contraction. Collapsed/closing content must not remain keyboard-accessible; preserve summary keyboard operation/visible focus.
 - Handle rapid reversal, reduced motion initially/live, resize/errors/deadline and unmount cleanup. Animation never gates persistence or retains extra copies/logs of credentials.
-- No password visibility/strength meter/recovery-code generation, new dependencies/Rust/IPC or shared shell/navigation/results redesign. No commit/push/merge without explicit request.
+- No password visibility/strength meter/recovery-code generation, new dependencies/Rust/IPC or shared shell/navigation/results redesign. User explicitly authorized commit and feature-branch push; no merge authorized.
 
 ## Tasks
 - [x] T1: Implement password disclosure mockup layout and safe inline transition with test-first regression coverage.
@@ -42,5 +42,8 @@ Align the inline Catalog password-change disclosure with its approved Velay mock
 - ASSESS failed intended-untracked declaration and required independent high-risk verification; already fulfilled by mveesaas-f-akns on unchanged source. No tooling repair attempted or redundant verifier run.
 - Existing non-failing test/build diagnostics, including unresolved historical controlled-readiness cause, remain advisories. No Windows/browser geometry/actual transition/native keyboard acceptance claimed. No commits/staging/push.
 
+## Delivery evidence
+- Implementation commit: 950c95a feat(ui): align password disclosure with Velay design and motion. User explicitly requested commit and push.
+
 ## Next step
-Await explicit commit/push request to deliver feat/catalog-password-velay for Windows verification: mockup layout, narrow/short windows, long feedback, actual expansion/contraction, rapid toggles and keyboard/focus. No merge authorized.
+Deliver authorized feat/catalog-password-velay push for Windows verification: mockup layout, narrow/short windows, long feedback, actual expansion/contraction, rapid toggles and keyboard/focus. No merge authorized.
