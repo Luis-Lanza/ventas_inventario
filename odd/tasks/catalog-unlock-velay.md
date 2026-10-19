@@ -26,7 +26,7 @@ User approved adapting the approved setup card visual vocabulary to the existing
 
 ## Delivery sizing
 - Strategy: ask-on-risk. Forecast approximately 180–320 authored diff lines including tests; reassess before expanding past a coherent slice.
-- Work-unit commit: pending explicit user request. No review result authorizes delivery.
+- Work-unit commit: a7ef97e feat(ui): align Catalog unlock card with Velay design. User explicitly requested commit and push; no merge authorized.
 
 ## Evidence and next step
 - Explorer mapped catalog-access-gate.ts:60–76; no unlock-specific reference. User approved setup-card adaptation.
@@ -38,4 +38,4 @@ User approved adapting the approved setup card visual vocabulary to the existing
 - Native review review-85502755dd90d650 approved and acknowledged exact target 867b40f59f7dc285f73c29a4e1010d7e19c51362638bb415c25ed11ea89c9eb1; authority burned. Source unchanged; later tracking updates are passive only.
 - ASSESS failed on intended-untracked declaration; unassessable/high fallback required independent verification. Verifier continuation mveg0qs5-j-yrju completed: combined 257/257 tests (zero failed/skipped/cancelled), both typechecks, build (89 modules) and diff check all passed on unchanged source. This fulfills fallback verification, not assessment declaration repair.
 - Non-failing advisories: experimental localStorage, historical diagnostic original deadline cause UNKNOWN/BLOCKER unresolved, mixed static/dynamic Tauri imports, 523.49 kB JS chunk. No current functional check failures.
-- Next: await explicit commit/push request for Windows testing. Visual geometry, short/narrow scrolling, native keyboard/focus and forced colors remain unverified. No staging/commit/push; no merge authorized.
+- Next: push authorized feature branch for Windows testing. Visual geometry, short/narrow scrolling, native keyboard/focus and forced colors remain unverified. No merge authorized.
