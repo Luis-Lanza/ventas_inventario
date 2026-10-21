@@ -5,6 +5,11 @@ import { Action } from "./controls.ts";
 export type DialogPurpose = "restore" | "cancellation" | "routine";
 export type DialogLayout = "default" | "checkout" | "inventory";
 export type InventoryPresentation = { restoreFocusFallback: () => HTMLElement | null; frameRef?: RefCallback<HTMLDivElement>; ready?: boolean; closing?: boolean };
+export type HistoryPresentation = {
+  frameRef?: RefCallback<HTMLDivElement>; ready?: boolean; closing?: boolean;
+  restoreFocusFallback: () => HTMLElement | null;
+  focusFirstControl?: boolean; stage: string;
+};
 export type DestructivePurpose = Exclude<DialogPurpose, "routine">;
 export type CheckoutPresentation = { frameRef: RefCallback<HTMLDivElement>; ready: boolean; closing?: boolean; onBack?: () => void; restoreFocusFallback?: () => HTMLElement | null };
 export type ConfirmationDialogProps = {
@@ -25,6 +30,7 @@ export type ConfirmationDialogProps = {
   catalogCategoryPresentation?: InventoryPresentation;
   catalogCategoryArchivePresentation?: InventoryPresentation;
   catalogLocationPresentation?: InventoryPresentation & { isSourceCurrent: () => boolean };
+  historyPresentation?: HistoryPresentation;
   cancelLabel?: ReactNode;
   dialogId?: string;
   dialogDataAttribute?: "catalog-edit-dialog" | "catalog-category-archive-dialog" | "location-lifecycle-dialog";
@@ -72,6 +78,7 @@ type DialogFrameProps = {
   dialogDataAttribute?: ConfirmationDialogProps["dialogDataAttribute"];
   purpose?: DialogPurpose;
   layout?: DialogLayout;
+  historyPresentation?: HistoryPresentation;
   kind: "confirmation" | "form" | "persisted-sale";
   focusFirstControl?: boolean;
   checkoutPresentation?: CheckoutPresentation;
@@ -87,7 +94,7 @@ type DialogFrameProps = {
 
 function DialogFrame({
   open, title, description, pending, initialFocusRef, invokerRef: externalInvokerRef, dialogId, dialogDataAttribute,
-  purpose, layout = "default", kind, focusFirstControl = false, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, onCancel, children, actions,
+  purpose, layout = "default", kind, focusFirstControl = false, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, historyPresentation, onCancel, children, actions,
 }: DialogFrameProps) {
   const generated = useId().replace(/:/g, "");
   const titleId = `${kind === "confirmation" ? "confirmation" : "form"}-title-${generated}`;
@@ -98,7 +105,8 @@ function DialogFrame({
   const category = purpose === "routine" && dialogDataAttribute === "catalog-edit-dialog" ? catalogCategoryPresentation : undefined;
   const archive = kind === "confirmation" && purpose === "cancellation" && dialogDataAttribute === "catalog-category-archive-dialog" ? catalogCategoryArchivePresentation : undefined;
   const location = kind === "confirmation" && purpose === "cancellation" && dialogDataAttribute === "location-lifecycle-dialog" ? catalogLocationPresentation : undefined;
-  const presentation = location ?? archive ?? product ?? category ?? (purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog" ? checkoutPresentation : inventory);
+  const history = historyPresentation;
+  const presentation = history ?? location ?? archive ?? product ?? category ?? (purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog" ? checkoutPresentation : inventory);
   const ready = presentation?.ready ?? true;
   const readyRef = useRef(ready);
   readyRef.current = ready;
@@ -125,7 +133,7 @@ function DialogFrame({
     else if (deferredFocus.current || !isEligible(active, container)) {
       deferredFocus.current = false;
       const explicit = initialFocusRef?.current ?? null;
-      const preferred = focusFirstControl
+      const preferred = (history?.focusFirstControl ?? focusFirstControl)
         ? [...container.querySelectorAll<HTMLElement>("form input, form select, form textarea, form button")]
             .find((node) => isEligible(node, container)) ?? null
         : null;
@@ -201,7 +209,7 @@ function DialogFrame({
           // Checkout may discard its cart: a disabled source remains geometry, not focus.
           const root = owner.documentElement;
           const fallback = isEligible(invoker, root) ? invoker : presentation.restoreFocusFallback();
-          if (isEligible(fallback, root)) restore(fallback);
+          if (isEligible(fallback, root, !!history)) restore(fallback);
         }
       }
       dialogs.delete(container);
@@ -216,12 +224,15 @@ function DialogFrame({
   if (!open) return null;
 
   return createElement("div", { "data-ui-dialog-backdrop": true,
-    onMouseDown: inventory ? (event) => { if (event.target === event.currentTarget && !pendingRef.current) onCancelRef.current(); } : undefined,
+    onMouseDown: inventory || history ? (event) => { if (event.target === event.currentTarget && !pendingRef.current) onCancelRef.current(); } : undefined,
   },
     createElement("div", {
-      id: dialogId ?? (purpose === "routine" ? "checkout-dialog" : undefined),
+      id: dialogId ?? (purpose === "routine" && !history ? "checkout-dialog" : undefined),
       ref: attachFrame, role: "dialog", tabIndex: -1,
-      "data-ui-checkout-opening": !inventory && !product && !category && !archive && !location && !ready || undefined,
+      "data-ui-history-correction-dialog": !!history || undefined,
+      "data-ui-history-correction-stage": history?.stage,
+      "data-ui-history-correction-opening": !!history && !ready || undefined,
+      "data-ui-checkout-opening": !history && !inventory && !product && !category && !archive && !location && !ready || undefined,
       "data-ui-location-lifecycle-opening": !!location && !ready || undefined,
       "data-ui-location-lifecycle-dialog": kind === "confirmation" && purpose === "cancellation" && dialogDataAttribute === "location-lifecycle-dialog" || undefined,
       "data-ui-catalog-category-archive-opening": !!archive && !ready || undefined,
@@ -229,14 +240,14 @@ function DialogFrame({
       "data-ui-catalog-category-opening": !!category && !ready || undefined,
       "data-ui-catalog-product-dialog": !!product || undefined,
       "data-ui-catalog-product-opening": !!product && !ready || undefined,
-      "data-ui-checkout-closing": !inventory && presentation?.closing || undefined,
+      "data-ui-checkout-closing": !history && !inventory && presentation?.closing || undefined,
       "data-ui-inventory-opening": !!inventory && !ready || undefined,
       "data-ui-inventory-closing": inventory?.closing || undefined,
       "aria-modal": "true", "aria-labelledby": titleId, "aria-describedby": descriptionId,
       "aria-busy": pending || undefined,
       "data-ui-confirmation-dialog": kind === "confirmation" && purpose !== "routine" || undefined,
       "data-ui-form-dialog": kind === "form" || undefined,
-      "data-ui-checkout-dialog": purpose === "routine" && layout !== "inventory" && dialogDataAttribute !== "catalog-edit-dialog" || undefined,
+      "data-ui-checkout-dialog": !history && purpose === "routine" && layout !== "inventory" && dialogDataAttribute !== "catalog-edit-dialog" || undefined,
       "data-ui-inventory-dialog": !!inventory || undefined,
       "data-ui-catalog-edit-dialog": dialogDataAttribute === "catalog-edit-dialog" || undefined,
       "data-ui-catalog-category-archive-dialog": kind === "confirmation" && purpose === "cancellation" && dialogDataAttribute === "catalog-category-archive-dialog" || undefined,
@@ -248,13 +259,13 @@ function DialogFrame({
       kind === "persisted-sale" ? createElement("span", { className: "sale-summary-success-icon", "aria-hidden": true, "data-ui-summary-success-icon": true }, "✓") : null,
       title),
     createElement("p", { id: descriptionId }, description),
-    product ? createElement("div", { "data-ui-catalog-product-body": true }, children) : category ? createElement("div", { "data-ui-catalog-category-body": true }, children) : inventory ? createElement("div", { "data-ui-inventory-dialog-body": true }, children) : children,
+    history ? createElement("div", { "data-ui-history-correction-body": true }, children) : product ? createElement("div", { "data-ui-catalog-product-body": true }, children) : category ? createElement("div", { "data-ui-catalog-category-body": true }, children) : inventory ? createElement("div", { "data-ui-inventory-dialog-body": true }, children) : children,
     actions));
 }
 
 export function ConfirmationDialog({
   open, purpose, layout = "default", title, description, confirmLabel, confirmDisabled = false, pending = false,
-  pendingLabel = "Procesando…", initialFocusRef, invokerRef, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, cancelLabel = "Volver", dialogId, dialogDataAttribute, onCancel, onConfirm, children,
+  pendingLabel = "Procesando…", initialFocusRef, invokerRef, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, historyPresentation, cancelLabel = "Volver", dialogId, dialogDataAttribute, onCancel, onConfirm, children,
 }: ConfirmationDialogProps) {
   if (typeof title !== "string" || !title.trim()) throw new TypeError("ConfirmationDialog requires a nonblank title");
   if (!(typeof description === "string" && description.trim()) && !isValidElement(description)) {
@@ -264,7 +275,7 @@ export function ConfirmationDialog({
     ? checkoutPresentation?.onBack ?? onCancel : onCancel;
   const inventoryClosing = purpose === "routine" && layout === "inventory" && dialogDataAttribute !== "catalog-edit-dialog" && inventoryPresentation?.closing;
   return createElement(DialogFrame, {
-    open, purpose, layout, title, description, pending, initialFocusRef, invokerRef, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, dialogId, dialogDataAttribute,
+    open, purpose, layout, title, description, pending, initialFocusRef, invokerRef, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, historyPresentation, dialogId, dialogDataAttribute,
     kind: "confirmation", onCancel, children,
     actions: createElement("div", { "data-ui-dialog-actions": true },
       createElement(Action, { variant: "secondary", disabled: pending || inventoryClosing, onClick: () => { if (!pending && !inventoryClosing) onBack(); } }, cancelLabel),
@@ -291,19 +302,20 @@ export type FormDialogProps = {
   initialFocusRef?: RefObject<HTMLElement>;
   invokerRef?: RefObject<HTMLElement>;
   closeLabel?: ReactNode;
+  historyPresentation?: HistoryPresentation;
   onCancel: () => void;
   children?: ReactNode;
 };
 
 export function FormDialog({
-  open, title, description, pending = false, initialFocusRef, invokerRef, closeLabel = "Cerrar", onCancel, children,
+  open, title, description, pending = false, initialFocusRef, invokerRef, closeLabel = "Cerrar", historyPresentation, onCancel, children,
 }: FormDialogProps) {
   if (typeof title !== "string" || !title.trim()) throw new TypeError("FormDialog requires a nonblank title");
   if (!(typeof description === "string" && description.trim()) && !isValidElement(description)) {
     throw new TypeError("FormDialog requires a valid description");
   }
   return createElement(DialogFrame, {
-    open, title, description, pending, initialFocusRef, invokerRef, kind: "form", focusFirstControl: true, onCancel, children,
+    open, title, description, pending, initialFocusRef, invokerRef, historyPresentation, kind: "form", focusFirstControl: true, onCancel, children,
     actions: createElement("div", { "data-ui-dialog-actions": true },
       createElement(Action, { variant: "secondary", disabled: pending, onClick: () => { if (!pending) onCancel(); } }, closeLabel)),
   });

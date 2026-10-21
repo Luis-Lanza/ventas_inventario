@@ -353,6 +353,23 @@ test("content seam rejects blank titles and absent or blank descriptions", () =>
   }
 });
 
+test("omitting the History seam preserves both default families' focus, markers and backdrop policy", () => {
+  for (const family of [dialog, formDialog]) {
+    let cancels = 0;
+    const view = render(family({ historyPresentation: undefined, onCancel: () => { cancels++; } }));
+    const frame = screen.getByRole("dialog");
+    assert.equal(frame.hasAttribute("data-ui-history-correction-dialog"), false);
+    assert.equal(frame.hasAttribute("data-ui-history-correction-opening"), false);
+    assert.equal(frame.querySelector("[data-ui-history-correction-body]"), null);
+    assert.ok(frame.contains(document.activeElement));
+    fireEvent.mouseDown(frame.parentElement!);
+    assert.equal(cancels, 0);
+    fireEvent.keyDown(frame, { key: "Escape" });
+    assert.equal(cancels, 1);
+    view.unmount();
+  }
+});
+
 test("a disconnected invoker is never restored", async () => {
   const invoker = opener();
   const view = render(dialog());
