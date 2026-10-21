@@ -71,6 +71,48 @@ const deferred = <Value,>() => {
   return { promise, resolve };
 };
 
+test("detail page exposes the approved card headings and keyboard back navigation without a modal", async () => {
+  mockIPC((command) => {
+    if (command === "list_sales_history_command") return { kind: "success", sales: [summary(184)], has_more: false };
+    if (command === "sale_history_detail_command") return { kind: "success", detail: detail(184) };
+    throw new Error(command);
+  });
+  render(createElement(SalesHistoryScreen));
+  const user = userEvent.setup({ document });
+  await user.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
+  assert.ok(screen.getByText("Moneda: Bs"));
+  assert.ok(screen.getByRole("heading", { name: "Artículos originales", level: 2 }));
+  assert.ok(screen.getByRole("heading", { name: "Resumen de pago", level: 2 }));
+  assert.ok(screen.getByText("No hay correcciones de inventario registradas."));
+  assert.equal(screen.queryByRole("dialog"), null);
+  const table = screen.getByRole("table", { name: "Artículos originales" });
+  assert.match(table.textContent ?? "", /Filter 184.*FLT.*1.*Bs 25,00.*Bs 25,00/s);
+  const cancellation = screen.getByRole("button", { name: "Iniciar cancelación de venta" });
+  const returnAction = screen.getByRole("button", { name: "Iniciar devolución de artículos" });
+  assert.equal(cancellation.getAttribute("data-ui-history-detail-action"), "cancel");
+  assert.equal(returnAction.hasAttribute("data-ui-history-detail-action"), false);
+  const back = screen.getByRole("button", { name: "Volver al historial" });
+  back.focus();
+  await user.tab();
+  assert.equal(document.activeElement, screen.getByRole("button", { name: "Iniciar devolución de artículos" }));
+  await user.tab();
+  assert.equal(document.activeElement, screen.getByRole("button", { name: "Iniciar cancelación de venta" }));
+  back.focus();
+  await user.keyboard("{Enter}");
+  assert.ok(screen.getByRole("heading", { name: "Historial de ventas" }));
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  const rules = css.slice(css.indexOf("/* History detail: Velay"));
+  assert.ok(rules.startsWith("/* History detail: Velay"));
+  assert.doesNotMatch(rules, /data-ui-history-list|data-ui-form-dialog|data-ui-history-return|data-ui-history-cancellation/);
+  assert.match(rules, /data-ui-history-detail-identity-card[^}]*border-radius: 28px/);
+  assert.match(rules, /data-ui-history-detail-payment-card[^}]*background: var\(--color-surface\)/);
+  assert.match(rules, /max-width: 960px/);
+  assert.match(css, /--color-danger:\s*var\(--palette-garnet-500\)/);
+  assert.match(rules, /button\[data-ui-history-detail-action="cancel"\]:not\(:disabled\)[^{]*\{[^}]*color: var\(--color-danger\);[^}]*border-color: var\(--color-danger\)/);
+  assert.match(rules, /button:not\(:disabled\)\s*\{[^}]*background: transparent;[^}]*color: var\(--color-action\)/);
+  assert.doesNotMatch(rules, /button:last-child|--color-error/);
+});
+
 test("accepted return notifies before failed refresh and cannot be submitted twice", async () => {
  let detailCalls = 0; let mutations = 0;
  const refresh = deferred<unknown>();

@@ -445,6 +445,7 @@ export function HistoryScreen({
     },
       createElement("div", { "data-ui-history-detail-header": true },
         createElement("h1", { id: "sales-history-detail-heading" }, "Detalle de venta"),
+        createElement("span", { "data-ui-history-detail-currency": true }, "Moneda: Bs"),
         createElement(Action, { variant: "secondary", onClick: onBack }, "Volver al historial"),
       ),
       outcomeNotice ? createElement(Feedback, { kind: "success", children: outcomeNotice }) : null,
@@ -457,19 +458,23 @@ export function HistoryScreen({
             createElement(
               "section",
               { "aria-labelledby": "original-sale-heading", "data-ui-history-original": true },
+              createElement("div", { "data-ui-history-detail-identity-card": true },
               createElement("h2", { id: "original-sale-heading" }, "Datos originales de la venta"),
               createElement("dl", { "data-ui-history-identity": true },
                 createElement("dt", null, "Venta"), createElement("dd", null, original.identity),
                 createElement("dt", null, "Fecha y hora"), createElement("dd", { "data-ui-type": "numeric" }, original.date),
                 createElement("dt", null, "Estado"), createElement("dd", null,
-                  createElement(Badge, { kind: state.detail.status === "confirmed" ? "confirmed" : "cancelled", text: original.status }))),
+                  createElement(Badge, { kind: state.detail.status === "confirmed" ? "confirmed" : "cancelled", text: original.status })))),
               createElement("div", { "data-ui-history-summary-layout": true },
                 createElement("section", { "aria-label": "Artículos originales", "data-ui-history-articles": true },
+                  createElement("h2", null, "Artículos originales"),
                   createElement(AlignedData, { caption: "Artículos originales", columns: originalItemColumns, rows: original.lines })),
                 createElement("aside", { "aria-label": "Resumen de pago", "data-ui-history-rail": true },
+                  createElement("h2", null, "Resumen de pago"),
+                  createElement("div", { "data-ui-history-detail-payment-card": true },
                   createElement("section", { "aria-label": "Pagos originales", "data-ui-history-payments": true },
                     createElement(AlignedData, { caption: "Pagos originales", columns: originalPaymentColumns, rows: original.payments })),
-                  createElement("p", { "data-ui-history-total": true }, createElement("span", null, "Total original"), createElement("strong", null, original.total)))),
+                  createElement("p", { "data-ui-history-total": true }, createElement("span", null, "Total original"), createElement("strong", null, original.total))))),
             ),
             createElement(CorrectionHistory, { detail: state.detail }),
             createElement(
@@ -487,6 +492,7 @@ export function HistoryScreen({
                     {
                       ref: correctionInvokerRef,
                       disabled: correctionRefreshRequired || state.cancellation_intent !== null,
+                      "data-ui-history-detail-action": "cancel",
                       type: "button",
                       onClick: (event: MouseEvent<HTMLButtonElement>) => {
                         correctionInvokerRef.current = event.currentTarget;
