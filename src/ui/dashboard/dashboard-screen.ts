@@ -8,8 +8,8 @@ import { createDashboardFlow, initialDashboardState, type DashboardState } from 
 const formatBs = (centavos: number) => `Bs ${Math.floor(centavos / 100)},${String(centavos % 100).padStart(2, "0")}`;
 const formatSignedBs = (centavos: number) => `${centavos < 0 ? "-" : ""}${formatBs(Math.abs(centavos))}`;
 const metricFacts = (metrics: DashboardMetrics) => [
-  ["Ventas efectivas", String(metrics.effective_sale_count)],
   ["Total efectivo", formatBs(metrics.effective_total_centavos)],
+  ["Ventas efectivas", String(metrics.effective_sale_count)],
   ["Unidades netas", String(metrics.net_units_out)],
   ["Ventas canceladas", String(metrics.cancelled_sale_count)],
   [metrics.realized_gross_profit.missing_cost_line_count > 0 ? "Ganancia bruta parcial" : "Ganancia bruta", metrics.realized_gross_profit],
@@ -24,10 +24,12 @@ function MetricsPanel({ label, metrics }: { label: string; metrics: DashboardMet
     createElement("dl", { "data-ui-dashboard-metrics": true },
       ...metricFacts(metrics).map(([factLabel, value]) => createElement("div", { key: factLabel, "data-ui-dashboard-metric": true },
         createElement("dt", null, factLabel),
-        createElement("dd", null, typeof value === "string" ? value : formatSignedBs(value.amount_centavos),
-          typeof value !== "string" && value.missing_cost_line_count > 0
-            ? createElement("span", { "data-ui-dashboard-profit-warning": true }, `Faltan costos en ${value.missing_cost_line_count} líneas de venta.`)
-            : null)))));
+        createElement("dd", null, typeof value === "string" ? value : formatSignedBs(value.amount_centavos))))),
+    metrics.realized_gross_profit.missing_cost_line_count > 0
+      ? createElement("p", { "data-ui-dashboard-profit-warning": true },
+          createElement("span", { "aria-hidden": true }, "△ "),
+          `Faltan costos en ${metrics.realized_gross_profit.missing_cost_line_count} líneas de venta.`)
+      : null);
 }
 
 function QuietSectionMessage({ kind, children }: { kind: "loading" | "error" | "empty"; children?: ReactNode }) {
@@ -87,15 +89,16 @@ export function DashboardScreen({ onOpenInventoryAlerts }: { onOpenInventoryAler
   return createElement("main", { "aria-labelledby": "dashboard-heading", "data-ui-dashboard": true, "aria-busy": state.status === "loading" || undefined },
     createElement("header", { "data-ui-dashboard-header": true },
       createElement("h1", { id: "dashboard-heading" }, "Métricas"),
-      createElement("p", null, "Resumen operativo de ventas e inventario.")),
+      createElement("p", null, "Resumen operativo de ventas e inventario."),
+      createElement("p", { "data-ui-dashboard-currency": true }, "Moneda: Bs")),
     state.status === "loading" ? createElement(Feedback, { kind: "loading" }, "Cargando dashboard…") : null,
     state.status === "error" ? createElement(Feedback, { kind: "error" }, createElement("span", null, "No se pudo cargar el dashboard. ", createElement(Action, { variant: "tertiary", onClick: load }, "Reintentar"))) : null,
     createElement("div", { "data-ui-dashboard-periods": true }, ...periodPanels),
     createElement("div", { "data-ui-dashboard-stock-alerts": true },
       createElement(Panel, { label: "Alertas de stock" },
+        state.status === "ready" ? createElement(Action, { variant: "secondary", onClick: onOpenInventoryAlerts }, "Ver en Inventario") : null,
         createElement(SectionMessage, { status: state.status, hasItems: alerts.length > 0, loadingMessage: "Cargando alertas de stock…", errorMessage: "No se pudieron cargar las alertas de stock.", emptyMessage: "No hay alertas de stock." },
-          createElement(AlignedData, { caption: "Productos que requieren atención", columns: stockColumns, rows: alerts })),
-        state.status === "ready" ? createElement(Action, { variant: "secondary", onClick: onOpenInventoryAlerts }, "Ver en Inventario") : null)),
+          createElement(AlignedData, { caption: "Productos que requieren atención", columns: stockColumns, rows: alerts })))),
     createElement("div", { "data-ui-dashboard-supporting": true },
       createElement("div", { "data-ui-dashboard-top-products": true },
         createElement(Panel, { label: "Productos más vendidos · Este mes" },

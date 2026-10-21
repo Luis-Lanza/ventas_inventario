@@ -17,12 +17,16 @@ test("defines the approved desktop composition and compact labeled-record CSS co
   assert.match(dashboardStyles, /@media\s*\(max-width:\s*960px\)[\s\S]*\[data-ui-dashboard\]\s+\[data-ui-aligned-data\]\s+td::before\s*\{[^}]*content:\s*attr\(data-label\)/);
   assert.match(dashboardStyles, /@media\s*\(max-width:\s*960px\)[\s\S]*\[data-ui-dashboard-stock-alerts\]\s+\[data-ui-action\]\s*\{[^}]*inline-size:\s*100%[^}]*min-block-size:\s*var\(--size-control-default\)/);
   assert.doesNotMatch(dashboardStyles, /\[data-ui-dashboard(?:-[^\]]+)?\][^{]*\{[^}]*overflow-y\s*:/s);
+  assert.match(dashboardStyles, /\[data-ui-dashboard-metric\]:last-child\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
+  assert.match(dashboardStyles, /\[data-ui-dashboard\]\s+\[data-ui-panel\]\s*\{[^}]*border-radius:\s*28px/s);
+  assert.doesNotMatch(dashboardStyles, /\[data-ui-dashboard-stock-alerts\][^{]*\{[^}]*border-inline-start:/s);
+  assert.match(dashboardStyles, /\[data-ui-dashboard\]\s+\[data-ui-panel\]\s*>\s*\[data-ui-data-scroll\]\s*\{[^}]*margin-inline:\s*calc\(/s);
 });
 
 test("renders the approved hierarchy and complete report facts before opening stock alerts", async () => {
   mockIPC((command) => {
     assert.equal(command, "dashboard_command");
-    return { kind: "success", report: { today: { metrics: { effective_sale_count: 1, effective_total_centavos: 2500, net_units_out: 1, cancelled_sale_count: 0, realized_gross_profit: { amount_centavos: 1234, missing_cost_line_count: 0 } } }, month: { metrics: { effective_sale_count: 2, effective_total_centavos: 5000, net_units_out: 2, cancelled_sale_count: 1, realized_gross_profit: { amount_centavos: -500, missing_cost_line_count: 3 } } }, top_products: [{ product_id: 1, sku: "FLT-001", product_name: "Filtro", net_units_out: 2 }], payment_distribution: [{ method: "cash", amount_applied_centavos: 5000 }], recent_sales: [{ sale_id: 2, confirmed_at: "2024-03-10 12:00:00", status: "confirmed", total_centavos: 2500 }], stock_alerts: [{ product_id: 3, sku: "BEL-001", product_name: "Correa", quantity: 0, classification: "out_of_stock" }] } };
+    return { kind: "success", report: { today: { metrics: { effective_sale_count: 1, effective_total_centavos: 2500, net_units_out: 1, cancelled_sale_count: 0, realized_gross_profit: { amount_centavos: 1234, missing_cost_line_count: 0 } } }, month: { metrics: { effective_sale_count: 2, effective_total_centavos: 5000, net_units_out: 2, cancelled_sale_count: 1, realized_gross_profit: { amount_centavos: -500, missing_cost_line_count: 3 } } }, top_products: [{ product_id: 1, sku: "FLT-001", product_name: "Filtro", net_units_out: 2 }], payment_distribution: [{ method: "cash", amount_applied_centavos: 5000 }], recent_sales: [{ sale_id: 2, confirmed_at: "2024-03-10 12:00:00", status: "cancelled", total_centavos: 2500 }], stock_alerts: [{ product_id: 3, sku: "BEL-001", product_name: "Correa", quantity: 0, classification: "out_of_stock" }] } };
   });
   const user = userEvent.setup({ document });
   let opened = false;
@@ -31,6 +35,8 @@ test("renders the approved hierarchy and complete report facts before opening st
   const main = await screen.findByRole("main");
   assert.equal(within(main).getAllByRole("heading", { level: 1, name: "Métricas" }).length, 1);
   assert.ok(within(main).getByText("Resumen operativo de ventas e inventario."));
+  assert.ok(within(main).getByText("Moneda: Bs"));
+  assert.equal(within(main).queryByText("Margen estimado"), null);
   await waitFor(() => assert.equal(main.querySelectorAll("[data-ui-dashboard-metric]").length, 10));
 
   const today = within(main).getByRole("region", { name: "Hoy" });
@@ -40,11 +46,18 @@ test("renders the approved hierarchy and complete report facts before opening st
   assert.equal(within(today).queryByText(/Faltan costos en/), null);
   const month = within(main).getByRole("region", { name: "Este mes" });
   assert.equal(within(month).getByText("Ventas canceladas").nextElementSibling?.textContent, "1");
-  assert.equal(within(month).getByText("Ganancia bruta parcial").nextElementSibling?.textContent, "-Bs 5,00Faltan costos en 3 líneas de venta.");
-  assert.equal(within(month).getByText("Faltan costos en 3 líneas de venta.").tagName, "SPAN");
-  assert.deepEqual([...month.querySelectorAll("dt")].map((item) => item.textContent), ["Ventas efectivas", "Total efectivo", "Unidades netas", "Ventas canceladas", "Ganancia bruta parcial"]);
-  assert.equal(within(month).getByText("Faltan costos en 3 líneas de venta.").parentElement?.tagName, "DD");
-  assert.deepEqual([...today.querySelectorAll("dt")].map((item) => item.textContent), ["Ventas efectivas", "Total efectivo", "Unidades netas", "Ventas canceladas", "Ganancia bruta"]);
+  assert.equal(within(month).getByText("Ganancia bruta parcial").nextElementSibling?.textContent, "-Bs 5,00");
+  assert.equal(within(month).getByText("Faltan costos en 3 líneas de venta.").tagName, "P");
+  assert.deepEqual([...month.querySelectorAll("dt")].map((item) => item.textContent), ["Total efectivo", "Ventas efectivas", "Unidades netas", "Ventas canceladas", "Ganancia bruta parcial"]);
+  const warning = within(month).getByText("Faltan costos en 3 líneas de venta.");
+  assert.equal(warning.closest("dl"), null);
+  assert.ok(month.querySelector("dl")!.compareDocumentPosition(warning) & 4);
+  assert.equal(within(today).getByText("Unidades netas").nextElementSibling?.textContent, "1");
+  assert.equal(within(today).getByText("Ventas canceladas").nextElementSibling?.textContent, "0");
+  assert.equal(within(month).getByText("Total efectivo").nextElementSibling?.textContent, "Bs 50,00");
+  assert.equal(within(month).getByText("Ventas efectivas").nextElementSibling?.textContent, "2");
+  assert.equal(within(month).getByText("Unidades netas").nextElementSibling?.textContent, "2");
+  assert.deepEqual([...today.querySelectorAll("dt")].map((item) => item.textContent), ["Total efectivo", "Ventas efectivas", "Unidades netas", "Ventas canceladas", "Ganancia bruta"]);
 
   const stock = within(main).getByRole("region", { name: "Alertas de stock" });
   const top = within(main).getByRole("region", { name: "Productos más vendidos · Este mes" });
@@ -69,10 +82,14 @@ test("renders the approved hierarchy and complete report facts before opening st
   assert.ok(within(payments).getByRole("cell", { name: "Bs 50,00" }));
   assert.ok(within(recent).getByRole("cell", { name: "2" }));
   assert.ok(within(recent).getByRole("cell", { name: "2024-03-10 12:00:00" }));
-  assert.ok(within(recent).getByText("Confirmada"));
+  assert.ok(within(recent).getByText("Cancelada"));
   assert.ok(within(recent).getByRole("cell", { name: "Bs 25,00" }));
 
   const button = within(stock).getByRole("button", { name: "Ver en Inventario" });
+  assert.ok(button.compareDocumentPosition(within(stock).getByRole("table", { name: "Productos que requieren atención" })) & 4);
+  assert.ok(within(top).getByRole("table", { name: "Productos por unidades netas" }));
+  assert.ok(within(payments).getByRole("table", { name: "Importes aplicados en Bs" }));
+  assert.ok(within(recent).getByRole("table", { name: "Últimas ventas" }));
   await user.click(button);
   assert.equal(opened, true);
 });
@@ -83,8 +100,10 @@ test("renders signed realized gross-profit losses as signed money in both period
   await screen.findAllByText("Ganancia bruta parcial");
   const today = screen.getByRole("region", { name: "Hoy" });
   const month = screen.getByRole("region", { name: "Este mes" });
-  assert.equal(within(today).getByText("Ganancia bruta parcial").nextElementSibling?.textContent, "-Bs 0,05Faltan costos en 2 líneas de venta.");
-  assert.equal(within(month).getByText("Ganancia bruta parcial").nextElementSibling?.textContent, "-Bs 12,34Faltan costos en 1 líneas de venta.");
+  assert.equal(within(today).getByText("Ganancia bruta parcial").nextElementSibling?.textContent, "-Bs 0,05");
+  assert.equal(within(month).getByText("Ganancia bruta parcial").nextElementSibling?.textContent, "-Bs 12,34");
+  assert.ok(within(today).getByText("Faltan costos en 2 líneas de venta."));
+  assert.ok(within(month).getByText("Faltan costos en 1 líneas de venta."));
 });
 
 test("keeps dashboard sections loading instead of presenting loading as empty", async () => {
