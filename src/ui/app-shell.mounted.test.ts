@@ -644,7 +644,7 @@ test("production CSS declares the desktop and compact shell width contracts", as
   assert.match(source, /\[data-ui-inventory-cue\]\s*\{[^}]*color:\s*var\(--color-danger\)/s);
   assert.match(source, /\[data-ui-shell-navigation\] button\[aria-current="page"\] \[data-ui-inventory-cue\]\s*\{[^}]*color:\s*inherit/s);
   assert.match(source, /@media \(max-width: 960px\)[\s\S]*--size-shell-sidebar:\s*176px/);
-  assert.match(source, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0, 1\.85fr\) minmax\(260px,\s*1fr\)/);
+  assert.match(source, /\[data-ui-inventory-layout\], \[data-ui-sale-layout\] \{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(260px,\s*320px\)/);
   assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(source, /@container catalog-browse \(min-width: 68rem\) \{\s*\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(12rem,\s*2fr\) minmax\(10rem,\s*1\.2fr\) minmax\(8rem,\s*1fr\) auto auto/);
   assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-catalog-toolbar-item="views"\] \{[^}]*display:\s*flex/);
@@ -655,7 +655,12 @@ test("production CSS declares the desktop and compact shell width contracts", as
   assert.match(source, /data-ui-shell-content[^}]*overflow:\s*auto/);
   assert.match(source, /data-ui-product-browser-list[^}]*overflow-y:\s*auto/);
   assert.match(source, /(?:^|\n)\[data-ui-sale-search\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s);
-  assert.match(source, /@container sales-browse \(min-width:\s*40rem\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-sale-search\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1\.6fr\) minmax\(0,\s*1fr\) auto/s);
+  // Sales uses the shared wrapping toolbar, not a breakpoint-specific search grid.
+  assert.match(source, /\[data-ui-product-browser\] \[data-ui-browser-toolbar="wrap"\] \{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;[^}]*align-items:\s*end/);
+  assert.match(source, /\[data-ui-product-browser\] \[data-ui-browser-toolbar="wrap"\] > \[data-ui-field\] \{[^}]*flex:\s*1 1 10rem;[^}]*min-inline-size:\s*0;[^}]*max-inline-size:\s*100%/);
+  assert.match(source, /\[data-ui-product-browser\] \[data-ui-browser-toolbar="wrap"\] > \[data-ui-field\]:first-child \{[^}]*flex:\s*2 1 14rem/);
+  assert.match(source, /\[data-ui-product-browser\] \[data-ui-browser-toolbar\] :is\(input, select\) \{[^}]*inline-size:\s*100%;[^}]*min-inline-size:\s*0;[^}]*max-inline-size:\s*100%/);
+  assert.match(source, /\[data-ui-product-browser\] \[data-ui-browser-view-toggle\] > button \{[^}]*flex:\s*1 1 auto;[^}]*min-inline-size:\s*0;[^}]*max-inline-size:\s*100%;[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere/);
   assert.match(source, /(?:^|\n)\[data-ui-sale-list\] > li\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s);
   assert.match(source, /\[data-ui-product-browser="sales"\] \[data-ui-sale-list\] > li\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s);
   assert.match(source, /data-ui-product-browser-pages[^}]*flex:\s*0 0 auto/);
