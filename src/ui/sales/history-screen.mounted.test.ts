@@ -361,6 +361,12 @@ test("renders the bounded Spanish history list as scannable semantic data", asyn
   assert.ok(screen.getByLabelText("Hasta"));
   const table = await screen.findByRole("table", { name: "Ventas del período" });
   assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
+  assert.ok(within(table).getByRole("heading", { level: 2, name: "Ventas del período" }));
+  assert.equal(table.closest("[data-ui-panel]"), null);
+  const rows = within(table).getAllByRole("row").slice(1);
+  assert.deepEqual(rows.map(row => within(row).getAllByRole("cell").map(cell => cell.getAttribute("data-label"))),
+    Array.from({ length: 2 }, () => ["Venta", "Fecha y hora", "Estado", "Artículos", "Pagos", "Total", "Acción"]));
+  assert.equal(within(rows[1]).getByText("Bs 25,00").textContent, "Bs 25,00");
   assert.equal(screen.getAllByRole("button", { name: "Ver detalle" }).length, 2);
   for (const heading of ["Venta", "Fecha y hora", "Estado", "Artículos", "Pagos", "Total", "Acción"])
     assert.ok(screen.getByRole("columnheader", { name: heading }));
@@ -375,6 +381,27 @@ test("renders the bounded Spanish history list as scannable semantic data", asyn
 
   await user.click(screen.getAllByRole("button", { name: "Ver detalle" })[0]);
   assert.ok(await screen.findByText("Venta #71"));
+  assert.equal(document.querySelector("[data-ui-history-list]"), null);
+  assert.equal(screen.queryByRole("heading", { name: "Ventas del período" }), null);
+});
+
+test("history list owns separated warm rows, pill controls and responsive records only", async () => {
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  const rules = css.slice(css.indexOf("/* History listing: Velay"), css.indexOf("[data-ui-history-detail] {"));
+  assert.ok(rules.length > 0);
+  assert.match(rules, /border-collapse: separate; border-spacing: 0 var\(--space-3\)/);
+  assert.match(rules, /tbody td[^}]*background: var\(--color-surface\)/);
+  assert.match(rules, /td:first-child[^}]*border-radius: 20px 0 0 20px/);
+  assert.match(rules, /td:last-child[^}]*border-radius: 0 20px 20px 0/);
+  assert.match(rules, /data-ui-badge="confirmed"[^}]*background: #e3efdf/);
+  assert.match(rules, /input\[type="date"\][^}]*border-radius: 999px/);
+  assert.match(rules, /data-ui-action\][^}]*border-radius: 999px/);
+  assert.match(rules, /data-ui-action="secondary"[^}]*border-color: var\(--color-border\)/);
+  assert.match(rules, /nth-child\(6\)[^}]*inline-size: 18%/);
+  assert.match(rules, /nth-child\(7\)[^}]*inline-size: 16%/);
+  assert.match(css, /max-width: 960px[^]*data-ui-history-list\] \[data-ui-aligned-data\] tbody tr[^}]*border-radius: 20px/);
+  assert.match(css, /data-ui-history-list\] \[data-ui-aligned-data\] tbody td[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1.5fr\)/);
+  assert.match(css, /data-ui-history-list\] \[data-ui-aligned-data\] tbody td::before[^}]*content: attr\(data-label\)/);
 });
 
 test("renders persisted original detail as Spanish read-only semantic facts", async () => {

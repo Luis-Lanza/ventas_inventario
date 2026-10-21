@@ -534,7 +534,7 @@ export function HistoryScreen({
       createElement(Action, { variant: "secondary", onClick: () => onReload(from, to) }, "Reintentar historial"),
     ) : null,
     state.status === "ready" ? createElement(AlignedData, {
-      caption: "Ventas del período",
+      caption: createElement("h2", null, "Ventas del período"),
       columns: [
         { label: "Venta", align: "start", kind: "text" },
         { label: "Fecha y hora", align: "start", kind: "text" },
