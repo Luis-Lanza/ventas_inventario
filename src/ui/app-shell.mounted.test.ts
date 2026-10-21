@@ -342,7 +342,7 @@ test("AppShell exposes identity and the dashboard-first Spanish navigation", asy
 
   const inventory = within(navigation).getByRole("button", { name: "Inventario" });
   assert.equal(inventory.textContent, "Inventario");
-  assert.equal(inventory.children.length, 1);
+  assert.equal(inventory.children.length, 2);
   assert.equal(inventory.getAttribute("aria-describedby"), null);
   assert.doesNotMatch(inventory.outerHTML, /badge|count|status|alert|warning|stock|dot/i);
 });
@@ -629,6 +629,43 @@ test("unlicensed startup defaults to activation and recovery exposes only safe n
   assert.equal(restores, 0);
 });
 
+test("sidebar presents decorative brand and outlined icons with keyboard-reachable wrapping navigation", async () => {
+  const view = render(createElement(AppShell, { screen: SCREEN.DASHBOARD, onNavigate: () => undefined }));
+  const brand = view.container.querySelector('[data-ui-shell-brand-mark]');
+  assert.ok(brand);
+  assert.equal(brand.getAttribute("aria-hidden"), "true");
+  const buttons = within(screen.getByRole("navigation")).getAllByRole("button");
+  const user = userEvent.setup({ document });
+  for (const button of buttons) {
+    const icon = button.querySelector("svg");
+    assert.ok(icon);
+    assert.equal(icon.getAttribute("aria-hidden"), "true");
+    assert.equal(icon.getAttribute("focusable"), "false");
+    assert.equal(icon.getAttribute("fill"), "none");
+    assert.equal(icon.getAttribute("stroke"), "currentColor");
+    await user.tab();
+    assert.equal(document.activeElement, button);
+  }
+  const source = await readFile(new URL("./styles.css", import.meta.url), "utf8");
+  // Isolate the shell rules: jsdom cannot paint geometry or resolve our token cascade.
+  const shellCSS = source.slice(source.indexOf("[data-ui-shell-sidebar] {"), source.indexOf("[data-ui-shell-content] {"))
+    .replaceAll("var(--color-action)", "#3d3042")
+    .replaceAll("var(--color-text-muted)", "#625a63")
+    .replaceAll("var(--color-surface-subtle)", "#eee7dc");
+  const style = document.createElement("style"); style.textContent = shellCSS; document.head.append(style);
+  try {
+    assert.equal(getComputedStyle(buttons[0]).backgroundColor, "rgb(223, 211, 194)");
+    assert.equal(getComputedStyle(buttons[0]).color, "rgb(61, 48, 66)");
+    assert.equal(getComputedStyle(buttons[1]).backgroundColor, "rgba(0, 0, 0, 0)");
+    assert.equal(getComputedStyle(buttons[1]).color, "rgb(98, 90, 99)");
+    assert.equal(getComputedStyle(buttons[7]).whiteSpace, "normal");
+    assert.equal(getComputedStyle(buttons[7]).gridTemplateColumns, "20px minmax(0, 1fr)");
+    assert.equal(getComputedStyle(view.container.querySelector('[data-ui-shell-sidebar]')!).backgroundColor, "rgb(238, 231, 220)");
+  } finally { style.remove(); }
+  assert.match(source, /data-ui-shell-identity[^}]*border-block-end:\s*1px solid var\(--color-border\)/s);
+  assert.match(source, /:focus-visible,[\s\S]*?outline-width:\s*3px/);
+});
+
 test("document title identifies Velay", async () => {
   const source = await readFile(new URL("../../index.html", import.meta.url), "utf8");
   assert.match(source, /<title>Velay<\/title>/);
@@ -639,8 +676,8 @@ test("production CSS declares the desktop and compact shell width contracts", as
   const source = await readFile(new URL("./styles.css", import.meta.url), "utf8");
   assert.match(source, /--size-shell-sidebar:\s*208px/);
   assert.match(source, /grid-template-columns:\s*var\(--size-shell-sidebar\)\s+minmax\(0,\s*1fr\)/);
-  assert.match(source, /data-ui-shell-sidebar[^}]*color:\s*var\(--color-text\)[^}]*background:\s*var\(--color-surface\)[^}]*border-inline-end:\s*1px solid var\(--color-border\)/s);
-  assert.match(source, /data-ui-shell-navigation[^}]*button\[aria-current="page"\][^}]*color:\s*var\(--color-text-inverse\)[^}]*background:\s*var\(--color-action\)/s);
+  assert.match(source, /data-ui-shell-sidebar[^}]*color:\s*var\(--color-text\)[^}]*background:\s*var\(--color-surface-subtle\)[^}]*border-inline-end:\s*1px solid var\(--color-border\)/s);
+  assert.match(source, /data-ui-shell-navigation[^}]*button\[aria-current="page"\][^}]*color:\s*var\(--color-action\)[^}]*background:\s*#dfd3c2/s);
   assert.match(source, /\[data-ui-inventory-cue\]\s*\{[^}]*color:\s*var\(--color-danger\)/s);
   assert.match(source, /\[data-ui-shell-navigation\] button\[aria-current="page"\] \[data-ui-inventory-cue\]\s*\{[^}]*color:\s*inherit/s);
   assert.match(source, /@media \(max-width: 960px\)[\s\S]*--size-shell-sidebar:\s*176px/);
