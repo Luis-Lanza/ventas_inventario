@@ -2115,7 +2115,7 @@ test("requires saving the one-time recovery code before completing first-device 
   try {
     render(createElement(CatalogMaintenanceScreen));
     const password = await screen.findByLabelText("Nueva contraseña");
-    assert.ok(screen.getByRole("heading", { name: "Acceso al catálogo" }));
+    assert.ok(screen.getByRole("heading", { name: "Configurar acceso al catálogo" }));
     await userEvent.type(password, "device-password");
     await userEvent.type(screen.getByLabelText("Confirmar contraseña"), "device-password");
     await userEvent.click(screen.getByRole("button", { name: "Configurar catálogo" }));

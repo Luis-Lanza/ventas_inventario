@@ -50,6 +50,7 @@ export function CatalogAccessGate({ status, notice, onUnlocked }: { status: Cata
       }
     } finally { if (mounted.current && current === request.current) { locked.current = false; setPending(false); } }
   };
+  const isSetup = status === "setup_required" && mode === "setup";
   const isUnlock = status === "locked" && mode === "unlock";
   const isConfirmation = mode === "confirm_setup" || mode === "confirm_recovery";
   const recoveryNotice = isConfirmation && shownCode ? createElement("section", { "aria-label": "Código de recuperación" },
@@ -58,16 +59,30 @@ export function CatalogAccessGate({ status, notice, onUnlocked }: { status: Cata
     createElement("label", null,
       createElement("input", { type: "checkbox", checked: confirmation === "stored", onChange: (event: ChangeEvent<HTMLInputElement>) => setConfirmation(event.currentTarget.checked ? "stored" : "") }),
       "Confirmo que guardé el código de recuperación")) : null;
-  const form = status === "locked" || status === "setup_required" ? createElement("form", { "aria-labelledby": isUnlock ? "catalog-access-heading" : undefined, onSubmit: (event: FormEvent) => { void submit(event); } },
-    (mode === "setup" || mode === "recovery") && createElement("label", null, "Nueva contraseña", createElement("input", { type: "password", autoComplete: "new-password", value: password, onChange: (event: ChangeEvent<HTMLInputElement>) => setPassword(event.currentTarget.value), required: true, minLength: 8, maxLength: 1024 })),
-    (mode === "setup" || mode === "recovery") && createElement("label", null, "Confirmar contraseña", createElement("input", { type: "password", autoComplete: "new-password", value: confirmation, onChange: (event: ChangeEvent<HTMLInputElement>) => setConfirmation(event.currentTarget.value), required: true, minLength: 8, maxLength: 1024 })),
+  const form = status === "locked" || status === "setup_required" ? createElement("form", { "aria-labelledby": isUnlock || isSetup ? "catalog-access-heading" : undefined, onSubmit: (event: FormEvent) => { void submit(event); } },
+    (mode === "setup" || mode === "recovery") && createElement("label", null, "Nueva contraseña", createElement("input", { type: "password", autoComplete: "new-password", "aria-describedby": isSetup ? "catalog-setup-hint" : undefined, placeholder: isSetup ? "Nueva contraseña" : undefined, value: password, onChange: (event: ChangeEvent<HTMLInputElement>) => setPassword(event.currentTarget.value), required: true, minLength: 8, maxLength: 1024 })),
+    (mode === "setup" || mode === "recovery") && createElement("label", null, "Confirmar contraseña", createElement("input", { type: "password", autoComplete: "new-password", "aria-describedby": isSetup ? "catalog-setup-hint" : undefined, placeholder: isSetup ? "Confirmá la nueva contraseña" : undefined, value: confirmation, onChange: (event: ChangeEvent<HTMLInputElement>) => setConfirmation(event.currentTarget.value), required: true, minLength: 8, maxLength: 1024 })),
     mode === "unlock" && createElement("label", null, "Contraseña", createElement("input", { type: "password", autoComplete: "current-password", value: password, onChange: (event: ChangeEvent<HTMLInputElement>) => setPassword(event.currentTarget.value), required: true, maxLength: 1024 })),
     mode === "recovery" && createElement("label", null, "Código de recuperación", createElement("input", { type: "text", autoComplete: "off", value: recoveryCode, onChange: (event: ChangeEvent<HTMLInputElement>) => setRecoveryCode(event.currentTarget.value), required: true, maxLength: 48 })),
     recoveryNotice,
+    isSetup && createElement("p", { id: "catalog-setup-hint", "data-ui-catalog-setup-hint": true }, "Usá al menos 8 caracteres y confirmá la misma contraseña."),
+    isSetup && createElement("p", { "data-ui-catalog-setup-next": true }, "En el siguiente paso deberás guardar tu código de recuperación para completar la configuración."),
     feedback && createElement(Feedback, { kind: "error" } as never, feedback),
     createElement(Action, { variant: "primary", type: "submit", disabled: pending || isConfirmation && confirmation !== "stored" }, pending ? "Procesando…" : isConfirmation ? "Continuar al catálogo" : mode === "setup" ? "Configurar catálogo" : mode === "unlock" ? "Desbloquear catálogo" : "Restablecer contraseña"),
     mode === "unlock" && createElement(Action, { type: "button", variant: "tertiary", disabled: pending, onClick: () => { setMode("recovery"); setFeedback(null); } }, "Usar código de recuperación"),
     mode === "recovery" && createElement(Action, { type: "button", variant: "tertiary", disabled: pending, onClick: () => { setMode("unlock"); setFeedback(null); } }, "Volver al ingreso de contraseña")) : null;
+  if (isSetup) {
+    return createElement("main", { "aria-labelledby": "catalog-access-heading", "data-ui-catalog-access": true, "data-ui-catalog-setup": true },
+      createElement("div", { "data-ui-catalog-setup-card": true },
+        createElement("span", { "data-ui-catalog-setup-icon": true, "aria-hidden": true },
+          createElement("svg", { viewBox: "0 0 24 24", width: 24, height: 24, fill: "none", stroke: "currentColor", strokeWidth: 1.7, "aria-hidden": true, focusable: false },
+            createElement("rect", { x: 5, y: 10, width: 14, height: 11, rx: 2 }),
+            createElement("path", { d: "M8 10V7a4 4 0 0 1 8 0v3M12 14v3" }))),
+        createElement("h1", { id: "catalog-access-heading" }, "Configurar acceso al catálogo"),
+        notice ? createElement(Feedback, { kind: "success", children: notice }) : null,
+        createElement("p", null, "Configurá una contraseña para proteger el catálogo de este dispositivo."),
+        form));
+  }
   if (isUnlock) {
     return createElement("main", { "aria-labelledby": "catalog-access-heading", "data-ui-catalog-access": true, "data-ui-catalog-unlock": true },
       createElement("div", { "data-ui-catalog-unlock-card": true },

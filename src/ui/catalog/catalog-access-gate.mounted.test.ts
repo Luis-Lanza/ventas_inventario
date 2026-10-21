@@ -58,6 +58,64 @@ test("unlock is a named page and form with an isolated rounded card and decorati
   } finally { style.remove(); }
 });
 
+test("setup follows its approved card reference and preserves the two-stage access flow", async () => {
+  const style = document.createElement("style");
+  style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  document.head.append(style);
+  try {
+    const calls: unknown[] = [];
+    let finish!: (value: unknown) => void;
+    let unlocked = 0;
+    mockIPC((command, payload) => {
+      calls.push({ command, payload });
+      return new Promise(resolve => { finish = resolve; });
+    });
+    const view = render(createElement(CatalogAccessGate, { status: "setup_required", notice: null, onUnlocked() { unlocked++; } }));
+    const main = screen.getByRole("main", { name: "Configurar acceso al catálogo" });
+    const form = screen.getByRole("form", { name: "Configurar acceso al catálogo" });
+    const card = main.querySelector("[data-ui-catalog-setup-card]");
+    assert.ok(card?.contains(form));
+    assert.equal(getComputedStyle(card!).borderRadius, "32px");
+    assert.equal(getComputedStyle(card!).inlineSize, "min(560px, 100%)");
+    assert.ok(card!.querySelector('svg[aria-hidden="true"][focusable="false"]'));
+    assert.equal(screen.queryByRole("dialog"), null);
+    assert.equal(screen.queryByText(/Datos de ejemplo/), null);
+    assert.equal(screen.queryByRole("checkbox"), null);
+    assert.equal(screen.queryByText(/Solo se muestra ahora/), null);
+    assert.equal(screen.getAllByRole("button").length, 1);
+    assert.ok(screen.getByText("Usá al menos 8 caracteres y confirmá la misma contraseña."));
+    assert.ok(screen.getByText("En el siguiente paso deberás guardar tu código de recuperación para completar la configuración."));
+    const password = screen.getByLabelText<HTMLInputElement>("Nueva contraseña");
+    const confirmation = screen.getByLabelText<HTMLInputElement>("Confirmar contraseña");
+    for (const input of [password, confirmation]) {
+      assert.equal(input.type, "password");
+      assert.equal(input.autocomplete, "new-password");
+      assert.equal(input.minLength, 8);
+      assert.equal(input.maxLength, 1024);
+      assert.equal(input.required, true);
+      assert.ok(input.getAttribute("aria-describedby")?.includes("catalog-setup-hint"));
+    }
+    await userEvent.tab(); assert.equal(document.activeElement, password);
+    await userEvent.tab(); assert.equal(document.activeElement, confirmation);
+    await userEvent.tab(); assert.equal(document.activeElement, screen.getByRole("button", { name: "Configurar catálogo" }));
+    fireEvent.change(password, { target: { value: "setup-password" } });
+    fireEvent.change(confirmation, { target: { value: "different-password" } });
+    fireEvent.submit(form);
+    assert.equal(screen.getByRole("alert").textContent, "Ingresá una contraseña de al menos 8 caracteres y confirmala correctamente.");
+    assert.deepEqual(calls, []);
+    fireEvent.change(confirmation, { target: { value: "setup-password" } });
+    act(() => { fireEvent.submit(form); fireEvent.submit(form); });
+    assert.deepEqual(calls, [{ command: "catalog_access_begin_setup_command", payload: { request: { password: "setup-password" } } }]);
+    assert.equal(screen.getByRole<HTMLButtonElement>("button", { name: "Procesando…" }).disabled, true);
+    await act(async () => { finish({ kind: "recovery_code", recovery_code: "C".repeat(48) }); });
+    assert.equal(unlocked, 0, "beginning setup must not unlock Catalog");
+    assert.equal(view.container.querySelector("[data-ui-catalog-setup-card]"), null);
+    assert.equal(view.container.querySelectorAll('input[type="password"]').length, 0);
+    assert.equal(screen.getByRole<HTMLButtonElement>("button", { name: "Continuar al catálogo" }).disabled, true);
+    assert.ok(screen.getByRole("checkbox", { name: "Confirmo que guardé el código de recuperación" }));
+  } finally { style.remove(); }
+});
+
 test("pending unlock sends the exact password once, keeps editing, then clears the response secret", async () => {
   let finish!: (value: unknown) => void;
   const calls: unknown[] = [];
@@ -103,7 +161,7 @@ for (const status of ["setup_required", "loading", "unavailable", "unlocked"] as
   test(`${status} never receives unlock presentation hooks`, () => {
     const view = render(createElement(CatalogAccessGate, { ...props, status }));
     assert.equal(view.container.querySelector("[data-ui-catalog-unlock], [data-ui-catalog-unlock-card]"), null);
-    assert.equal(view.container.querySelector("svg"), null);
+    if (status !== "setup_required") assert.equal(view.container.querySelector("svg"), null);
     if (status === "setup_required") assert.equal(view.container.querySelectorAll('input[type="password"]').length, 2);
   });
 }
