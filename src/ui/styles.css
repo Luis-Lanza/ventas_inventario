@@ -1813,6 +1813,46 @@ body:has([data-ui-catalog-category-dialog]) [data-ui-shell-content] { overflow: 
   [data-ui-catalog-category-dialog], [data-ui-catalog-category-dialog] [data-ui-category-schema-draft] { border-color: CanvasText; forced-color-adjust: auto; }
 }
 
+/* History corrections: a single frame with native body scrolling and a fixed footer. */
+[data-ui-dialog-backdrop]:has(> [data-ui-history-correction-dialog]) { padding: 16px; overscroll-behavior: contain; }
+html:has([data-ui-history-correction-dialog]), body:has([data-ui-history-correction-dialog]) { overflow: hidden; }
+[data-ui-history-correction-origin] { visibility: hidden; }
+[data-ui-history-correction-dialog] { display: flex; flex-direction: column; gap: var(--space-4); inline-size: min(960px, 100%); min-inline-size: 0; max-block-size: calc(100dvh - 32px); overflow: hidden; padding: clamp(20px, 3vw, 40px); border: 1px solid var(--color-border); border-radius: 32px; background: var(--color-surface-elevated); box-shadow: var(--elevation-modal); }
+[data-ui-history-correction-dialog][data-ui-history-correction-stage="confirmation"] { inline-size: min(760px, 100%); }
+[data-ui-history-correction-dialog] > :is(h2, p) { flex: 0 0 auto; margin: 0; }
+[data-ui-history-correction-dialog] > h2 { font-size: clamp(1.5rem, 2vw, 2rem); }
+[data-ui-history-correction-stage="confirmation"] > p { padding: var(--space-4); border: 1px solid var(--color-border); border-radius: 20px; background: var(--color-surface-subtle); }
+[data-ui-history-correction-dialog] > p { color: var(--color-text-muted); }
+[data-ui-history-correction-body] { min-block-size: 0; min-inline-size: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
+[data-ui-history-correction-dialog] :is([data-ui-history-return], [data-ui-history-cancellation]) { display: grid; gap: var(--space-4); min-inline-size: 0; margin: 0; padding: 0; border: 0; background: transparent; }
+[data-ui-history-correction-identity] { justify-self: start; margin: 0; padding: var(--space-2) var(--space-3); border-radius: 999px; background: var(--color-surface-subtle); font-weight: 600; }
+[data-ui-history-correction-notice], [data-ui-history-correction-reason] { margin: 0; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: 20px; background: var(--color-surface-subtle); overflow-wrap: anywhere; }
+[data-ui-history-correction-dialog] [data-ui-history-return] fieldset { grid-template-columns: minmax(0, 1fr) auto; padding: var(--space-4); border-radius: 22px; }
+[data-ui-history-correction-dialog] [data-ui-history-return] fieldset > p { grid-column: 1 / -1; }
+[data-ui-history-correction-dialog] [data-ui-history-return] label:has(input[type="text"]) { display: flex; align-items: center; justify-content: flex-end; }
+[data-ui-history-correction-dialog] [data-ui-history-return] input[type="text"] { inline-size: 6rem; text-align: center; }
+[data-ui-history-correction-dialog] [data-ui-history-return-selected] { border-color: var(--color-border-strong); }
+[data-ui-history-correction-dialog] [data-ui-history-return] legend { padding-inline: var(--space-2); overflow-wrap: anywhere; }
+[data-ui-history-correction-dialog] [data-ui-history-return] fieldset > p { margin: 0; color: var(--color-text-muted); }
+[data-ui-history-correction-dialog] label:has(input[type="checkbox"]) { display: flex; flex-direction: row-reverse; justify-content: flex-end; align-items: center; gap: var(--space-3); }
+[data-ui-history-correction-dialog] input[type="checkbox"] { flex: 0 0 auto; accent-color: var(--color-action); }
+[data-ui-history-correction-dialog] input[type="text"], [data-ui-history-correction-dialog] input:not([type]) { border-radius: 999px; }
+[data-ui-history-correction-next] { text-align: end; color: var(--color-text-muted); }
+[data-ui-history-correction-dialog] > [data-ui-dialog-actions] { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); margin: 0; padding-block-start: var(--space-4); border-block-start: 1px solid var(--color-border); }
+[data-ui-history-correction-dialog] > [data-ui-dialog-actions] > button { min-block-size: 48px; border-radius: 999px; padding-inline: var(--space-5); }
+[data-ui-history-correction-dialog] [data-ui-action="destructive"] { color: var(--color-surface); background: var(--color-danger); border-color: var(--color-danger); }
+[data-ui-history-correction-opening] > :is(h2, p, [data-ui-history-correction-body], [data-ui-dialog-actions]) { visibility: hidden; }
+@media (max-width: 600px) {
+  [data-ui-history-correction-dialog] { padding: 20px; border-radius: 24px; gap: var(--space-3); }
+  [data-ui-history-correction-dialog] > [data-ui-dialog-actions] > button { flex: 1 1 12rem; }
+  [data-ui-history-correction-dialog] [data-ui-history-return] fieldset { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-height: 540px) {
+  [data-ui-history-correction-dialog] { display: block; overflow-y: auto; }
+  [data-ui-history-correction-body] { overflow: visible; margin-block: var(--space-4); }
+  [data-ui-history-correction-dialog] > p { margin-block-start: var(--space-3); }
+}
+
 /* History detail: Velay independent page; never targets correction dialogs. */
 [data-ui-history-detail] { align-content: start; }
 [data-ui-history-detail] > [data-ui-history-detail-header] { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); padding-block-end: var(--space-5); border-block-end: 1px solid var(--color-border); }

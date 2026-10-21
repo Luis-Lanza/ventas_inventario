@@ -139,7 +139,7 @@ test("accepted return notifies before failed refresh and cannot be submitted twi
  assert.ok(screen.getByText("La corrección ya fue guardada. No se pudo actualizar el detalle; recargalo antes de iniciar otra corrección."));
  const submit = screen.getByRole("button", { name: "Registrar devolución" }) as HTMLButtonElement;
  assert.equal(submit.disabled, true);
- fireEvent.submit(submit.closest("form")!);
+ fireEvent.submit(screen.getByRole("form", { name: "Devolución de artículos" }));
  assert.equal(mutations, 1);
  assert.equal((reload as HTMLButtonElement).disabled, false);
  await user.click(within(screen.getByRole("dialog", { name: "Devolución de artículos" })).getByRole("button", { name: "Cerrar" }));
@@ -268,6 +268,9 @@ test("runs modal return validation, lock, retry, and persisted success evidence"
   assert.ok(screen.getByRole("button", { name: "Registrando devolución…" }).hasAttribute("disabled"));
   fireEvent.submit(form);
   assert.equal(requests.length, 1);
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.mouseDown(screen.getByRole("dialog").parentElement!);
+  assert.ok(screen.getByRole("dialog", { name: "Devolución de artículos" }));
   assert.deepEqual(requests[0].lines, [{ sale_line_id: 41, quantity: 1 }]);
 
   firstReturn.resolve({ kind: "error", code: "request_conflict", message: "private native detail" });
@@ -561,6 +564,9 @@ test("stages cancellation preparation in a form modal, then uses the destructive
   assert.deepEqual({ sale_id: requests[0].sale_id, reason: requests[0].reason }, { sale_id: 184, reason: "Venta duplicada" });
   dialog = screen.getByRole("dialog", { name: "Cancelar venta #184" });
   assert.equal(dialog.getAttribute("aria-busy"), "true");
+  fireEvent.mouseDown(dialog.parentElement!);
+  assert.ok(screen.getByRole("dialog", { name: "Cancelar venta #184" }));
+  assert.equal(requests.length, 1);
 
   cancellation.resolve({ kind: "success", result: { request_id: requests[0].request_id, cancellation_id: 91, sale_id: 184,
     status: "cancelled", occurred_at: "2026-08-16 11:04:03", reason: "Venta duplicada",

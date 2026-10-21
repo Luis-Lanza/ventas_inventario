@@ -34,7 +34,8 @@ import {
 import { historyListError, historySummaryCells, projectCorrectionHistory, projectHistoryDetail } from "./history-presentation.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { AlignedData } from "../visual-system/structure.ts";
-import { ConfirmationDialog, FormDialog } from "../visual-system/confirmation-dialog.ts";
+import { HistoryCorrectionDialog, HistoryCorrectionRetirement, type HistoryRetirement } from "./history-correction-dialog.ts";
+import { captureHistoryCorrectionOpening, type HistoryCorrectionOpening } from "./history-correction-motion.ts";
 
 const originalItemColumns = [
   { label: "Producto", align: "start", kind: "text" },
@@ -101,7 +102,9 @@ const focusCorrectionTarget = (target: string | null, find: FocusFinder) => {
   if (target) find(target)?.focus();
 };
 
-function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, persisted = false }: {
+function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, opening, onRetire, persisted = false }: {
+  onRetire?: (surface: HistoryRetirement) => void;
+  opening?: HistoryCorrectionOpening | null;
   persisted?: boolean;
   state: HistoryState;
   onAction?: (action: HistoryAction) => void;
@@ -113,7 +116,11 @@ function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, per
   const locked = intent.status === "pending" || intent.status === "reload_requested";
   const errorTarget = intent.validation?.focus_target;
   const errorId = errorTarget ? `${errorTarget}-error` : undefined;
-  return createElement(FormDialog, {
+  return createElement(HistoryCorrectionDialog, {
+    opening, onRetire, stage: "return", purpose: "routine",
+    confirmLabel: "Registrar devolución", pendingLabel: "Registrando devolución…", cancelLabel: "Cerrar",
+    confirmDisabled: persisted,
+    onConfirm: () => document.getElementById("history-return-form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
     open: intent.modal_open,
     title: "Devolución de artículos",
     description: "Seleccioná los artículos originales y las cantidades que volverán al inventario.",
@@ -121,12 +128,15 @@ function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, per
     invokerRef,
     onCancel: () => onAction?.({ type: "return_modal_closed" }),
   },
-  createElement("form", { "aria-label": "Devolución de artículos", "aria-busy": locked,
+  createElement("form", { id: "history-return-form", "aria-label": "Devolución de artículos", "aria-busy": locked,
     "data-ui-history-return": true, onSubmit: (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       if (onSubmit) onSubmit();
       else onAction?.({ type: "return_submit_started" });
     } },
+  createElement("p", { "data-ui-history-correction-identity": true }, `Venta #${intent.sale_id}`),
+  createElement("p", { "data-ui-history-correction-notice": true }, "Las unidades seleccionadas volverán al inventario. Los pagos originales no cambian."),
+  createElement("p", null, "Ingresá cantidades enteras positivas, sin superar las unidades disponibles."),
   state.detail === null
     ? createElement("p", { role: "status" }, "Cargando el detalle guardado…")
     : null,
@@ -136,8 +146,9 @@ function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, per
     const quantityId = `return-quantity-${line.sale_line_id}`;
     const selectionId = `return-line-${line.sale_line_id}`;
     const fieldError = errorTarget === quantityId || errorTarget === selectionId;
-    return createElement("fieldset", { key: line.sale_line_id, disabled: locked || !eligible },
-      createElement("legend", null, `Línea de venta ${line.sale_line_id} · Máximo disponible: ${line.remaining_returnable_quantity} ${line.remaining_returnable_quantity === 1 ? "unidad" : "unidades"}`),
+    return createElement("fieldset", { key: line.sale_line_id, disabled: locked || !eligible, "data-ui-history-return-selected": selected || undefined },
+      createElement("legend", null, createElement("strong", null, line.product_name ?? "Producto no disponible"), " · ", createElement("span", { "data-ui-type": "mono" }, line.sku ?? "SKU no disponible")),
+      createElement("p", null, `Línea de venta ${line.sale_line_id} · Máximo disponible: ${line.remaining_returnable_quantity} ${line.remaining_returnable_quantity === 1 ? "unidad" : "unidades"}`),
       eligible ? createElement("label", { htmlFor: selectionId }, "Incluir este artículo",
         createElement("input", { id: selectionId, name: selectionId, type: "checkbox", checked: selected,
           disabled: locked, style: correctionControlStyle, "aria-invalid": fieldError || undefined,
@@ -154,11 +165,13 @@ function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, per
   intent.error && !intent.validation ? createElement("p", { role: "alert" }, intent.error) : null,
   intent.error && !intent.validation && onReloadDetail
     ? createElement("button", { type: "button", disabled: locked, onClick: () => onReloadDetail(intent.sale_id), style: correctionControlStyle }, "Recargar detalle de venta") : null,
-  createElement("button", { type: "submit", disabled: locked || persisted, style: correctionControlStyle },
+  createElement("button", { type: "submit", hidden: true, "aria-hidden": true, disabled: locked || persisted, style: correctionControlStyle },
     locked ? "Registrando devolución…" : "Registrar devolución")));
 }
 
-function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, persisted = false }: {
+function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, opening, onRetire, persisted = false }: {
+  onRetire?: (surface: HistoryRetirement) => void;
+  opening?: HistoryCorrectionOpening | null;
   persisted?: boolean;
   state: HistoryState;
   onAction?: (action: HistoryAction) => void;
@@ -170,19 +183,14 @@ function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRe
   const locked = intent.status === "pending" || intent.status === "reload_requested";
   const fieldError = intent.validation?.focus_target;
   const errorId = fieldError ? `${fieldError}-error` : undefined;
-  const preparation = createElement(FormDialog, {
-    open: intent.modal_open || (persisted && intent.status === "error"),
-    title: "Preparar cancelación de venta",
-    description: "Ingresá el motivo y reconocé la corrección de inventario antes de revisar la cancelación.",
-    pending: locked,
-    invokerRef,
-    onCancel: () => onAction?.({ type: "cancellation_intent_closed" }),
-  },
-  createElement("form", { "aria-label": "Preparar cancelación de venta", "aria-busy": locked,
+  const preparing = intent.modal_open || (persisted && intent.status === "error");
+  const preparation = createElement("form", { id: "history-cancellation-form", "aria-label": "Preparar cancelación de venta", "aria-busy": locked,
     "data-ui-history-cancellation": true, onSubmit: (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       onAction?.({ type: "cancellation_confirmation_requested" });
     } },
+  createElement("p", { "data-ui-history-correction-identity": true }, `Venta #${intent.sale_id}`),
+  createElement("p", { "data-ui-history-correction-notice": true }, "Se restaurarán únicamente las unidades todavía no devueltas. La venta y los pagos originales seguirán visibles en el historial."),
   createElement("label", { htmlFor: "cancellation-reason" }, "Motivo de cancelación",
     createElement("input", { id: "cancellation-reason", name: "cancellation-reason", value: intent.reason,
       disabled: locked, style: correctionControlStyle, "aria-invalid": fieldError === "cancellation-reason" || undefined,
@@ -200,23 +208,30 @@ function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRe
   intent.error && !intent.validation && onReloadDetail
     ? createElement("button", { type: "button", disabled: locked, style: correctionControlStyle,
       onClick: () => onReloadDetail(intent.sale_id) }, "Recargar detalle de venta") : null,
-  createElement("button", { type: "submit", disabled: locked || persisted, style: correctionControlStyle }, "Continuar con la cancelación")));
-  const confirmation = createElement(ConfirmationDialog, {
-    open: !intent.modal_open && !(persisted && intent.status === "error"),
-    purpose: "cancellation",
-    title: `Cancelar venta #${intent.sale_id}`,
-    description: "Se cancelará la venta y se restaurarán únicamente las unidades todavía no devueltas. La venta y los pagos originales seguirán visibles en el historial.",
-    confirmLabel: "Cancelar venta",
-    pending: locked,
-    pendingLabel: "Cancelando venta…",
-    onCancel: () => onAction?.({ type: "cancellation_modal_closed" }),
-    onConfirm: () => { if (!persisted) { if (onSubmit) onSubmit(); else onAction?.({ type: "cancellation_submit_started" }); } },
-  },
-  createElement("p", null, `Motivo: ${intent.reason}`),
-  intent.error ? createElement("p", { role: "alert" }, intent.error) : null,
-  intent.error && onReloadDetail ? createElement("button", { type: "button", disabled: locked,
-    onClick: () => onReloadDetail(intent.sale_id) }, "Recargar detalle de venta") : null);
-  return createElement(Fragment, null, preparation, confirmation);
+  createElement("p", { "data-ui-history-correction-next": true }, "En el siguiente paso revisarás la confirmación final."),
+  createElement("button", { type: "submit", hidden: true, "aria-hidden": true, disabled: locked || persisted, style: correctionControlStyle }, "Continuar con la cancelación"));
+  return createElement(HistoryCorrectionDialog, {
+    open: true, opening, onRetire, stage: preparing ? "preparation" : "confirmation",
+    purpose: preparing ? "routine" : "cancellation",
+    title: preparing ? "Preparar cancelación de venta" : `Cancelar venta #${intent.sale_id}`,
+    description: preparing ? "Ingresá el motivo y reconocé la corrección de inventario antes de revisar la cancelación."
+      : "Se cancelará la venta y se restaurarán únicamente las unidades todavía no devueltas. La venta y los pagos originales seguirán visibles en el historial.",
+    confirmLabel: preparing ? "Continuar con la cancelación" : "Cancelar venta",
+    cancelLabel: preparing ? "Cerrar" : "Volver", confirmDisabled: persisted,
+    pending: locked, invokerRef,
+    pendingLabel: preparing ? "Procesando…" : "Cancelando venta…",
+    onCancel: () => onAction?.({ type: preparing ? "cancellation_intent_closed" : "cancellation_modal_closed" }),
+    onConfirm: () => {
+      if (persisted) return;
+      if (preparing) document.getElementById("history-cancellation-form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      else if (onSubmit) onSubmit();
+      else onAction?.({ type: "cancellation_submit_started" });
+    },
+  }, preparing ? preparation : createElement(Fragment, null,
+    createElement("p", { "data-ui-history-correction-reason": true }, `Motivo: ${intent.reason}`),
+    intent.error ? createElement("p", { role: "alert" }, intent.error) : null,
+    intent.error && onReloadDetail ? createElement("button", { type: "button", disabled: locked,
+      onClick: () => onReloadDetail(intent.sale_id) }, "Recargar detalle de venta") : null));
 }
 
 const isSparseHistoryList = (state: HistoryState) =>
@@ -427,6 +442,13 @@ export function HistoryScreen({
   findFocusable = findFocusableById,
 }: HistoryScreenProps) {
   const correctionInvokerRef = useRef<HTMLButtonElement | null>(null);
+  const correctionOpening = useRef<HistoryCorrectionOpening | null>(null);
+  const correctionSession = useRef(0);
+  const [retiring, setRetiring] = useState<(HistoryRetirement & { saleId: number | null }) | null>(null);
+  const retire = (surface: HistoryRetirement) => setRetiring({ ...surface, saleId: state.selected_id });
+  useEffect(() => {
+    if (state.view !== "detail" || state.return_intent || state.cancellation_intent || (retiring && retiring.saleId !== state.selected_id)) setRetiring(null);
+  }, [state.view, state.selected_id, state.return_intent?.request_id, state.cancellation_intent?.request_id, retiring?.saleId]);
   const correctionRefreshRequired = Boolean(persistedRequest && !(state.detail?.returns.some(record => record.request_id === persistedRequest) || state.detail?.cancellation?.request_id === persistedRequest));
   const [from, setFrom] = useState(localToday);
   const [to, setTo] = useState(localToday);
@@ -444,9 +466,9 @@ export function HistoryScreen({
       "data-ui-density": isSparseHistoryDetail(state) ? "sparse" : undefined,
     },
       createElement("div", { "data-ui-history-detail-header": true },
-        createElement("h1", { id: "sales-history-detail-heading" }, "Detalle de venta"),
+        createElement("h1", { id: "sales-history-detail-heading", tabIndex: -1 }, "Detalle de venta"),
         createElement("span", { "data-ui-history-detail-currency": true }, "Moneda: Bs"),
-        createElement(Action, { variant: "secondary", onClick: onBack }, "Volver al historial"),
+        createElement(Action, { variant: "secondary", onClick: () => { setRetiring(null); onBack(); } }, "Volver al historial"),
       ),
       outcomeNotice ? createElement(Feedback, { kind: "success", children: outcomeNotice }) : null,
       state.status === "loading" ? createElement(Feedback, { kind: "loading" } as never, "Cargando detalle de venta…") : null,
@@ -481,8 +503,10 @@ export function HistoryScreen({
               "div",
               { "data-ui-history-correction-actions": true },
               (canOpenReturn(state) || state.return_intent !== null)
-                ? createElement("button", { ref: correctionInvokerRef, disabled: correctionRefreshRequired || state.return_intent !== null, type: "button", onClick: (event: MouseEvent<HTMLButtonElement>) => {
+                ? createElement("button", { disabled: correctionRefreshRequired || state.return_intent !== null, type: "button", onClick: (event: MouseEvent<HTMLButtonElement>) => {
+                    setRetiring(null);
                     correctionInvokerRef.current = event.currentTarget;
+                    correctionOpening.current = captureHistoryCorrectionOpening(event.currentTarget, ++correctionSession.current);
                     onAction?.({ type: "return_intent_opened", request_id: crypto.randomUUID() });
                   }, style: correctionControlStyle }, "Iniciar devolución de artículos")
                 : null,
@@ -490,12 +514,13 @@ export function HistoryScreen({
                 ? createElement(
                     "button",
                     {
-                      ref: correctionInvokerRef,
                       disabled: correctionRefreshRequired || state.cancellation_intent !== null,
                       "data-ui-history-detail-action": "cancel",
                       type: "button",
                       onClick: (event: MouseEvent<HTMLButtonElement>) => {
+                        setRetiring(null);
                         correctionInvokerRef.current = event.currentTarget;
+                        correctionOpening.current = captureHistoryCorrectionOpening(event.currentTarget, ++correctionSession.current);
                         onAction?.({
                           type: "cancellation_intent_opened",
                           request_id: crypto.randomUUID(),
@@ -513,11 +538,15 @@ export function HistoryScreen({
         persistedRefreshGuidance,
         createElement(Action, { variant: "secondary", disabled: state.status === "loading", onClick: () => { if (state.selected_id !== null) onReloadDetail?.(state.selected_id); } }, "Recargar detalle de venta")) }) : null,
       state.return_intent
-        ? createElement(ReturnForm, { state, onAction, onSubmit: onReturnSubmit, onReloadDetail, invokerRef: correctionInvokerRef, persisted: persistedRequest === state.return_intent.request_id })
+        ? createElement(ReturnForm, { onRetire: retire, opening: correctionOpening.current, state, onAction, onSubmit: onReturnSubmit, onReloadDetail, invokerRef: correctionInvokerRef, persisted: persistedRequest === state.return_intent.request_id })
         : null,
       state.cancellation_intent
-        ? createElement(CancellationForm, { state, onAction, onSubmit: onCancellationSubmit, onReloadDetail, invokerRef: correctionInvokerRef, persisted: persistedRequest === state.cancellation_intent.request_id })
+        ? createElement(CancellationForm, { onRetire: retire, opening: correctionOpening.current, state, onAction, onSubmit: onCancellationSubmit, onReloadDetail, invokerRef: correctionInvokerRef, persisted: persistedRequest === state.cancellation_intent.request_id })
         : null,
+      retiring && retiring.saleId === state.selected_id && !state.return_intent && !state.cancellation_intent ? createElement(HistoryCorrectionRetirement, {
+        ...retiring, key: retiring.opening.id,
+        onRetired: () => setRetiring(current => current?.opening.id === retiring.opening.id ? null : current),
+      }) : null,
     );
   }
   return createElement("main", {
