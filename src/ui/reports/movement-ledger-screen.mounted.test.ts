@@ -9,6 +9,8 @@ import type { GrossProfitOperationsResponse } from "../../commands/gross-profit-
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 import { MovementLedgerScreen } from "./movement-ledger-screen.ts";
 
+import type { MovementLedgerRow } from "../../commands/movement-ledger.ts";
+
 const movement = { movement_id: 1, occurred_at: "2025-03-02 10:00:00", product_id: 7, product_name: "Filtro actual", product_sku: "FLT-7", movement_type: "stock_entry", quantity_delta: 3, resulting_quantity: null, reason: null, note: null, sale_id: null, sale_line_id: null };
 const foundProduct = { product_id: 7, product_name: "Filtro actual", product_sku: "FLT-7", active: false };
 const page = (rows = [movement], has_more = false) => ({ kind: "success", rows, page: 1, page_size: 50, has_more });
@@ -42,6 +44,37 @@ function assertSharedPdfAction(panel: HTMLElement) {
  const button = actionBar?.querySelector('[data-ui-action="secondary"]');
  assert.equal(button?.textContent, "Exportar PDF");
 }
+test("movement presentation preserves seven complete facts and independent draft/applied regions", async () => {
+ const reason = "Conteo físico con evidencia completa ".repeat(8);
+ const note = "Nota guardada sin recortar ".repeat(8);
+ const fixtures: MovementLedgerRow[] = [
+  { ...movement, movement_type: "cancellation", quantity_delta: 2, resulting_quantity: 0, reason, note, sale_id: 1042, sale_line_id: 2081 },
+  { ...movement, movement_id: 2, movement_type: "sale", quantity_delta: -3 },
+  { ...movement, movement_id: 3, movement_type: "adjustment", quantity_delta: 0 },
+ ];
+ const calls = mount(() => ({ ...page(), rows: fixtures }));
+ const user = userEvent.setup({ document }); render(createElement(MovementLedgerScreen));
+ const table = await screen.findByRole("table");
+ const region = screen.getByRole("region", { name: "Movimientos de inventario" });
+ assert.equal(region.hasAttribute("data-ui-panel"), false);
+ assert.ok(within(region).getByRole("heading", { level: 2, name: "Movimientos de inventario" }));
+ assert.equal(within(table).getAllByRole("columnheader").length, 7);
+ const rows = within(table).getAllByRole("row").slice(1);
+ assert.deepEqual(within(rows[0]).getAllByRole("cell").map(cell => cell.textContent), [movement.occurred_at, "Filtro actual FLT-7datos actuales", "Cancelación", "+2", "0", `${reason} · ${note}`, "Venta #1042 · línea #2081"]);
+ assert.equal(within(rows[1]).getAllByRole("cell")[3].textContent, "-3");
+ assert.equal(within(rows[1]).getAllByRole("cell")[4].textContent, "No registrado");
+ assert.equal(within(rows[2]).getAllByRole("cell")[3].textContent, "0");
+ assert.ok(region.querySelector('[data-ui-ledger-type="cancellation"]'));
+ assert.ok(region.querySelector('[data-ui-ledger-polarity="positive"]'));
+ assert.ok(region.querySelector('[data-ui-ledger-polarity="negative"]'));
+ assert.ok(region.querySelector('[data-ui-ledger-polarity="zero"]'));
+ await user.selectOptions(screen.getByRole("combobox", { name: "Tipo de movimiento" }), "gross_profit");
+ assert.ok(screen.getByRole("region", { name: "Movimientos de inventario" }));
+ assert.equal(calls.requests.length, 1);
+ await user.click(screen.getByRole("button", { name: "Exportar PDF" }));
+ assert.equal((calls.exports[0] as { request: { movement_type: unknown } }).request.movement_type, null);
+});
+
 test("shared ledger PDF outcomes are accepted once", async () => {
  let finish!: (value: unknown) => void;
  const calls = mount(() => page(), new Promise(resolve => { finish = resolve; }));
@@ -97,7 +130,7 @@ test("applies shared dates to the gross-profit mode and exposes only its histori
  });
  const user = userEvent.setup({ document }); render(createElement(MovementLedgerScreen));
  await screen.findByRole("table");
- assertSharedPdfAction(screen.getByRole("region", { name: "Resultados" }));
+ assert.ok(screen.getByRole("region", { name: "Movimientos de inventario" }));
  assert.equal(screen.getAllByRole("button", { name: "Exportar PDF" }).length, 1);
  assert.equal((screen.getByRole("combobox", { name: "Tipo de movimiento" }) as HTMLSelectElement).value, "");
  await user.selectOptions(screen.getByRole("combobox", { name: "Tipo de movimiento" }), "gross_profit");
@@ -317,12 +350,12 @@ test("keeps date, control, and product-feedback rows structurally separate and r
  assert.ok(await screen.findByText("Filtro actual"));
  assert.equal(screen.getAllByRole("main").length, 1);
  assert.ok(screen.getByRole("region", { name: "Filtros" }));
- assert.ok(screen.getByRole("region", { name: "Resultados" }));
+ assert.ok(screen.getByRole("region", { name: "Movimientos de inventario" }));
  const filters = screen.getByRole("region", { name: "Filtros" }).querySelector("[data-ui-ledger-filters]")!;
  assert.equal(filters.children[0].getAttribute("data-ui-ledger-date-row"), "true");
  assert.deepEqual([...filters.children[0].querySelectorAll("label")].map(label => label.textContent), ["Desde", "Hasta"]);
  const controls = filters.querySelector("[data-ui-ledger-filter-row]")!;
- assert.deepEqual([...controls.children].map(child => child.getAttribute("data-ui-ledger-product-filter") ? "Producto" : child.getAttribute("data-ui-ledger-apply-form") ? "Aplicar filtros" : child.querySelector("label")?.textContent ?? child.textContent?.trim()), ["Producto", "Tipo de movimiento", "Aplicar filtros"]);
+ assert.deepEqual([...controls.children].map(child => child.getAttribute("data-ui-ledger-product-filter") ? "Producto" : child.getAttribute("data-ui-ledger-apply-form") ? "Aplicar filtros" : child.querySelector("label")?.textContent ?? child.textContent?.trim()), ["Tipo de movimiento", "Aplicar filtros"]);
  const applyForm = controls.querySelector("[data-ui-ledger-apply-form]") as HTMLFormElement;
  assert.ok(applyForm, "the apply action remains a semantic form submission");
  assert.equal(applyForm.querySelector("[data-ui-action]")?.getAttribute("type"), "submit");
@@ -332,7 +365,10 @@ test("keeps date, control, and product-feedback rows structurally separate and r
  const productFeedback = filters.querySelector("[data-ui-ledger-product-feedback-row]")!;
  assert.equal(productFeedback.parentElement, filters);
  assert.equal(productFeedback.getAttribute("data-ui-ledger-product-feedback-row"), "true");
- assert.ok(productFeedback.querySelector("[data-ui-feedback]"), "initial search guidance belongs to the dedicated third row");
+ assert.ok(productFeedback.querySelector("[data-ui-feedback]"), "initial search guidance stays below the search form");
+ assert.equal(filters.querySelector("[data-ui-ledger-product-filter]")?.previousElementSibling, controls);
+ assert.equal(filters.querySelector("[data-ui-ledger-product-filter]")?.nextElementSibling, productFeedback);
+ assert.equal(document.querySelector("form form"), null);
  assert.equal(productFeedback.querySelector("[data-ui-ledger-product-search]"), null);
  assert.equal(productFeedback.querySelector("[data-ui-ledger-product-results]"), null);
  assert.equal(controls.querySelector("[data-ui-ledger-product-feedback-row]"), null);
