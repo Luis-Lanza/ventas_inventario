@@ -116,6 +116,73 @@ test("setup follows its approved card reference and preserves the two-stage acce
   } finally { style.remove(); }
 });
 
+for (const setup of [true, false]) {
+  test(`${setup ? "setup" : "recovery"} confirmation uses the approved card and respective guarded finish operation`, async () => {
+    const style = document.createElement("style");
+    style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+    document.head.append(style);
+    try {
+      const calls: unknown[] = [];
+      let finish!: (value: unknown) => void;
+      let unlocked = 0;
+      const code = "ABCDEF0123456789".repeat(3);
+      mockIPC((command, payload) => {
+        calls.push({ command, payload });
+        return new Promise(resolve => { finish = resolve; });
+      });
+      render(createElement(CatalogAccessGate, { ...props, status: setup ? "setup_required" : "locked", onUnlocked() { unlocked++; } }));
+      if (!setup) await userEvent.click(recoveryAction());
+      fireEvent.change(screen.getByLabelText("Nueva contraseña"), { target: { value: "fixture-password" } });
+      fireEvent.change(screen.getByLabelText("Confirmar contraseña"), { target: { value: "fixture-password" } });
+      if (!setup) fireEvent.change(screen.getByLabelText("Código de recuperación"), { target: { value: "B".repeat(48) } });
+      await userEvent.click(screen.getByRole("button", { name: setup ? "Configurar catálogo" : "Restablecer contraseña" }));
+      await act(async () => { finish({ kind: "recovery_code", recovery_code: code }); });
+      assert.equal(unlocked, 0);
+      const main = screen.getByRole("main", { name: "Guardá tu código de recuperación" });
+      const form = within(main).getByRole("form", { name: "Guardá tu código de recuperación" });
+      const card = main.querySelector("[data-ui-catalog-confirmation-card]")!;
+      assert.ok(card.contains(form));
+      assert.equal(getComputedStyle(card).borderRadius, "32px");
+      assert.ok(card.querySelector('svg[aria-hidden="true"][focusable="false"]'));
+      assert.equal(main.querySelectorAll('input:not([type="checkbox"])').length, 0);
+      assert.equal(screen.queryByText(/Datos de ejemplo|DEMO|Configurá una contraseña|Ingresá tu contraseña/), null);
+      assert.ok(screen.getByText("Guardá este código de recuperación en un lugar seguro. Solo se muestra ahora."));
+      assert.ok(screen.getByText("Te permite restablecer la contraseña si la olvidás."));
+      assert.ok(screen.getByText("Confirmá que guardaste el código para continuar."));
+      const output = screen.getByRole("status", { name: "Código de recuperación" });
+      assert.equal(output.tagName, "OUTPUT");
+      assert.equal(output.textContent, code);
+      assert.equal(output.hasAttribute("contenteditable"), false);
+      assert.equal(getComputedStyle(output).overflowWrap, "anywhere");
+      assert.equal(getComputedStyle(output).whiteSpace, "normal");
+      const checkbox = screen.getByRole<HTMLInputElement>("checkbox", { name: "Confirmo que guardé el código de recuperación" });
+      const button = screen.getByRole<HTMLButtonElement>("button", { name: "Continuar al catálogo" });
+      assert.equal(checkbox.checked, false);
+      assert.equal(button.disabled, true);
+      await userEvent.click(button);
+      assert.equal(calls.length, 1);
+      await userEvent.click(checkbox);
+      assert.equal(button.disabled, false);
+      assert.equal(getComputedStyle(button).borderRadius, "999px");
+      act(() => { fireEvent.submit(form); fireEvent.submit(form); });
+      const command = setup ? "catalog_access_finish_setup_command" : "catalog_access_finish_recovery_command";
+      assert.deepEqual(calls.slice(1), [{ command, payload: { request: { confirmed: true } } }]);
+      assert.equal(screen.getByRole<HTMLButtonElement>("button", { name: "Procesando…" }).disabled, true);
+      assert.equal(unlocked, 0);
+      await act(async () => { finish({ kind: "error", code: "access_unavailable", message: "fixture error" }); });
+      assert.equal(screen.getByRole("alert").textContent, "No se pudo completar la solicitud de acceso al catálogo.");
+      assert.equal(unlocked, 0);
+      assert.equal(screen.getByRole<HTMLButtonElement>("button", { name: "Continuar al catálogo" }).disabled, true);
+      await userEvent.click(checkbox);
+      await userEvent.click(screen.getByRole("button", { name: "Continuar al catálogo" }));
+      assert.deepEqual(calls.slice(1), [{ command, payload: { request: { confirmed: true } } }, { command, payload: { request: { confirmed: true } } }]);
+      await act(async () => { finish({ kind: "success" }); });
+      assert.equal(unlocked, 1);
+      assert.equal(screen.queryByText(code), null);
+    } finally { style.remove(); }
+  });
+}
+
 test("pending unlock sends the exact password once, keeps editing, then clears the response secret", async () => {
   let finish!: (value: unknown) => void;
   const calls: unknown[] = [];

@@ -55,11 +55,14 @@ export function CatalogAccessGate({ status, notice, onUnlocked }: { status: Cata
   const isConfirmation = mode === "confirm_setup" || mode === "confirm_recovery";
   const recoveryNotice = isConfirmation && shownCode ? createElement("section", { "aria-label": "Código de recuperación" },
     createElement("p", null, "Guardá este código de recuperación en un lugar seguro. Solo se muestra ahora."),
-    createElement("output", { "data-ui-catalog-recovery-code": true }, shownCode),
-    createElement("label", null,
+    createElement("div", { "data-ui-catalog-confirmation-code-block": true },
+      createElement("span", { id: "catalog-recovery-code-label" }, "Código de recuperación"),
+      createElement("output", { "aria-labelledby": "catalog-recovery-code-label", "data-ui-catalog-recovery-code": true }, shownCode)),
+    createElement("p", null, "Te permite restablecer la contraseña si la olvidás."),
+    createElement("label", { "data-ui-catalog-confirmation-checkbox": true },
       createElement("input", { type: "checkbox", checked: confirmation === "stored", onChange: (event: ChangeEvent<HTMLInputElement>) => setConfirmation(event.currentTarget.checked ? "stored" : "") }),
       "Confirmo que guardé el código de recuperación")) : null;
-  const form = status === "locked" || status === "setup_required" ? createElement("form", { "aria-labelledby": isUnlock || isSetup ? "catalog-access-heading" : undefined, onSubmit: (event: FormEvent) => { void submit(event); } },
+  const form = status === "locked" || status === "setup_required" ? createElement("form", { "aria-labelledby": isUnlock || isSetup || isConfirmation ? "catalog-access-heading" : undefined, onSubmit: (event: FormEvent) => { void submit(event); } },
     (mode === "setup" || mode === "recovery") && createElement("label", null, "Nueva contraseña", createElement("input", { type: "password", autoComplete: "new-password", "aria-describedby": isSetup ? "catalog-setup-hint" : undefined, placeholder: isSetup ? "Nueva contraseña" : undefined, value: password, onChange: (event: ChangeEvent<HTMLInputElement>) => setPassword(event.currentTarget.value), required: true, minLength: 8, maxLength: 1024 })),
     (mode === "setup" || mode === "recovery") && createElement("label", null, "Confirmar contraseña", createElement("input", { type: "password", autoComplete: "new-password", "aria-describedby": isSetup ? "catalog-setup-hint" : undefined, placeholder: isSetup ? "Confirmá la nueva contraseña" : undefined, value: confirmation, onChange: (event: ChangeEvent<HTMLInputElement>) => setConfirmation(event.currentTarget.value), required: true, minLength: 8, maxLength: 1024 })),
     mode === "unlock" && createElement("label", null, "Contraseña", createElement("input", { type: "password", autoComplete: "current-password", value: password, onChange: (event: ChangeEvent<HTMLInputElement>) => setPassword(event.currentTarget.value), required: true, maxLength: 1024 })),
@@ -69,8 +72,20 @@ export function CatalogAccessGate({ status, notice, onUnlocked }: { status: Cata
     isSetup && createElement("p", { "data-ui-catalog-setup-next": true }, "En el siguiente paso deberás guardar tu código de recuperación para completar la configuración."),
     feedback && createElement(Feedback, { kind: "error" } as never, feedback),
     createElement(Action, { variant: "primary", type: "submit", disabled: pending || isConfirmation && confirmation !== "stored" }, pending ? "Procesando…" : isConfirmation ? "Continuar al catálogo" : mode === "setup" ? "Configurar catálogo" : mode === "unlock" ? "Desbloquear catálogo" : "Restablecer contraseña"),
+    isConfirmation && createElement("p", { "data-ui-catalog-confirmation-hint": true }, "Confirmá que guardaste el código para continuar."),
     mode === "unlock" && createElement(Action, { type: "button", variant: "tertiary", disabled: pending, onClick: () => { setMode("recovery"); setFeedback(null); } }, "Usar código de recuperación"),
     mode === "recovery" && createElement(Action, { type: "button", variant: "tertiary", disabled: pending, onClick: () => { setMode("unlock"); setFeedback(null); } }, "Volver al ingreso de contraseña")) : null;
+  if (isConfirmation) {
+    return createElement("main", { "aria-labelledby": "catalog-access-heading", "data-ui-catalog-access": true, "data-ui-catalog-confirmation": true },
+      createElement("div", { "data-ui-catalog-confirmation-card": true },
+        createElement("span", { "data-ui-catalog-confirmation-icon": true, "aria-hidden": true },
+          createElement("svg", { viewBox: "0 0 24 24", width: 24, height: 24, fill: "none", stroke: "currentColor", strokeWidth: 1.7, "aria-hidden": true, focusable: false },
+            createElement("circle", { cx: 7, cy: 12, r: 4 }),
+            createElement("path", { d: "M11 12h10l-2 3h-3v2h-3v-2h-2M7 11v2" }))),
+        createElement("h1", { id: "catalog-access-heading" }, "Guardá tu código de recuperación"),
+        notice ? createElement(Feedback, { kind: "success", children: notice }) : null,
+        form));
+  }
   if (isSetup) {
     return createElement("main", { "aria-labelledby": "catalog-access-heading", "data-ui-catalog-access": true, "data-ui-catalog-setup": true },
       createElement("div", { "data-ui-catalog-setup-card": true },
