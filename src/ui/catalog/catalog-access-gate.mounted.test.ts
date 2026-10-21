@@ -116,6 +116,73 @@ test("setup follows its approved card reference and preserves the two-stage acce
   } finally { style.remove(); }
 });
 
+test("recovery entry adapts setup into a named card without changing credentials or pending handoff", async () => {
+  const style = document.createElement("style");
+  style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  document.head.append(style);
+  try {
+    const calls: unknown[] = [];
+    let finish!: (value: unknown) => void;
+    let unlocked = 0;
+    mockIPC((command, payload) => { calls.push({ command, payload }); return new Promise(resolve => { finish = resolve; }); });
+    const view = render(createElement(CatalogAccessGate, { ...props, onUnlocked() { unlocked++; } }));
+    await userEvent.click(recoveryAction());
+    const main = screen.getByRole("main", { name: "Restablecer contraseña" });
+    const form = within(main).getByRole("form", { name: "Restablecer contraseña" });
+    const card = main.querySelector("[data-ui-catalog-recovery-entry-card]")!;
+    assert.ok(card?.contains(form));
+    assert.equal(getComputedStyle(main).display, "flex");
+    assert.equal(getComputedStyle(card).borderRadius, "32px");
+    assert.equal(getComputedStyle(card).inlineSize, "min(560px, 100%)");
+    assert.equal(getComputedStyle(card).flexShrink, "0");
+    assert.equal(getComputedStyle(card.querySelector("h1")!).textAlign, "center");
+    assert.ok(card.querySelector('svg[aria-hidden="true"][focusable="false"]'));
+    assert.ok(screen.getByText("Ingresá el código de recuperación que guardaste y elegí una nueva contraseña para el catálogo."));
+    assert.ok(screen.getByText("En el siguiente paso deberás guardar y confirmar tu nuevo código de recuperación para completar el restablecimiento."));
+    assert.equal(screen.queryByRole("checkbox"), null);
+    assert.equal(main.querySelector("output"), null);
+    assert.equal(screen.queryByText(/Datos de ejemplo|Mockup/), null);
+    const password = screen.getByLabelText<HTMLInputElement>("Nueva contraseña");
+    const confirmation = screen.getByLabelText<HTMLInputElement>("Confirmar contraseña");
+    const code = screen.getByLabelText<HTMLInputElement>("Código de recuperación");
+    assert.deepEqual([...form.querySelectorAll("input")], [password, confirmation, code]);
+    for (const input of [password, confirmation]) {
+      assert.equal(input.type, "password"); assert.equal(input.autocomplete, "new-password");
+      assert.equal(input.minLength, 8); assert.equal(input.maxLength, 1024); assert.equal(input.required, true);
+      assert.equal(document.getElementById(input.getAttribute("aria-describedby")!)?.textContent, "Usá al menos 8 caracteres y confirmá la misma contraseña.");
+    }
+    assert.equal(code.type, "text"); assert.equal(code.autocomplete, "off"); assert.equal(code.maxLength, 48); assert.equal(code.required, true);
+    for (const control of [...form.querySelectorAll("input, button")]) {
+      assert.equal(getComputedStyle(control).inlineSize, "100%");
+      assert.equal(getComputedStyle(control).minBlockSize, "56px");
+    }
+    for (const button of within(form).getAllByRole("button")) assert.equal(getComputedStyle(button).borderRadius, "999px");
+    fireEvent.change(password, { target: { value: " new-password " } });
+    fireEvent.change(confirmation, { target: { value: "mismatched" } });
+    fireEvent.change(code, { target: { value: " BEEF " } });
+    fireEvent.submit(form);
+    assert.equal(screen.getByRole("alert").textContent, "Ingresá una contraseña de al menos 8 caracteres y confirmala correctamente.");
+    assert.deepEqual(calls, []);
+    fireEvent.change(confirmation, { target: { value: " new-password " } });
+    act(() => { fireEvent.submit(form); fireEvent.submit(form); });
+    assert.deepEqual(calls, [{ command: "catalog_access_begin_recovery_command", payload: { request: { recovery_code: " BEEF ", new_password: " new-password " } } }]);
+    assert.equal(screen.getByRole<HTMLButtonElement>("button", { name: "Procesando…" }).disabled, true);
+    assert.equal(screen.getByRole<HTMLButtonElement>("button", { name: "Volver al ingreso de contraseña" }).disabled, true);
+    assert.equal(password.disabled, false);
+    await act(async () => { finish({ kind: "error", code: "invalid_credentials", message: "fixture" }); });
+    assert.equal(screen.getByRole("alert").textContent, "La contraseña o el código de recuperación no es válido.");
+    for (const input of [password, confirmation, code]) assert.equal(input.value, "");
+    fireEvent.change(password, { target: { value: "fixture-password" } });
+    fireEvent.change(confirmation, { target: { value: "fixture-password" } });
+    fireEvent.change(code, { target: { value: "B".repeat(48) } });
+    fireEvent.submit(form);
+    await act(async () => { finish({ kind: "recovery_code", recovery_code: "A".repeat(48) }); });
+    assert.equal(unlocked, 0);
+    assert.equal(view.container.querySelector("[data-ui-catalog-recovery-entry-card]"), null);
+    assert.ok(screen.getByRole("heading", { name: "Guardá tu código de recuperación" }));
+  } finally { style.remove(); }
+});
+
 for (const setup of [true, false]) {
   test(`${setup ? "setup" : "recovery"} confirmation uses the approved card and respective guarded finish operation`, async () => {
     const style = document.createElement("style");

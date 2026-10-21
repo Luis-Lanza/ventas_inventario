@@ -526,7 +526,7 @@ for (const mode of ["setup", "recovery"] as const) test(`publishes ${mode} hando
   });
   try {
     render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
-    await screen.findByRole("heading", { name: "Acceso al catálogo" });
+    await screen.findByRole("heading", { name: mode === "setup" ? "Configurar acceso al catálogo" : "Acceso al catálogo" });
     if (mode === "recovery") {
       await userEvent.click(await screen.findByRole("button", { name: "Usar código de recuperación" }));
       await userEvent.type(screen.getByLabelText("Código de recuperación"), "B".repeat(48));
