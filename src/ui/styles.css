@@ -1655,15 +1655,15 @@ body:has([data-ui-inventory-dialog]) [data-ui-shell-content] { overflow: hidden;
 [data-ui-ledger-current] { display: block; color: var(--color-text-muted); font-size: var(--type-caption-size); }
 [data-ui-movement-ledger] [data-ui-aligned-data] { table-layout: fixed; }
 [data-ui-movement-ledger] [data-ui-aligned-data] :is(th, td) { overflow-wrap: anywhere; }
-/* Draft mode scopes filters; the rendered movement section scopes evidence. */
-[data-ui-panel]:has(> [data-ui-ledger-movement-filters]) { border-radius: 32px; padding: clamp(16px, 2vw, 32px); }
-[data-ui-panel]:has(> [data-ui-ledger-movement-filters]) > h2 { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
-[data-ui-ledger-movement-filters] [data-ui-ledger-filter-row] { grid-template-columns: minmax(0, 1fr) auto; }
-[data-ui-ledger-movement-filters] :is(input, select, button), [data-ui-ledger-results] button { min-inline-size: 0; max-inline-size: 100%; border-radius: 999px; white-space: normal; }
-[data-ui-ledger-movement-filters] :is(input, select) { border-color: var(--color-border); }
-[data-ui-ledger-movement-filters] > [data-ui-ledger-product-filter] { grid-column: 1 / -1; padding-block-start: var(--space-5); border-block-start: 1px solid var(--color-border); }
-[data-ui-ledger-movement-filters] [data-ui-ledger-product-search] { max-inline-size: 44rem; }
-[data-ui-ledger-movement-filters] [data-ui-feedback="initial"] { padding: 0; border: 0; color: var(--color-text-muted); }
+/* Shared filter finish is independent of draft and applied report mode. */
+[data-ui-panel]:has(> [data-ui-report-ledger]) { border-radius: 32px; padding: clamp(16px, 2vw, 32px); }
+[data-ui-panel]:has(> [data-ui-report-ledger]) > h2 { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
+[data-ui-report-ledger] [data-ui-ledger-filter-row] { grid-template-columns: minmax(0, 1fr) auto; }
+[data-ui-report-ledger] :is(input, select, button), [data-ui-ledger-results] button { min-inline-size: 0; max-inline-size: 100%; border-radius: 999px; white-space: normal; }
+[data-ui-report-ledger] :is(input, select) { border-color: var(--color-border); }
+[data-ui-report-ledger] > [data-ui-ledger-product-filter] { grid-column: 1 / -1; padding-block-start: var(--space-5); border-block-start: 1px solid var(--color-border); }
+[data-ui-report-ledger] [data-ui-ledger-product-search] { max-inline-size: 44rem; }
+[data-ui-report-ledger] [data-ui-feedback="initial"] { padding: 0; border: 0; color: var(--color-text-muted); }
 [data-ui-ledger-results] { display: grid; gap: var(--space-5); min-inline-size: 0; padding-block-start: var(--space-4); }
 [data-ui-ledger-results-header] { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); }
 [data-ui-ledger-results-header] > div:first-child { flex: 1 1 24rem; min-inline-size: 0; }
@@ -1690,9 +1690,9 @@ body:has([data-ui-inventory-dialog]) [data-ui-shell-content] { overflow: hidden;
 [data-ui-ledger-polarity="negative"] { color: var(--color-danger); }
 [data-ui-ledger-results] [data-ui-ledger-pages] { padding-block-start: var(--space-4); border-block-start: 1px solid var(--color-border); }
 @media (min-width: 1100px) {
- [data-ui-ledger-movement-filters] { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
- [data-ui-ledger-movement-filters] > [data-ui-ledger-date-row] { grid-column: 1; }
- [data-ui-ledger-movement-filters] > [data-ui-ledger-filter-row] { grid-column: 2; grid-row: 1; }
+ [data-ui-report-ledger] { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+ [data-ui-report-ledger] > [data-ui-ledger-date-row] { grid-column: 1; }
+ [data-ui-report-ledger] > [data-ui-ledger-filter-row] { grid-column: 2; grid-row: 1; }
 }
 [data-ui-gross-profit-report] { display: grid; min-inline-size: 0; gap: var(--space-4); }
 [data-ui-gross-profit-report] [data-ui-panel] { display: grid; min-inline-size: 0; gap: var(--space-4); }
@@ -1709,6 +1709,34 @@ body:has([data-ui-inventory-dialog]) [data-ui-shell-content] { overflow: hidden;
 }
 @media (max-width: 699px) {
   [data-ui-ledger-product-search] { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Profit-only surfaces preserve the native table and its complete historical facts. */
+[data-ui-profit-report] [data-ui-profit-results] { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-5); padding-block-start: var(--space-4); }
+[data-ui-profit-results] > h2 { margin: 0; font-size: var(--type-h1-size); }
+[data-ui-profit-results] > :not(h2):not([data-ui-report-actions]) { grid-column: 1 / -1; min-inline-size: 0; }
+[data-ui-profit-report] [data-ui-gross-profit-total] { padding: clamp(20px, 2vw, 32px); border-radius: 32px; background: var(--color-surface); gap: var(--space-4); }
+[data-ui-profit-report] [data-ui-gross-profit-total] h2 { font-size: clamp(2rem, 3vw, 3rem); color: var(--color-action); }
+[data-ui-profit-report] [data-ui-feedback="advisory"] { border-radius: 24px; background: var(--color-warning-surface); border: 1px solid var(--color-warning-edge); color: var(--color-warning); }
+[data-ui-profit-report] section[aria-label="Operaciones de ganancia bruta"] > div { overflow-x: auto; }
+[data-ui-profit-report] table { border-collapse: separate; border-spacing: 0 12px; min-inline-size: 56rem; }
+[data-ui-profit-report] caption { text-align: start; padding-block: var(--space-4); color: var(--color-text-muted); }
+[data-ui-profit-report] th { text-transform: uppercase; color: var(--color-text-muted); border: 0; }
+[data-ui-profit-report] :is(th, td) { padding: var(--space-4) var(--space-3); white-space: normal; overflow-wrap: anywhere; }
+[data-ui-profit-report] td { background: var(--color-surface); border-block: 1px solid var(--color-border); }
+[data-ui-profit-report] td:first-child { border-inline-start: 1px solid var(--color-border); border-radius: 24px 0 0 24px; }
+[data-ui-profit-report] td:last-child { border-inline-end: 1px solid var(--color-border); border-radius: 0 24px 24px 0; }
+[data-ui-profit-report] :is(th, td):nth-child(n+4) { text-align: end; font-variant-numeric: tabular-nums; }
+[data-ui-profit-report] [data-ui-profit-date], [data-ui-profit-report] [data-ui-profit-product] { display: block; }
+[data-ui-profit-report] [data-ui-profit-time], [data-ui-profit-report] [data-ui-profit-sku] { display: block; color: var(--color-text-muted); font-size: var(--type-caption-size); }
+[data-ui-profit-report] [data-ui-profit-unknown] { color: var(--color-text-muted); font-style: italic; }
+[data-ui-profit-report] [data-ui-profit-polarity="positive"] { color: var(--color-success); font-weight: var(--weight-semibold); }
+[data-ui-profit-report] [data-ui-profit-polarity="negative"] { color: var(--color-danger); font-weight: var(--weight-semibold); }
+[data-ui-profit-report] :is(button, input) { border-radius: 999px; }
+[data-ui-profit-report] nav { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-block-start: var(--space-4); padding-block-start: var(--space-4); border-block-start: 1px solid var(--color-border); }
+[data-ui-profit-report] nav span { order: -1; margin-inline-end: auto; }
+@media (max-width: 699px) {
+ [data-ui-profit-report] [data-ui-profit-results] { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Body-level portal normally; reparented inside the active modal for accessible announcements. */

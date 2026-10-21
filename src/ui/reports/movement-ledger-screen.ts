@@ -91,7 +91,7 @@ export function MovementLedgerScreen() {
   "data-ui-report-applied-mode": appliedMode === "gross_profit" ? "gross-profit" : "movement", "aria-busy": (appliedMode === "gross_profit" ? false : state.status === "loading") || undefined },
   createElement("header", { "data-ui-report-header": true }, createElement("h1", { id: "movement-ledger-heading" }, "Reportes"), createElement("p", null, "Consultá los movimientos de inventario o la ganancia bruta del período.")),
   createElement(Panel, { label: "Filtros" },
-   createElement("div", { "data-ui-ledger-filters": true, "data-ui-ledger-movement-filters": reportMode !== "gross_profit" || undefined },
+   createElement("div", { "data-ui-ledger-filters": true, "data-ui-report-ledger": true },
     createElement("div", { "data-ui-ledger-date-row": true },
      createElement(Field, { kind: "date", label: "Desde", control: createElement("input", { type: "date", required: true, value: state.draft.from, onChange: (event: ChangeEvent<HTMLInputElement>) => change("from", event.currentTarget.value) }) }),
      createElement(Field, { kind: "date", label: "Hasta", control: createElement("input", { type: "date", required: true, value: state.draft.to, onChange: (event: ChangeEvent<HTMLInputElement>) => change("to", event.currentTarget.value) }) })),

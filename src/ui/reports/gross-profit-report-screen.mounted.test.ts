@@ -7,6 +7,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 import { GrossProfitReportScreen } from "./gross-profit-report-screen.ts";
+import type { GrossProfitOperation } from "../../commands/gross-profit-operations.ts";
 function localContractDiagnostics(source: string) {
  const config = ts.readConfigFile("tsconfig.json", ts.sys.readFile);
  assert.equal(config.error, undefined);
@@ -49,7 +50,7 @@ test("strict local props reject non-date period values without ignoring program 
  assert.ok(diagnostics.every(diagnostic => diagnostic.file?.fileName.endsWith("local-contract-fixture.ts")));
 });
 const report = (amount_centavos = 1250, missing_cost_line_count = 0, activity_count = 1) => ({ kind: "success", report: { amount_centavos, missing_cost_line_count, activity_count } });
-const operation = (id: number, page = 1) => ({ occurred_at: "2024-03-10T11:30:00Z", operation_kind: "venta", sale_id: id, return_id: null, product_name: "Filtro", sku: `SKU-${id}`, signed_quantity: 2, negotiated_unit_price_centavos: 1250, unit_cost_snapshot_centavos: null, cost_state: "unknown", signed_gross_profit_centavos: null });
+const operation = (id: number, page = 1): GrossProfitOperation => ({ occurred_at: "2024-03-10T11:30:00Z", operation_kind: "venta", sale_id: id, return_id: null, product_name: "Filtro", sku: `SKU-${id}`, signed_quantity: 2, negotiated_unit_price_centavos: 1250, unit_cost_snapshot_centavos: null, cost_state: "unknown", signed_gross_profit_centavos: null });
 const operations = (rows = [operation(7)], page = 1, total = 1) => ({ kind: "success", report: { rows, page, page_size: 20, total, total_pages: Math.ceil(total / 20) } });
 test("shared profit PDF outcomes leave missing-cost disclosures inline", async () => {
  let outcome: unknown = { kind: "success" };
@@ -92,6 +93,10 @@ test("shows signed summary, missing-cost disclosure, and accessible Spanish oper
  const results = screen.getByRole("region", { name: "Ganancia bruta" });
  const actionBar = results.querySelector("[data-ui-report-actions]");
  assert.equal(actionBar?.previousElementSibling, results.querySelector("h2"));
+ assert.equal(results.hasAttribute("data-ui-panel"), false);
+ assert.ok(results.closest('[data-ui-profit-report]'));
+ assert.equal(screen.getByRole("region", { name: "Total de ganancia bruta" }).contains(actionBar), false);
+ assert.ok(tablePresentation());
  assert.equal(actionBar?.querySelector('[data-ui-action="secondary"]')?.textContent, "Exportar PDF");
  assert.match(screen.getByText(/2 línea\(s\) no tienen costo histórico conocido/).textContent ?? "", /se excluyen del total/);
  const table = await screen.findByRole("table", { name: /Operaciones del período aplicado:/ });
@@ -99,7 +104,31 @@ test("shows signed summary, missing-cost disclosure, and accessible Spanish oper
  assert.ok(withinText(table, "Venta #7")); assert.ok(withinText(table, "Filtro (SKU SKU-7)")); assert.ok(withinText(table, "No disponible (no calculable)"));
  assert.equal(screen.getByText("+2").textContent, "+2");
 });
+function tablePresentation() { return document.querySelector('[data-ui-profit-report] table tbody tr td [data-ui-profit-product]'); }
 function withinText(root: HTMLElement, text: string) { return Array.from(root.querySelectorAll("td")).some(cell => cell.textContent === text); }
+test("profit row finish preserves historical prices, unknown versus zero, and signed returns", async () => {
+ const unknown = operation(7);
+ const zero: GrossProfitOperation = { ...operation(8), cost_state: "known", unit_cost_snapshot_centavos: 1250, signed_gross_profit_centavos: 0 };
+ const returned: GrossProfitOperation = { ...operation(9), operation_kind: "devolución", return_id: 11, signed_quantity: -2, cost_state: "known", unit_cost_snapshot_centavos: 500, signed_gross_profit_centavos: -1500 };
+ mockIPC(command => command === "gross_profit_report_command" ? report(1000, 1, 3) : operations([unknown, zero, returned], 1, 3));
+ render(createElement(GrossProfitReportScreen, { period: { from: "2024-03-10", to: "2024-03-20" } }));
+ await screen.findByRole("heading", { name: "Bs 10.00" });
+ const rows = Array.from(screen.getByRole("table").querySelectorAll("tbody tr"));
+ const cells = rows.map(row => Array.from(row.querySelectorAll("td")));
+ assert.deepEqual(cells[0].map(cell => cell.textContent), [unknown.occurred_at, "Venta #7", "Filtro (SKU SKU-7)", "+2", "Bs 12.50", "No disponible (no calculable)", "No calculable"]);
+ assert.equal(cells[0][5].getAttribute("data-ui-profit-unknown"), "true");
+ assert.equal(cells[0][6].getAttribute("data-ui-profit-unknown"), "true");
+ assert.equal(cells[1][5].textContent, "Bs 12.50");
+ assert.equal(cells[1][5].hasAttribute("data-ui-profit-unknown"), false);
+ assert.equal(cells[1][6].textContent, "Bs 0.00");
+ assert.equal(cells[1][6].hasAttribute("data-ui-profit-unknown"), false);
+ assert.equal(cells[1][6].getAttribute("data-ui-profit-polarity"), "neutral");
+ assert.deepEqual(cells[2].map(cell => cell.textContent), [returned.occurred_at, "Devolución #11 · Venta #9", "Filtro (SKU SKU-9)", "−2", "Bs 12.50", "Bs 5.00", "Bs −15.00"]);
+ assert.equal(cells[2][6].getAttribute("data-ui-profit-polarity"), "negative");
+ assert.equal(rows[0].querySelector("time")?.getAttribute("datetime"), unknown.occurred_at);
+ assert.ok(screen.getByText("Período: 2024-03-10 al 2024-03-20"));
+ assert.ok(screen.getByText(/1 línea\(s\) no tienen costo histórico conocido/));
+});
 test("keeps no activity distinct from zero profit with activity and exposes bounded next-page navigation", async () => {
  let calls = 0;
  mockIPC(command => command === "gross_profit_report_command" ? report(0, 0, 0) : (++calls === 1 ? operations(Array.from({ length: 20 }, (_, index) => operation(index + 1)), 1, 21) : operations([operation(21)], 2, 21)));

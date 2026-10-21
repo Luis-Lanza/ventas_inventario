@@ -53,17 +53,18 @@ export function GrossProfitReportScreen({ period }: GrossProfitReportScreenProps
   : state.operations_status === "error" ? createElement(Feedback, { kind: "error" }, createElement("span", null, "No se pudieron cargar las operaciones. ", createElement(Action, { variant: "tertiary", onClick: () => runRange(state.applied) }, "Reintentar")))
   : state.operations_status === "empty" ? createElement(Feedback, { kind: "empty" }, "No hay operaciones en el período aplicado.") : null;
  const rows = state.operations?.rows.map(row => createElement("tr", { key: `${row.occurred_at}-${row.operation_kind}-${row.return_id ?? row.sale_id}-${row.sku}` },
-  createElement("td", null, row.occurred_at), createElement("td", null, rowName(row)), createElement("td", null, `${row.product_name} (SKU ${row.sku})`),
-  createElement("td", null, signed(row.signed_quantity)), createElement("td", null, money(row.negotiated_unit_price_centavos)),
-  createElement("td", null, row.cost_state === "unknown" ? "No disponible (no calculable)" : money(row.unit_cost_snapshot_centavos!)),
-  createElement("td", null, row.signed_gross_profit_centavos === null ? "No calculable" : money(row.signed_gross_profit_centavos))));
- return createElement("section", { "aria-label": "Resultados de ganancia bruta", "data-ui-gross-profit-report": true, "aria-busy": state.summary_status === "loading" || state.operations_status === "loading" || undefined },
+  createElement("td", null, createElement("time", { dateTime: row.occurred_at }, createElement("span", { "data-ui-profit-date": true }, row.occurred_at.slice(0, 10)), createElement("span", { "data-ui-profit-time": true }, row.occurred_at.slice(10)))), createElement("td", null, rowName(row)), createElement("td", null, createElement("span", { "data-ui-profit-product": true }, row.product_name), " ", createElement("span", { "data-ui-profit-sku": true }, `(SKU ${row.sku})`)),
+  createElement("td", { "data-ui-profit-polarity": row.signed_quantity < 0 ? "negative" : "neutral" }, signed(row.signed_quantity)), createElement("td", null, money(row.negotiated_unit_price_centavos)),
+  createElement("td", { "data-ui-profit-unknown": row.cost_state === "unknown" || undefined }, row.cost_state === "unknown" ? "No disponible (no calculable)" : money(row.unit_cost_snapshot_centavos!)),
+  createElement("td", { "data-ui-profit-unknown": row.signed_gross_profit_centavos === null || undefined, "data-ui-profit-polarity": row.signed_gross_profit_centavos === null ? undefined : row.signed_gross_profit_centavos > 0 ? "positive" : row.signed_gross_profit_centavos < 0 ? "negative" : "neutral" }, row.signed_gross_profit_centavos === null ? "No calculable" : money(row.signed_gross_profit_centavos))));
+ return createElement("section", { "aria-label": "Resultados de ganancia bruta", "data-ui-gross-profit-report": true, "data-ui-profit-report": true, "aria-busy": state.summary_status === "loading" || state.operations_status === "loading" || undefined },
   period ? null : createElement("header", { "data-ui-report-header": true }, createElement("h1", { id: "gross-profit-heading" }, "Ganancia bruta"), createElement("p", null, "Total del período según ventas confirmadas y devoluciones registradas.")),
   (period ? null : createElement(Panel, { label: "Período" }, createElement("form", { "data-ui-gross-profit-filters": true, onSubmit: (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (valid) runRange(state.draft); } },
    createElement(Field, { kind: "date", label: "Desde", control: createElement("input", { type: "date", required: true, value: state.draft.from, onChange: (event: ChangeEvent<HTMLInputElement>) => dispatch({ type: "draft_changed", period: { ...state.draft, from: event.currentTarget.value } }) }) }),
    createElement(Field, { kind: "date", label: "Hasta", control: createElement("input", { type: "date", required: true, value: state.draft.to, onChange: (event: ChangeEvent<HTMLInputElement>) => dispatch({ type: "draft_changed", period: { ...state.draft, to: event.currentTarget.value } }) }) }),
    createElement(Action, { variant: "primary", type: "submit", disabled: !valid }, "Aplicar período")))),
-  createElement(Panel, { label: period ? "Resultados" : "Ganancia bruta" },
+  createElement("section", { "aria-label": period ? "Resultados" : "Ganancia bruta", "data-ui-profit-results": true },
+   createElement("h2", null, "Ganancia bruta"),
    createElement("div", { "data-ui-report-actions": true }, createElement(Action, { variant: "secondary", onClick: exportPdf, disabled: !exportReady, pending: state.export_status === "pending", pendingLabel: "Exportar PDF" }, "Exportar PDF")),
    status,
    exportFeedback && (!notifications || state.export_status === "pending") ? createElement(Feedback, { kind: state.export_status === "error" || state.export_status === "resource_limit" ? "error" : state.export_status === "success" ? "success" : "advisory" }, exportFeedback) : null,

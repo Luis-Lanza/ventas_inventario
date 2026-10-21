@@ -70,6 +70,8 @@ test("movement presentation preserves seven complete facts and independent draft
  assert.ok(region.querySelector('[data-ui-ledger-polarity="zero"]'));
  await user.selectOptions(screen.getByRole("combobox", { name: "Tipo de movimiento" }), "gross_profit");
  assert.ok(screen.getByRole("region", { name: "Movimientos de inventario" }));
+ assert.ok(screen.getByRole("region", { name: "Filtros" }).querySelector('[data-ui-report-ledger]'));
+ assert.equal(screen.queryByRole("searchbox", { name: "Buscar producto por nombre o SKU" }), null);
  assert.equal(calls.requests.length, 1);
  await user.click(screen.getByRole("button", { name: "Exportar PDF" }));
  assert.equal((calls.exports[0] as { request: { movement_type: unknown } }).request.movement_type, null);
