@@ -58,6 +58,42 @@ test("activation screen exposes an accessible installation code and recovery act
   assert.doesNotMatch(document.body.textContent ?? "", /expir|suscrip|renov|servidor|C:\\|signature/i);
 });
 
+for (const rule of ["standalone brand card", "installation guidance", "separated actions"] as const) {
+  test(`activation presentation: ${rule}`, async () => {
+    const code = "abcdef0123456789".repeat(4);
+    mockIPC(command => {
+      if (command === "license_status_command") return { kind: "status", code: "license_missing" };
+      if (command === "license_installation_code_command") return { kind: "code", code };
+      throw new Error(command);
+    });
+    render(createElement(ActivationScreen, { onRecovery: () => undefined, onActivated: () => assert.fail("unexpected activation") }));
+    const input = await screen.findByRole("textbox", { name: "Tu código de instalación" }) as HTMLInputElement;
+    const main = screen.getByRole("main", { name: "Activá Velay" });
+    if (rule === "standalone brand card") {
+      const card = main.querySelector("[data-ui-activation-card]");
+      assert.ok(card);
+      assert.equal(within(card as HTMLElement).getByText("Velay").textContent, "Velay");
+      assert.ok(card.querySelector('[data-ui-activation-mark][aria-hidden="true"]'));
+      assert.equal(screen.queryByRole("navigation"), null);
+      assert.doesNotMatch(main.textContent ?? "", /Mockup|Moneda|ejemplo/);
+    } else if (rule === "installation guidance") {
+      const region = screen.getByRole("region", { name: "Código de instalación" });
+      assert.equal(input.getAttribute("aria-describedby"), "installation-code-instruction");
+      assert.equal(within(region).getByText("Compartí este código con el proveedor para recibir tu archivo de licencia.").id, "installation-code-instruction");
+      assert.equal(input.value, code);
+      assert.equal(input.readOnly, true);
+      input.focus(); input.select();
+      assert.equal(input.selectionEnd! - input.selectionStart!, code.length);
+    } else {
+      assert.equal(screen.getByRole("button", { name: "Importar archivo de licencia" }).getAttribute("data-ui-action"), "primary");
+      const recovery = screen.getByRole("button", { name: "Continuar en modo de recuperación" });
+      assert.equal(recovery.getAttribute("data-ui-action"), "secondary");
+      assert.ok(recovery.closest("[data-ui-activation-recovery]"));
+      assert.ok(within(recovery.parentElement!).getByText("También podés continuar en modo de recuperación para consultar la información disponible y crear copias de seguridad."));
+    }
+  });
+}
+
 test("activation import status is announced and cancellation is not an alert", async () => {
   mockIPC((command) => {
     if (command === "license_status_command") return { kind: "status", code: "license_missing" };

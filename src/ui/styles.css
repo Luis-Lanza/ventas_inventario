@@ -1,3 +1,20 @@
+/* Activation uses ordinary document scrolling, never a fixed-height card or nested scroller.
+   Auto margins collapse when content exceeds the viewport, keeping both actions reachable. */
+[data-ui-activation] { display: flex; flex-direction: column; min-block-size: 100dvh; padding: clamp(16px, 4vw, 64px); background: var(--color-canvas); }
+[data-ui-activation-card] { flex: 0 0 auto; inline-size: min(1400px, 100%); min-inline-size: 0; margin: auto; padding: clamp(24px, 5vw, 80px); border: 1px solid var(--color-border); border-radius: 40px; background: var(--color-surface); box-shadow: 0 12px 40px rgb(61 48 66 / 5%); }
+[data-ui-activation-brand] { display: flex; align-items: center; gap: 16px; margin-block-end: 40px; color: var(--color-action); font-size: 32px; line-height: 1.25; font-weight: var(--weight-semibold); }
+[data-ui-activation-mark] { flex: 0 0 32px; inline-size: 32px; block-size: 32px; border-radius: 50%; background: var(--color-action); }
+[data-ui-activation] h1 { margin-block-end: 48px; color: var(--color-action); font-size: clamp(36px, 4vw, 60px); line-height: 1.15; }
+[data-ui-activation] h2 { margin-block-end: 16px; color: var(--color-action); font-size: clamp(24px, 2.5vw, 36px); line-height: 1.25; }
+[data-ui-activation] p { color: var(--color-text-muted); font-size: 20px; line-height: 1.5; }
+[data-ui-activation] label { display: block; margin-block: 32px 16px; color: var(--color-text-muted); font-size: 16px; line-height: 1.5; text-transform: uppercase; letter-spacing: .04em; }
+/* Native text-input scrolling and selection retain the entire decoded identifier. */
+[data-ui-activation] input { display: block; inline-size: 100%; min-inline-size: 0; min-block-size: 72px; padding: 20px 24px; border-color: var(--color-border); border-radius: 24px; background: var(--color-canvas); font-family: var(--font-mono); font-size: 22px; line-height: 1.5; user-select: text; }
+[data-ui-activation] button { min-inline-size: 0; max-inline-size: 100%; min-block-size: 64px; padding: 16px 32px; border-radius: 999px; font-size: 22px; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; }
+[data-ui-activation-card] > button { margin-block-start: 32px; }
+[data-ui-activation-recovery] { margin-block-start: 48px; padding-block-start: 48px; border-block-start: 1px solid var(--color-border); }
+[data-ui-activation-recovery] > p { margin-block-end: 24px; }
+
 /* Light-first values stay separate from semantic roles for future theme replacement. */
 :root {
   color-scheme: light;
