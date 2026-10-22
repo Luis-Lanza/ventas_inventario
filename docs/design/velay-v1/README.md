@@ -112,6 +112,10 @@ For a Catalog product with many attributes, keep modal height bounded to the ava
 
 Future GSAP motion should connect actions and screen transitions, including the requested button-to-modal effect. Static screenshots do not demonstrate executable motion. Transactions must never depend on animation completion; preserve pending states, focus, accessibility, cleanup and reduced-motion behavior.
 
+## Backup/restore implementation notes
+
+The local operations now use equal rounded cards, an inset last-backup fact list and a public-only candidate summary. Restoration reuses `ConfirmationDialog` through a restore-only presentation seam and the existing checkout frame-motion driver. Cancellation clears acknowledgement immediately; contraction never gates cancellation or persistence. Mounted tests cover presentation, acknowledgement reset, focus return, pending guards and motion completion/resize/unmount; the shared driver tests cover reduced motion and invalid geometry. Native Windows visual acceptance, including short-window scrolling, remains outstanding.
+
 ## Scope and limitations
 
 - All displayed values and products are fictional examples, not production inventory.

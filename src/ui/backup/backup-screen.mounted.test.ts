@@ -265,6 +265,26 @@ test("keeps backup panels top-aligned without changing their semantic regions", 
   assert.match(css, /@media \(min-width: 961px\)[\s\S]*data-ui-backup-layout\][^}]*align-content:\s*start/);
 });
 
+test("restore presentation exposes only public facts and clears acknowledgement on return", async () => {
+  mountIPC();
+  const user = userEvent.setup({ document }); render(createElement(BackupScreen));
+  await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));
+  const candidate = screen.getByRole("region", { name: "Candidato de restauración" });
+  assert.ok(candidate.querySelector("[data-ui-restore-facts]"));
+  assert.ok(candidate.querySelector("[data-ui-restore-warning]"));
+  assert.equal(candidate.textContent?.includes(prepared.token), false);
+  const review = screen.getByRole("button", { name: "Revisar restauración" });
+  await user.click(review);
+  assert.ok(screen.getByRole("dialog").hasAttribute("data-ui-restore-dialog"));
+  assert.equal(screen.getByRole("dialog").hasAttribute("data-ui-history-correction-dialog"), false);
+  await user.click(screen.getByRole("checkbox"));
+  await user.click(screen.getByRole("button", { name: "Volver" }));
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+  assert.equal(document.activeElement, review);
+  await user.click(review);
+  assert.equal((screen.getByRole("checkbox") as HTMLInputElement).checked, false);
+});
+
 test("does not duplicate backup picker activation", async () => {
   let resolvePicker!: (value: unknown) => void; let calls = 0;
   mountIPC({ backupPicker: () => { calls++; return new Promise((resolve) => { resolvePicker = resolve; }); } });

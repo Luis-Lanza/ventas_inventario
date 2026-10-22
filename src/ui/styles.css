@@ -1401,13 +1401,32 @@ html:has([data-ui-persisted-summary]), body:has([data-ui-persisted-summary]),
 [data-ui-history-cancellation] label { display: grid; gap: var(--space-2); }
 [data-ui-history-cancellation-actions] { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 [data-ui-backup] { display: grid; gap: var(--space-5); }
-[data-ui-backup-layout] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); align-items: start; }
-[data-ui-backup] [data-ui-panel] { display: grid; gap: var(--space-4); }
-[data-ui-backup-summary], [data-ui-restore-candidate] { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--color-border); background: var(--color-surface-subtle); }
-[data-ui-backup-summary] dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0; }
+[data-ui-backup-layout] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); align-items: stretch; }
+[data-ui-backup] > :is(h1, p) { margin: 0; }
+[data-ui-backup] > p { color: var(--color-text-muted); }
+[data-ui-backup] [data-ui-panel] { display: grid; align-content: start; justify-items: start; gap: var(--space-5); min-inline-size: 0; padding: clamp(20px, 3vw, 36px); border-radius: 32px; background: var(--color-surface); }
+[data-ui-backup] [data-ui-panel] > h2 { margin: 0; }
+[data-ui-backup] button { border-radius: 999px; max-inline-size: 100%; white-space: normal; }
+[data-ui-backup-summary], [data-ui-restore-candidate] { display: grid; gap: var(--space-3); min-inline-size: 0; inline-size: 100%; margin-block-start: var(--space-3); }
+[data-ui-backup-summary] > :is(h3, p), [data-ui-restore-candidate] h3 { margin: 0; overflow-wrap: anywhere; }
+[data-ui-backup-summary] > p { color: var(--color-text-muted); }
+[data-ui-backup-summary] dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-4); margin: var(--space-3) 0 0; padding: var(--space-5); border: 1px solid var(--color-border); border-radius: 24px; background: var(--color-surface-subtle); }
 [data-ui-backup-summary] :is(dt, dd) { margin: 0; overflow-wrap: anywhere; }
-[data-ui-restore-candidate] { border-inline-start: 4px solid var(--color-accent); }
+[data-ui-backup-summary] dt { color: var(--color-text-muted); }
+[data-ui-backup-summary] dd { text-align: end; font-variant-numeric: tabular-nums; }
 [data-ui-restore-candidate] p { margin: 0; }
+[data-ui-restore-facts] { justify-self: start; padding: 8px 16px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-subtle); font-family: var(--font-mono); overflow-wrap: anywhere; }
+[data-ui-restore-warning], [data-ui-restore-dialog] > p { padding: var(--space-4); border: 1px solid #f1d6ba; border-radius: 24px; background: #fff6eb; color: #884326; }
+[data-ui-restore-candidate] button { justify-self: start; }
+[data-ui-dialog-backdrop]:has(> [data-ui-restore-dialog]) { padding: 16px; overscroll-behavior: contain; }
+html:has([data-ui-restore-dialog]), body:has([data-ui-restore-dialog]), body:has([data-ui-restore-dialog]) [data-ui-shell-content] { overflow: hidden; }
+[data-ui-restore-dialog] { inline-size: min(800px, 100%); max-block-size: calc(100dvh - 32px); padding: clamp(20px, 4vw, 40px); border-radius: 32px; background: var(--color-surface); overscroll-behavior: contain; }
+[data-ui-restore-dialog] > h2 { margin: 0 0 var(--space-5); font-size: var(--type-h1-size); }
+[data-ui-restore-dialog] > p { color: #884326; margin: 0 0 var(--space-5); }
+[data-ui-restore-dialog] [data-ui-dialog-actions] { padding-block-start: var(--space-5); border-block-start: 1px solid var(--color-border); }
+[data-ui-restore-dialog] button { border-radius: 999px; }
+[data-ui-restore-dialog]:is([data-ui-restore-opening], [data-ui-restore-closing]) > * { visibility: hidden; pointer-events: none; }
+[data-ui-restore-dialog][data-ui-restore-closing] { pointer-events: none; }
 [data-ui-onboarding-layout] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-5); align-items: start; }
 [data-ui-onboarding-layout] > [data-ui-feedback] { grid-column: 1 / -1; }
 [data-ui-onboarding] fieldset { min-inline-size: 0; margin: 0 0 var(--space-4); padding: var(--space-4); border: 1px solid var(--color-border); }

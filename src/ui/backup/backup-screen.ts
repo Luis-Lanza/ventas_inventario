@@ -5,6 +5,7 @@ import { backupCommands } from "../../commands/backup.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
 import { Panel } from "../visual-system/structure.ts";
+import { useRestoreDialogMotion } from "./restore-dialog-motion.ts";
 import { canConfirmRestore, createBackupFlow, createBackupInteraction, initialBackupState, type BackupAction } from "./backup-flow.ts";
 
 const date = (seconds: number) => { const value = new Date(seconds * 1000); return Number.isNaN(value.getTime()) ? "Fecha no disponible" : `${String(value.getUTCDate()).padStart(2, "0")}/${String(value.getUTCMonth() + 1).padStart(2, "0")}/${value.getUTCFullYear()}, ${String(value.getUTCHours()).padStart(2, "0")}:${String(value.getUTCMinutes()).padStart(2, "0")}`; };
@@ -17,7 +18,7 @@ export interface BackupScreenProps {
 
 export function BackupScreen({ canRestore = true }: BackupScreenProps) {
   const [state, dispatch] = useReducer(createBackupFlow, initialBackupState);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const dialog = useRestoreDialogMotion();
   const notifications = useActionNotifications();
   const [sharedOutcome, setSharedOutcome] = useState(false);
   // The interaction dispatches completions only after its mounted/generation guards.
@@ -44,12 +45,12 @@ export function BackupScreen({ canRestore = true }: BackupScreenProps) {
   const interactionRef = useRef<ReturnType<typeof createBackupInteraction> | null>(null);
   if (!interactionRef.current) interactionRef.current = createBackupInteraction(backupCommands, (action) => dispatchRef.current(action));
   useEffect(() => () => interactionRef.current?.dispose(), []);
-  useEffect(() => { if (state.restore_status === "success" || state.restore_status === "failure" || state.restore_status === "recovery") setDialogOpen(false); }, [state.restore_status]);
+  useEffect(() => { if (state.restore_status === "success" || state.restore_status === "failure" || state.restore_status === "recovery") dialog.retire(); }, [state.restore_status]);
   const interaction = interactionRef.current;
   const pending = state.backup_status === "pending" || state.restore_status === "pending";
   const backupMessage = backupState(state.backup_status) ? state.feedback : null;
   const restoreMessage = restoreState(state.restore_status) ? state.feedback : null;
-  const cancelDialog = () => { if (!pending) { setDialogOpen(false); dispatch({ type: "restore_cancelled" }); } };
+  const cancelDialog = () => { if (!pending && !dialog.closing) { dispatch({ type: "restore_confirmation_changed", confirmed: false }); dispatch({ type: "restore_cancelled" }); dialog.close(); } };
   return h("main", { "aria-labelledby": "backup-heading", "data-ui-backup": true },
     h("h1", { id: "backup-heading" }, "Copia y restauración"),
     h("p", null, "Creá una copia local o restaurá un respaldo validado."),
@@ -69,11 +70,12 @@ export function BackupScreen({ canRestore = true }: BackupScreenProps) {
         restoreMessage && !sharedOutcome ? h(Feedback, { kind: state.restore_status === "success" ? "success" : state.restore_status === "unavailable" ? "unavailable" : "error" } as never, restoreMessage) : null,
         canRestore && state.summary ? h("section", { "aria-labelledby": "restore-summary-heading", "data-ui-restore-candidate": true },
           h("h3", { id: "restore-summary-heading" }, "Candidato de restauración"),
-          h("p", null, `Tamaño: ${state.summary.size_bytes} bytes · Esquema: ${state.summary.schema_version}`),
-          h("p", null, "Esta acción reemplazará los datos locales actuales."),
-          h(Action, { variant: "secondary", disabled: state.restore_status !== "prepared", onClick: () => setDialogOpen(true) }, "Revisar restauración")) : null),
+          h("p", { "data-ui-restore-facts": true }, `Tamaño: ${state.summary.size_bytes} bytes · Esquema: ${state.summary.schema_version}`),
+          h("p", { "data-ui-restore-warning": true }, "Esta acción reemplazará los datos locales actuales."),
+          h("p", null, "Revisá el respaldo antes de confirmar la restauración."),
+          h(Action, { variant: "secondary", disabled: state.restore_status !== "prepared", onClick: (event) => dialog.show(event.currentTarget) }, "Revisar restauración")) : null),
     ),
-    canRestore ? h(ConfirmationDialog, { open: dialogOpen && state.summary !== null, purpose: "restore", title: "Restaurar datos locales", description: "Esta acción reemplazará los datos locales actuales", pending: state.restore_status === "pending", confirmLabel: "Restaurar datos", onCancel: cancelDialog, onConfirm: () => { if (canConfirmRestore(state)) void interaction.restore(state.summary!.token); } },
+    canRestore ? h(ConfirmationDialog, { open: dialog.open && state.summary !== null, restorePresentation: dialog, purpose: "restore", title: "Restaurar datos locales", description: "Esta acción reemplazará los datos locales actuales", pending: state.restore_status === "pending", confirmLabel: "Restaurar datos", onCancel: cancelDialog, onConfirm: () => { if (!dialog.closing && canConfirmRestore(state)) void interaction.restore(state.summary!.token); } },
       h(Field, { kind: "checkbox", label: "Entiendo que la restauración reemplaza los datos locales.", control: h("input", { id: "restore-acknowledgement", type: "checkbox", checked: state.confirmed, disabled: state.restore_status === "pending", onChange: (event) => dispatch({ type: "restore_confirmation_changed", confirmed: event.target.checked }) }) } as never)) : null,
   );
 }
