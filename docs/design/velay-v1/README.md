@@ -118,7 +118,7 @@ The local operations now use equal rounded cards, an inset last-backup fact list
 
 ## License activation implementation notes
 
-Activation now uses the large standalone Velay card with an ivory canvas, read-only monospaced native code field and separated primary import / outlined recovery actions. The existing flow, decoded identifier, notifications and callbacks remain unchanged. Mounted checks cover branding, associated guidance, complete code selection and action hierarchy; they do not establish browser geometry. Native Windows acceptance must still verify short/narrow-window scrolling, keyboard focus, real-length code legibility and both actions remaining reachable.
+Activation now uses the standalone Velay card with an ivory canvas, read-only monospaced native code field and separated primary import / outlined recovery actions. Following Windows visual feedback, the entire activation presentation is one scale smaller: card width/padding, branding, typography, field, buttons and section spacing; other screens retain their existing scale. The existing flow, decoded identifier, notifications and callbacks remain unchanged. Mounted checks cover branding, associated guidance, complete code selection and action hierarchy; they do not establish browser geometry. Native Windows acceptance must still verify short/narrow-window scrolling, keyboard focus, real-length code legibility and both actions remaining reachable.
 
 ## Scope and limitations
 
