@@ -30,6 +30,27 @@ function opener(label = "Abrir") {
   return button;
 }
 
+test("onboarding form presentation is opt-in and default form focus and backdrop policy remain unchanged", async () => {
+  let cancelled = 0;
+  const presentation = { ready: false, restoreFocusFallback: () => null };
+  const view = render(formDialog({ onboardingPresentation: presentation, onCancel: () => { cancelled++; } }));
+  let frame = screen.getByRole("dialog");
+  assert.equal(frame.hasAttribute("data-ui-onboarding-category-dialog"), true);
+  assert.equal(frame.hasAttribute("data-ui-checkout-opening"), false);
+  assert.equal(frame.hasAttribute("data-ui-checkout-dialog"), false);
+  assert.equal(document.activeElement, frame);
+  view.rerender(formDialog({ onboardingPresentation: { ...presentation, ready: true } }));
+  assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Cantidad" }));
+  view.unmount();
+  const ordinary = render(formDialog({ onCancel: () => { cancelled++; } }));
+  frame = screen.getByRole("dialog");
+  assert.equal(frame.hasAttribute("data-ui-onboarding-category-dialog"), false);
+  assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Cantidad" }));
+  fireEvent.mouseDown(frame.parentElement!);
+  assert.equal(cancelled, 0);
+  ordinary.unmount();
+});
+
 test("location presentation is explicit and cannot defer unrelated dialog families", () => {
   let attachments = 0;
   const presentation = { frameRef: (node: HTMLDivElement | null) => { if (node) attachments++; }, ready: false, restoreFocusFallback: () => null, isSourceCurrent: () => true };

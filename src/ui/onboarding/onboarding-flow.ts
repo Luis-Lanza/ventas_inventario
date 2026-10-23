@@ -11,6 +11,7 @@ export const initialOnboardingState: OnboardingState = {
   categoryRequestId: 0, categoryMutationId: 0, productMutationId: 0, feedback: null,
 };
 type Action =
+  | { type: "category_dismissed" }
   | { type: "categories_started"; requestId: number } | { type: "categories_succeeded"; requestId: number; categories: Category[] }
   | { type: "categories_failed"; requestId: number } | { type: "category_started"; requestId: number }
   | { type: "category_succeeded"; requestId: number; category: Category } | { type: "category_failed"; requestId: number }
@@ -19,6 +20,7 @@ type Action =
   | { type: "category_schema_changed"; requestId: number; categories: Category[] };
 export function createOnboardingFlow(state: OnboardingState, action: Action): OnboardingState {
   switch (action.type) {
+    case "category_dismissed": return state.categoryStatus === "pending" ? state : { ...state, categoryStatus: "idle", feedback: state.categoryStatus === "error" ? null : state.feedback };
     case "categories_started": return { ...state, categoriesStatus: "loading", categoryRequestId: action.requestId, feedback: null };
     case "categories_succeeded": return action.requestId === state.categoryRequestId ? { ...state, categories: action.categories, categoriesStatus: action.categories.length ? "ready" : "empty" } : state;
     case "categories_failed": return action.requestId === state.categoryRequestId ? { ...state, categoriesStatus: "error", feedback: "No se pudieron cargar las categorías." } : state;

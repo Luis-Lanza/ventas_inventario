@@ -8,6 +8,8 @@ import { LocationPicker } from "../visual-system/location-picker.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { attributeValuesFor, parseBsToCentavos, parseOpeningQuantity, parsePositiveWhole, validateCategoryAttributes } from "./onboarding-form.ts";
 import { canSubmitCategory, canSubmitProduct, createOnboardingFlow, initialOnboardingState } from "./onboarding-flow.ts";
+import { CategoryCreateDialog } from "./category-create-dialog.ts";
+import { useCategoryDialogMotion } from "./category-dialog-motion.ts";
 
 interface Props { onBack: () => void }
 type PendingField = CategoryFieldInput & { optionsText: string };
@@ -45,7 +47,10 @@ function OnboardingForm({ onBack, onLock, onAccessRequired, lockPending, notice 
   const notifications = useActionNotifications();
   const [routineOutcome, setRoutineOutcome] = useState(false);
   const [state, dispatch] = useReducer(createOnboardingFlow, initialOnboardingState);
+  const categoryDialog = useCategoryDialogMotion();
+  const categoryActive = useRef(false);
   const [categoryName, setCategoryName] = useState("");
+  const [categoryError, setCategoryError] = useState(false);
   const [pendingField, setPendingField] = useState(emptyField);
   const [categoryFields, setCategoryFields] = useState<CategoryFieldInput[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -93,17 +98,29 @@ function OnboardingForm({ onBack, onLock, onAccessRequired, lockPending, notice 
     setCategoryFields((fields) => [...fields, { label: pendingField.label.trim(), field_type: pendingField.field_type, required: pendingField.required, options }]);
     setPendingField(emptyField);
   };
+  const discardCategory = () => {
+    categoryActive.current = false;
+    setCategoryName(""); setCategoryFields([]); setPendingField(emptyField); setCategoryError(false);
+  };
+  const closeCategory = () => {
+    if (categoryLock.current || lockPending || categoryDialog.closing) return;
+    categoryDialog.close();
+    discardCategory();
+    dispatch({ type: "category_dismissed" });
+  };
   const submitCategory = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (lockPending || !canSubmitCategory(state) || categoryLock.current || productLock.current) return;
-    if (!categoryName.trim()) { setFieldError("category"); focus("category-name"); return; }
-    const id = ++mutation.current; categoryLock.current = true; setRoutineOutcome(false); setFieldError(""); dispatch({ type: "category_started", requestId: id });
+    if (!categoryActive.current || categoryDialog.closing || lockPending || !canSubmitCategory(state) || categoryLock.current || productLock.current) return;
+    if (!categoryName.trim()) { setCategoryError(true); focus("category-name"); return; }
+    const id = ++mutation.current; categoryLock.current = true; setRoutineOutcome(false); setCategoryError(false); dispatch({ type: "category_started", requestId: id });
     try {
       const response = await createCategory({ name: categoryName.trim(), fields: categoryFields });
       if (!mounted.current || id !== mutation.current) return;
       if (response.kind === "success") {
         setRoutineOutcome(true); notifications?.publish({ severity: "success", message: `Categoría creada: ${response.name}.` });
-        dispatch({ type: "category_succeeded", requestId: id, category: response }); setSelectedId(String(response.category_id)); setCategoryName(""); setCategoryFields([]);
+        request.current++; // An older in-flight list must not overwrite the newly selected category.
+        dispatch({ type: "category_succeeded", requestId: id, category: response }); setSelectedId(String(response.category_id));
+        categoryDialog.close(); discardCategory();
       } else {
         if (response.code === "catalog_access_required" || response.code === "license_required") { onAccessRequired(response.message); return; }
         if (response.code === "persistence_failure") { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear la categoría." }); }
@@ -114,7 +131,7 @@ function OnboardingForm({ onBack, onLock, onAccessRequired, lockPending, notice 
   };
   const submitProduct = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (lockPending || !canSubmitProduct(state) || productLock.current || categoryLock.current) return;
+    if (categoryActive.current || lockPending || !canSubmitProduct(state) || productLock.current || categoryLock.current) return;
     const purchaseCost = purchasePrice.trim() === "" ? null : parseBsToCentavos(purchasePrice);
     const productErrors = !selected ? "category" : !sku.trim() ? "sku" : !productName.trim() ? "name" : purchasePrice.trim() !== "" && purchaseCost === null ? "purchase-price" : parseBsToCentavos(listPrice) === null ? "list-price" : parseBsToCentavos(minimumSalePrice) === null ? "minimum-price" : parseBsToCentavos(minimumSalePrice)! > parseBsToCentavos(listPrice)! ? "minimum-price" : parseOpeningQuantity(stock) === null ? "stock" : lowStockThreshold.trim() !== "" && parsePositiveWhole(lowStockThreshold) === null ? "low-stock-threshold" : "";
     const attributeError = selected && !productErrors ? validateCategoryAttributes(selected, attributes) : null;
@@ -189,13 +206,16 @@ function OnboardingForm({ onBack, onLock, onAccessRequired, lockPending, notice 
   return h("main", { "aria-labelledby": "onboarding-heading", "data-ui-onboarding": true },
     h("h1", { id: "onboarding-heading" }, "Alta de productos"), h(Action, { variant: "tertiary", onClick: onBack }, "Volver a ventas"),
     h(Action, { variant: "secondary", disabled: pending, onClick: onLock }, lockPending ? "Bloqueando…" : "Bloquear catálogo"),
-    notice ? h(Feedback, { kind: "error", children: notice }) : null, feedback,
+    notice ? h(Feedback, { kind: "error", children: notice }) : null, categoryDialog.open && state.categoryStatus === "error" ? null : feedback,
     h("div", { "data-ui-onboarding-layout": true },
-      h(Panel, { label: "Crear categoría" } as never, h("form", { onSubmit: submitCategory, "aria-busy": state.categoryStatus === "pending" || undefined },
-        h(Field, { kind: "text", label: "Nombre de la categoría", error: fieldError === "category" ? "Ingresá un nombre para la categoría." : undefined, control: h("input", { id: "category-name", value: categoryName, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setCategoryName(event.target.value) }) } as never),
+      h(Action, { variant: "secondary", disabled: pending || categoryDialog.open, "aria-haspopup": "dialog", "aria-expanded": categoryDialog.open, onClick: (event) => { if (pending || categoryDialog.open) return; categoryActive.current = true; categoryDialog.show(event.currentTarget); } }, "Crear categoría"),
+      categoryDialog.open ? h(CategoryCreateDialog, { presentation: categoryDialog, pending: state.categoryStatus === "pending", onCancel: closeCategory },
+        state.categoryStatus === "error" ? feedback : null,
+        h("form", { onSubmit: submitCategory, "aria-busy": state.categoryStatus === "pending" || undefined },
+        h(Field, { kind: "text", label: "Nombre de la categoría", error: categoryError ? "Ingresá un nombre para la categoría." : undefined, control: h("input", { id: "category-name", value: categoryName, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setCategoryName(event.target.value) }) } as never),
         h("fieldset", null, h("legend", null, "Definición de atributos de la categoría"), h("p", null, "La categoría define el nombre, tipo, obligatoriedad y opciones de cada atributo; los valores se completan en cada producto."), h(Field, { kind: "text", label: "Nombre del campo", control: h("input", { id: "field-label", value: pendingField.label, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPendingField({ ...pendingField, label: event.target.value }) }) } as never), h(Field, { kind: "select", label: "Tipo de campo", control: h("select", { id: "field-type", value: pendingField.field_type, disabled: pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => setPendingField({ ...pendingField, field_type: event.target.value as FieldType }) }, h("option", { value: FIELD_TYPE.TEXT }, "Texto"), h("option", { value: FIELD_TYPE.NUMBER }, "Número"), h("option", { value: FIELD_TYPE.OPTION }, "Opción")) } as never), pendingField.field_type === FIELD_TYPE.OPTION ? h(Field, { kind: "text", label: "Opciones separadas por coma", control: h("input", { id: "field-options", value: pendingField.optionsText, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPendingField({ ...pendingField, optionsText: event.target.value }) }) } as never) : null, h("label", null, h("input", { type: "checkbox", checked: pendingField.required, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPendingField({ ...pendingField, required: event.target.checked }) }), " Campo obligatorio"), h(Action, { variant: "secondary", type: "button", disabled: pending || !pendingField.label.trim(), onClick: addField }, "Agregar campo")),
         categoryFields.length ? h("ul", { "aria-label": "Campos pendientes" }, categoryFields.map((field, index) => h("li", { key: `${field.label}-${index}` }, `${field.label} · ${field.required ? "obligatorio" : "opcional"}`))) : null,
-        h(Action, { variant: "primary", type: "submit", pending: state.categoryStatus === "pending", pendingLabel: "Creando categoría…" }, "Crear categoría"))),
+        h(Action, { variant: "primary", type: "submit", disabled: categoryDialog.closing, pending: state.categoryStatus === "pending", pendingLabel: "Creando categoría…" }, "Crear categoría"))) : null,
       state.categoriesStatus === "loading" ? h(Feedback, { kind: "loading" } as never, "Cargando categorías…") : state.categoriesStatus === "empty" ? h(Feedback, { kind: "empty" } as never, "Creá una categoría para habilitar el alta de productos.") : state.categoriesStatus === "error" ? h(Feedback, { kind: "error" } as never, h("span", null, "No se pudieron cargar las categorías. ", h(Action, { variant: "tertiary", onClick: loadCategories }, "Reintentar"))) : h(Panel, { label: "Crear producto activo" } as never, h("form", { onSubmit: submitProduct, noValidate: true, "aria-busy": state.productStatus === "pending" || undefined },
         h(Field, { kind: "select", label: "Categoría", error: fieldError === "category" ? "Seleccioná una categoría." : undefined, control: h("select", { id: "product-category", value: selectedId, disabled: pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => { setSelectedId(event.target.value); setAttributes({}); } }, state.categories.map((category) => h("option", { key: category.category_id, value: category.category_id }, category.name))) } as never),
         h(Field, { kind: "sku", label: "SKU", error: fieldError === "sku" ? "Ingresá el SKU." : undefined, control: h("input", { id: "product-sku", value: sku, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setSku(event.target.value) }) } as never),

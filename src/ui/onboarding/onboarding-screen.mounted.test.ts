@@ -25,13 +25,58 @@ async function enterValidProduct(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco");
 }
 
+test("category modal discards every unsaved field while preserving the mounted product draft", async () => {
+  let writes = 0;
+  mockIPC((command) => command === "list_categories_command" ? success() : command === "create_category_command" ? (writes++, { kind: "success", category_id: 2, name: "Nueva", fields: [] }) : undefined);
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  const sku = await screen.findByRole("textbox", { name: "SKU" });
+  await enterValidProduct(user);
+  assert.equal(screen.queryByRole("dialog"), null);
+  const opener = screen.getByRole("button", { name: "Crear categoría" });
+  await user.click(opener);
+  let dialog = await screen.findByRole("dialog", { name: "Crear categoría" });
+  await waitFor(() => assert.equal(document.activeElement, within(dialog).getByLabelText("Nombre de la categoría")));
+  await user.type(within(dialog).getByLabelText("Nombre de la categoría"), "Descartar");
+  await user.type(within(dialog).getByLabelText("Nombre del campo"), "Agregado");
+  await user.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
+  await user.type(within(dialog).getByLabelText("Nombre del campo"), "Sin agregar");
+  await user.selectOptions(within(dialog).getByLabelText("Tipo de campo"), "option");
+  await user.type(within(dialog).getByLabelText("Opciones separadas por coma"), "Uno, Dos");
+  await user.click(within(dialog).getByLabelText("Campo obligatorio"));
+  await user.keyboard("{Escape}");
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+  assert.equal(document.activeElement, opener);
+  assert.equal(screen.getByLabelText("SKU"), sku);
+  assert.equal((sku as HTMLInputElement).value, "FIL-1");
+  assert.equal((screen.getByLabelText("Marca") as HTMLInputElement).value, "ACDelco");
+  assert.equal(writes, 0);
+  await user.click(opener);
+  dialog = await screen.findByRole("dialog");
+  assert.equal((within(dialog).getByLabelText("Nombre de la categoría") as HTMLInputElement).value, "");
+  assert.equal((within(dialog).getByLabelText("Nombre del campo") as HTMLInputElement).value, "");
+  assert.equal((within(dialog).getByLabelText("Tipo de campo") as HTMLSelectElement).value, "text");
+  assert.equal((within(dialog).getByLabelText("Campo obligatorio") as HTMLInputElement).checked, false);
+  assert.equal(within(dialog).queryByLabelText("Opciones separadas por coma"), null);
+  assert.equal(within(dialog).queryByRole("list", { name: "Campos pendientes" }), null);
+  await user.type(within(dialog).getByLabelText("Nombre de la categoría"), "Nueva");
+  await user.click(within(dialog).getByRole("button", { name: "Crear categoría" }));
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+  assert.equal(writes, 1);
+  assert.equal((screen.getByLabelText("Categoría") as HTMLSelectElement).value, "2");
+  assert.equal(screen.getByLabelText("SKU"), sku);
+  assert.equal((sku as HTMLInputElement).value, "FIL-1");
+  assert.equal((screen.getByLabelText("Precio de venta (Bs)") as HTMLInputElement).value, "125,50");
+});
+
 test("separates category definitions from product values with accessible groups", async () => {
   mockIPC((command) => command === "list_categories_command" ? success() : undefined);
   render(createElement(OnboardingScreen, { onBack: () => undefined }));
   const values = await screen.findByRole("group", { name: "Valores de atributos del producto" });
   assert.ok(within(values).getByRole("textbox", { name: "Marca" }));
   assert.equal(within(values).getByRole("textbox", { name: "Marca" }).getAttribute("aria-required"), "true");
-  const definitions = screen.getByRole("group", { name: "Definición de atributos de la categoría" });
+  await userEvent.click(screen.getByRole("button", { name: "Crear categoría" }));
+  const definitions = within(await screen.findByRole("dialog")).getByRole("group", { name: "Definición de atributos de la categoría" });
   assert.ok(within(definitions).getByRole("textbox", { name: "Nombre del campo" }));
   assert.ok(within(definitions).getByRole("combobox", { name: "Tipo de campo" }));
   assert.ok(within(definitions).getByRole("checkbox", { name: "Campo obligatorio" }));
@@ -143,12 +188,15 @@ test("returns stale unlocked onboarding to the shared gate on native authorizati
     const user = userEvent.setup({ document });
     const view = render(createElement(OnboardingScreen, { onBack: () => undefined }));
     await screen.findByLabelText("Marca");
-    if (target === "category") await user.type(screen.getByLabelText("Nombre de la categoría"), "Nueva");
+    if (target === "category") {
+      await user.click(screen.getByRole("button", { name: "Crear categoría" }));
+      await user.type(within(await screen.findByRole("dialog")).getByLabelText("Nombre de la categoría"), "Nueva");
+    }
     else {
       await enterValidProduct(user);
       fireEvent.change(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), { target: { value: "0" } });
     }
-    await user.click(screen.getByRole("button", { name: target === "category" ? "Crear categoría" : "Crear producto" }));
+    await user.click(target === "category" ? within(screen.getByRole("dialog")).getByRole("button", { name: "Crear categoría" }) : screen.getByRole("button", { name: "Crear producto" }));
     await screen.findByRole("button", { name: "Desbloquear catálogo" });
     assert.ok(screen.getByText("Desbloqueá el catálogo para continuar."));
     assert.equal(screen.queryByRole("button", { name: "Crear producto" }), null);
@@ -162,18 +210,20 @@ test("publishes category outcomes repeatedly but keeps category validation inlin
   render(createElement(ActionNotificationProvider, null, createElement(OnboardingScreen, { onBack: () => undefined })));
   const u = userEvent.setup({ document });
   await screen.findByLabelText("Marca");
-  await u.type(screen.getByRole("textbox", { name: "Nombre de la categoría" }), "Filtros");
+  await u.click(screen.getByRole("button", { name: "Crear categoría" }));
+  const dialog = within(await screen.findByRole("dialog"));
+  await u.type(dialog.getByRole("textbox", { name: "Nombre de la categoría" }), "Filtros");
   for (let i = 1; i <= 2; i++) {
-    await u.click(screen.getByRole("button", { name: "Crear categoría" }));
+    await u.click(dialog.getByRole("button", { name: "Crear categoría" }));
     await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, i));
     assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="error"]'), null);
   }
   code = "duplicate_category";
-  await u.click(screen.getByRole("button", { name: "Crear categoría" }));
-  await waitFor(() => assert.ok(document.querySelector('[data-ui-onboarding] [data-ui-feedback="error"]')));
+  await u.click(dialog.getByRole("button", { name: "Crear categoría" }));
+  await waitFor(() => assert.ok(document.querySelector('[data-ui-onboarding-category-dialog] [data-ui-feedback="error"]')));
   assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 2);
   code = "success";
-  await u.click(screen.getByRole("button", { name: "Crear categoría" }));
+  await u.click(dialog.getByRole("button", { name: "Crear categoría" }));
   await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
   assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="success"]'), null);
 });
@@ -207,8 +257,10 @@ test("suppresses duplicate and unmounted category outcomes with a surviving prov
   mockIPC((command) => command === "list_categories_command" ? success() : command === "create_category_command" ? (calls++, new Promise((resolve) => { finish = resolve; })) : undefined);
   const view = render(createElement(ActionNotificationProvider, null, createElement(OnboardingScreen, { onBack: () => undefined })));
   await screen.findByLabelText("Marca");
-  await userEvent.type(screen.getByRole("textbox", { name: "Nombre de la categoría" }), "Nueva");
-  const form = screen.getByRole("button", { name: "Crear categoría" }).closest("form")!;
+  await userEvent.click(screen.getByRole("button", { name: "Crear categoría" }));
+  const dialog = within(await screen.findByRole("dialog"));
+  await userEvent.type(dialog.getByRole("textbox", { name: "Nombre de la categoría" }), "Nueva");
+  const form = dialog.getByRole("button", { name: "Crear categoría" }).closest("form")!;
   act(() => { fireEvent.submit(form); fireEvent.submit(form); });
   assert.equal(calls, 1);
   view.rerender(createElement(ActionNotificationProvider));
@@ -251,8 +303,10 @@ test("keeps product onboarding and its location path operational with the shared
   const user = userEvent.setup({ document });
   render(createElement(OnboardingScreen, { onBack: () => undefined }));
   await screen.findByLabelText("Marca");
-  await user.type(screen.getByRole("textbox", { name: "Nombre de la categoría" }), "New category");
   await user.click(screen.getByRole("button", { name: "Crear categoría" }));
+  const dialog = within(await screen.findByRole("dialog"));
+  await user.type(dialog.getByRole("textbox", { name: "Nombre de la categoría" }), "New category");
+  await user.click(dialog.getByRole("button", { name: "Crear categoría" }));
   await screen.findByText("Categoría creada: New category.");
   await user.selectOptions(screen.getByRole("combobox", { name: "Categoría" }), "1");
   await enterValidProduct(user);
@@ -382,7 +436,7 @@ test("renders shared Spanish panels and submits supplied purchase and required s
   let request: unknown;
   mockIPC((command, payload) => command === "list_categories_command" ? success() : command === "create_product_command" ? (request = payload, { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true }) : undefined);
   const user = userEvent.setup({ document }); render(createElement(OnboardingScreen, { onBack: () => undefined }));
-  assert.ok(await screen.findByRole("heading", { name: "Alta de productos", level: 1 })); assert.ok(screen.getByRole("heading", { name: "Crear categoría", level: 2 }));
+  assert.ok(await screen.findByRole("heading", { name: "Alta de productos", level: 1 })); assert.ok(screen.getByRole("button", { name: "Crear categoría" }));
   await screen.findByLabelText("Marca"); assert.ok(screen.getByRole("heading", { name: "Crear producto activo", level: 2 }));
   await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1"); await user.type(screen.getByRole("textbox", { name: "Nombre del producto" }), "Filtro"); await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "80,00"); await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "125,50"); await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00"); await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3"); await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco"); await user.click(screen.getByRole("button", { name: "Crear producto" }));
   assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, low_stock_threshold: 1, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } }); assert.equal((await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true })).getAttribute("role"), "status");
@@ -621,8 +675,11 @@ test("offers guided native controls for active locations with live status and an
 test("prevents duplicate category submission and localizes failure", async () => {
   let resolve!: (value: unknown) => void, calls = 0;
   mockIPC((command) => command === "list_categories_command" ? { kind: "success", categories: [] } : command === "create_category_command" ? (calls++, new Promise((done) => { resolve = done; })) : undefined);
-  const user = userEvent.setup({ document }); render(createElement(OnboardingScreen, { onBack: () => undefined })); await user.type(await screen.findByRole("textbox", { name: "Nombre de la categoría" }), "Filtros");
-  const submit = screen.getByRole("button", { name: "Crear categoría" }); await user.click(submit); await user.click(submit); assert.equal(calls, 1); assert.ok(screen.getByRole("button", { name: "Creando categoría…" })); resolve({ kind: "error", code: "category_failed", message: "native detail" }); await waitFor(() => assert.equal(screen.getByRole("alert").textContent, "No se pudo crear la categoría."));
+  const user = userEvent.setup({ document }); render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await user.click(await screen.findByRole("button", { name: "Crear categoría" }));
+  const dialog = within(await screen.findByRole("dialog"));
+  await user.type(dialog.getByRole("textbox", { name: "Nombre de la categoría" }), "Filtros");
+  const submit = dialog.getByRole("button", { name: "Crear categoría" }); await user.click(submit); await user.click(submit); assert.equal(calls, 1); assert.ok(screen.getByRole("button", { name: "Creando categoría…" })); resolve({ kind: "error", code: "category_failed", message: "native detail" }); await waitFor(() => assert.equal(screen.getByRole("alert").textContent, "No se pudo crear la categoría."));
 });
 test("focuses the first invalid product field", async () => {
   mockIPC((command) => command === "list_categories_command" ? success() : undefined); const user = userEvent.setup({ document }); render(createElement(OnboardingScreen, { onBack: () => undefined })); await screen.findByLabelText("Marca");
