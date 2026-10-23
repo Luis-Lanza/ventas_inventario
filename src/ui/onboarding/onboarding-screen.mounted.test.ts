@@ -260,7 +260,7 @@ test("suppresses duplicate and unmounted category outcomes with a surviving prov
   await userEvent.click(screen.getByRole("button", { name: "Crear categoría" }));
   const dialog = within(await screen.findByRole("dialog"));
   await userEvent.type(dialog.getByRole("textbox", { name: "Nombre de la categoría" }), "Nueva");
-  const form = dialog.getByRole("button", { name: "Crear categoría" }).closest("form")!;
+  const form = (dialog.getByRole("button", { name: "Crear categoría" }) as HTMLButtonElement).form!;
   act(() => { fireEvent.submit(form); fireEvent.submit(form); });
   assert.equal(calls, 1);
   view.rerender(createElement(ActionNotificationProvider));

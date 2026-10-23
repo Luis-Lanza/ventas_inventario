@@ -66,7 +66,7 @@ test("pending category writes block Volver, Escape, backdrop and duplicate submi
   await user.click(await screen.findByRole("button", { name: "Crear categoría" }));
   const frame = screen.getByRole("dialog"), dialog = within(frame);
   await user.type(dialog.getByLabelText("Nombre de la categoría"), "Nueva");
-  const form = dialog.getByRole("button", { name: "Crear categoría" }).closest("form")!;
+  const form = (dialog.getByRole("button", { name: "Crear categoría" }) as HTMLButtonElement).form!;
   act(() => { fireEvent.submit(form); fireEvent.submit(form); });
   assert.equal(writes, 1);
   assert.equal((dialog.getByRole("button", { name: "Volver" }) as HTMLButtonElement).disabled, true);
@@ -106,7 +106,7 @@ test("actual frame opening defers focus; reverse discards immediately and stale 
   assert.equal(document.activeElement, input);
   await user.type(input, "Descartar");
   await user.tab({ shift: true });
-  assert.equal(document.activeElement, within(frame).getByRole("button", { name: "Volver" }));
+  assert.equal(document.activeElement, within(frame).getByRole("button", { name: "Crear categoría" }));
   await user.tab();
   assert.equal(document.activeElement, input);
   await user.keyboard("{Escape}");
