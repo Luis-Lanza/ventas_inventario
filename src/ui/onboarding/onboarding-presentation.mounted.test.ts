@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { createElement as h } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -58,6 +59,29 @@ test("one product card exposes ordered named sections, configured controls and a
   assert.equal(submit.getAttribute("type"), "submit");
   assert.equal(main.querySelectorAll("form").length, 1);
   assert.equal(screen.queryByText(/Datos de ejemplo|Mockup/), null);
+});
+
+test("price fields use intrinsic heights with unequal help text (cascade only, not browser geometry)", async () => {
+  native();
+  const style = document.createElement("style");
+  style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  document.head.append(style);
+  try {
+    render(h(OnboardingScreen, { onBack: () => undefined }));
+    const purchase = await screen.findByLabelText("Precio de compra (Bs)");
+    const sale = screen.getByLabelText("Precio de venta (Bs)");
+    const minimum = screen.getByLabelText("Precio mínimo de venta (Bs)");
+    const grid = purchase.closest("[data-ui-onboarding-price-fields]")!;
+    assert.equal(grid.contains(sale) && grid.contains(minimum), true);
+    assert.equal(getComputedStyle(grid).alignItems, "start");
+    for (const input of [purchase, sale, minimum]) {
+      assert.equal(getComputedStyle(input).minBlockSize, "46px");
+      const hint = document.getElementById(input.getAttribute("aria-describedby")!)!;
+      assert.ok(hint.textContent);
+      assert.equal(hint.hidden, false);
+    }
+    assert.ok(purchase.closest("[data-ui-field]")!.querySelector("small")!.textContent!.length > sale.closest("[data-ui-field]")!.querySelector("small")!.textContent!.length);
+  } finally { style.remove(); }
 });
 
 test("category opener remains the same focus source when the initial category load completes", async () => {
