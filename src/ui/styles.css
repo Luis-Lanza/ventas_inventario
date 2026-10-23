@@ -1,19 +1,19 @@
 /* Activation uses ordinary document scrolling, never a fixed-height card or nested scroller.
    Auto margins collapse when content exceeds the viewport, keeping both actions reachable. */
-[data-ui-activation] { display: flex; flex-direction: column; min-block-size: 100dvh; padding: clamp(16px, 3vw, 48px); background: var(--color-canvas); }
-[data-ui-activation-card] { flex: 0 0 auto; inline-size: min(1120px, 100%); min-inline-size: 0; margin: auto; padding: clamp(20px, 4vw, 56px); border: 1px solid var(--color-border); border-radius: 32px; background: var(--color-surface); box-shadow: 0 8px 32px rgb(61 48 66 / 5%); }
-[data-ui-activation-brand] { display: flex; align-items: center; gap: 12px; margin-block-end: 32px; color: var(--color-action); font-size: 28px; line-height: 1.25; font-weight: var(--weight-semibold); }
-[data-ui-activation-mark] { flex: 0 0 24px; inline-size: 24px; block-size: 24px; border-radius: 50%; background: var(--color-action); }
-[data-ui-activation] h1 { margin-block-end: 32px; color: var(--color-action); font-size: clamp(30px, 3vw, 48px); line-height: 1.15; }
-[data-ui-activation] h2 { margin-block-end: 12px; color: var(--color-action); font-size: clamp(22px, 2vw, 28px); line-height: 1.25; }
-[data-ui-activation] p { color: var(--color-text-muted); font-size: 16px; line-height: 1.5; }
-[data-ui-activation] label { display: block; margin-block: 24px 12px; color: var(--color-text-muted); font-size: 14px; line-height: 1.5; text-transform: uppercase; letter-spacing: .04em; }
+[data-ui-activation] { display: flex; flex-direction: column; min-block-size: 100dvh; padding: clamp(16px, 2vw, 32px); background: var(--color-canvas); }
+[data-ui-activation-card] { flex: 0 0 auto; inline-size: min(900px, 100%); min-inline-size: 0; margin: auto; padding: clamp(20px, 3vw, 40px); border: 1px solid var(--color-border); border-radius: 28px; background: var(--color-surface); box-shadow: 0 8px 24px rgb(61 48 66 / 5%); }
+[data-ui-activation-brand] { display: flex; align-items: center; gap: 10px; margin-block-end: 24px; color: var(--color-action); font-size: 24px; line-height: 1.25; font-weight: var(--weight-semibold); }
+[data-ui-activation-mark] { flex: 0 0 20px; inline-size: 20px; block-size: 20px; border-radius: 50%; background: var(--color-action); }
+[data-ui-activation] h1 { margin-block-end: 24px; color: var(--color-action); font-size: clamp(28px, 2.5vw, 40px); line-height: 1.15; }
+[data-ui-activation] h2 { margin-block-end: 8px; color: var(--color-action); font-size: clamp(20px, 1.8vw, 24px); line-height: 1.25; }
+[data-ui-activation] p { color: var(--color-text-muted); font-size: 14px; line-height: 1.5; }
+[data-ui-activation] label { display: block; margin-block: 20px 8px; color: var(--color-text-muted); font-size: 12px; line-height: 1.5; text-transform: uppercase; letter-spacing: .04em; }
 /* Native text-input scrolling and selection retain the entire decoded identifier. */
-[data-ui-activation] input { display: block; inline-size: 100%; min-inline-size: 0; min-block-size: 56px; padding: 12px 20px; border-color: var(--color-border); border-radius: 20px; background: var(--color-canvas); font-family: var(--font-mono); font-size: 18px; line-height: 1.5; user-select: text; }
-[data-ui-activation] button { min-inline-size: 0; max-inline-size: 100%; min-block-size: 48px; padding: 12px 24px; border-radius: 999px; font-size: 18px; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; }
-[data-ui-activation-card] > button { margin-block-start: 24px; }
-[data-ui-activation-recovery] { margin-block-start: 32px; padding-block-start: 32px; border-block-start: 1px solid var(--color-border); }
-[data-ui-activation-recovery] > p { margin-block-end: 16px; }
+[data-ui-activation] input { display: block; inline-size: 100%; min-inline-size: 0; min-block-size: 48px; padding: 10px 16px; border-color: var(--color-border); border-radius: 16px; background: var(--color-canvas); font-family: var(--font-mono); font-size: 16px; line-height: 1.5; user-select: text; }
+[data-ui-activation] button { min-inline-size: 0; max-inline-size: 100%; min-block-size: 44px; padding: 10px 20px; border-radius: 999px; font-size: 16px; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; }
+[data-ui-activation-card] > button { margin-block-start: 20px; }
+[data-ui-activation-recovery] { margin-block-start: 24px; padding-block-start: 24px; border-block-start: 1px solid var(--color-border); }
+[data-ui-activation-recovery] > p { margin-block-end: 12px; }
 
 /* Light-first values stay separate from semantic roles for future theme replacement. */
 :root {
