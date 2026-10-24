@@ -16,6 +16,7 @@ type PendingField = CategoryFieldInput & { optionsText: string };
 const emptyField: PendingField = { label: "", field_type: FIELD_TYPE.TEXT, required: false, options: [], optionsText: "" };
 
 export function OnboardingScreen({ onBack }: Props) {
+  const notifications = useActionNotifications();
   const [status, setStatus] = useState<CatalogAccessStatus | "loading">("loading");
   const [notice, setNotice] = useState<string | null>(null);
   const [lockPending, setLockPending] = useState(false);
@@ -32,15 +33,20 @@ export function OnboardingScreen({ onBack }: Props) {
     try {
       const response = await catalogAccessCommands.lock();
       if (!mounted.current) return;
-      if (response.kind === "success") { setStatus("locked"); setNotice("Catálogo bloqueado."); }
-      else setNotice(accessErrorMessage(response));
-    } catch { if (mounted.current) setNotice("No se pudo bloquear el catálogo."); }
+      if (response.kind === "success") {
+        setStatus("locked");
+        if (notifications) notifications.publish({ severity: "success", message: "Catálogo bloqueado." }); else setNotice("Catálogo bloqueado.");
+      } else {
+        const message = accessErrorMessage(response);
+        if (notifications) notifications.publish({ severity: "error", message }); else setNotice(message);
+      }
+    } catch { if (mounted.current) { const message = "No se pudo bloquear el catálogo."; if (notifications) notifications.publish({ severity: "error", message }); else setNotice(message); } }
     finally { if (mounted.current) { lock.current = false; setLockPending(false); } }
   };
   if (status !== "unlocked") return h("div", null,
     h(Action, { variant: "tertiary", onClick: onBack }, "Volver a ventas"),
     h(CatalogAccessGate, { status, notice, onUnlocked: () => { setNotice(null); setStatus("unlocked"); } }));
-  return h(OnboardingForm, { onBack, lockPending, notice, onLock: () => void lockCatalog(), onAccessRequired: (message: string) => { setNotice(message); setStatus("locked"); } });
+  return h(OnboardingForm, { onBack, lockPending, notice, onLock: () => void lockCatalog(), onAccessRequired: (message: string) => { if (notifications) notifications.publish({ severity: "error", message }); else setNotice(message); setStatus("locked"); } });
 }
 
 function OnboardingForm({ onBack, onLock, onAccessRequired, lockPending, notice }: Props & { onLock: () => void; onAccessRequired: (message: string) => void; lockPending: boolean; notice: string | null }) {
@@ -123,7 +129,11 @@ function OnboardingForm({ onBack, onLock, onAccessRequired, lockPending, notice 
         categoryDialog.close(); discardCategory();
       } else {
         if (response.code === "catalog_access_required" || response.code === "license_required") { onAccessRequired(response.message); return; }
-        if (response.code === "persistence_failure") { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear la categoría." }); }
+        if (response.code === "invalid_category") { setCategoryError(true); setRoutineOutcome(true); }
+        else {
+          setRoutineOutcome(true);
+          notifications?.publish({ severity: "error", message: response.code === "duplicate_category" ? "Ya existe una categoría con ese nombre." : response.code === "invalid_field_definition" ? "Revisá la definición de los campos de la categoría." : "No se pudo crear la categoría." });
+        }
         dispatch({ type: "category_failed", requestId: id });
       }
     } catch { if (mounted.current && id === mutation.current) { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear la categoría." }); dispatch({ type: "category_failed", requestId: id }); } }
@@ -187,14 +197,28 @@ function OnboardingForm({ onBack, onLock, onAccessRequired, lockPending, notice 
         if (fieldError && selected!.fields.some((field) => field.definition_id === fieldError.definition_id)) {
           const fieldId = `attribute-${fieldError.definition_id}`;
           setFieldError(fieldId);
+          setRoutineOutcome(true);
           focus(fieldId);
           const message = fieldError.reason === "invalid_number" ? "Ingresá un número válido para este campo." : fieldError.reason === "invalid_option" ? "Seleccioná una de las opciones disponibles." : "Revisá el valor de este campo.";
           setFieldErrorMessage(message);
           dispatch({ type: "product_failed", requestId: id, message });
-        } else dispatch({ type: "product_failed", requestId: id, message: "No se pudo validar un valor de atributo. Revisá los campos de categoría y corregí cualquier valor que no corresponda a su tipo u opciones." });
+        } else {
+          const message = "No se pudo validar un valor de atributo. Revisá los campos de categoría y corregí cualquier valor que no corresponda a su tipo u opciones.";
+          setRoutineOutcome(true); notifications?.publish({ severity: "error", message });
+          dispatch({ type: "product_failed", requestId: id, message });
+        }
       } else {
-        if (response.code === "persistence_failure") { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear el producto." }); }
-        dispatch({ type: "product_failed", requestId: id, message: response.message });
+        const priceField = response.code === "invalid_purchase_price" ? "purchase-price" : response.code === "invalid_sale_price" ? "list-price" : ["invalid_minimum_sale_price", "minimum_sale_price_exceeds_sale_price"].includes(response.code) ? "minimum-price" : response.code === "invalid_opening_quantity" ? "stock" : null;
+        setRoutineOutcome(true);
+        if (priceField) {
+          setFieldError(priceField);
+          focus(priceField === "minimum-price" ? "minimum-sale-price" : priceField === "stock" ? "opening-stock" : priceField);
+          dispatch({ type: "product_failed", requestId: id });
+        } else {
+          const message = response.code === "duplicate_sku" ? "Ya existe un producto con ese SKU." : response.code === "missing_category" ? "La categoría seleccionada ya no está disponible." : response.code === "invalid_product" ? "Revisá el SKU y el nombre del producto." : response.code === "missing_required_field" ? "Revisá los campos obligatorios de la categoría." : "No se pudo crear el producto.";
+          notifications?.publish({ severity: "error", message });
+          dispatch({ type: "product_failed", requestId: id, message });
+        }
       }
     } catch { if (mounted.current && id === mutation.current) { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear el producto." }); dispatch({ type: "product_failed", requestId: id }); } }
     finally { productLock.current = false; }

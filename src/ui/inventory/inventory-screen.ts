@@ -127,7 +127,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
       props.onInventoryAlertsRefresh?.();
       void refreshAlerts();
     } else {
-      const ordinary = response.code === "persistence_failure";
+      const ordinary = !["catalog_password_invalid", "request_conflict"].includes(response.code);
       const message = response.code === "request_conflict" ? "El ID de solicitud ya fue usado con datos de inventario diferentes. Reintentá con los datos correctos." : response.code === "catalog_password_invalid" ? "La contraseña del catálogo no es correcta. Ingresala de nuevo." : "No se pudo guardar la operación de inventario. Reintentá.";
       setOrdinaryFailure(ordinary);
       dispatch({ type: "confirmation_failed", message });

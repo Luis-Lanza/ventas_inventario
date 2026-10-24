@@ -361,8 +361,26 @@ test("publishes repeated accepted sale failures without redundant inline results
   code = "insufficient_stock";
   await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
   assert.ok(await screen.findByText("No hay stock suficiente para completar la venta."));
-  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 2);
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 3));
+  assert.equal(document.querySelector('[data-ui-checkout-content] [data-ui-feedback="error"]'), null);
+  assert.equal(screen.getByLabelText("Cantidad de Filtro aceite").getAttribute("value"), "1");
   assert.equal(calls, 3);
+});
+
+test("operational sale rejection stays notification-only after Sales remount", async () => {
+  installUuid(UUID);
+  const session = createSaleSession(() => UUID);
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : command === "confirm_sale_command" ? { kind: "error", code: "insufficient_stock", message: "private" } : undefined);
+  const view = render(createElement(ActionNotificationProvider, null, createElement(SaleScreen, { session })));
+  const u = await addFirst();
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  view.rerender(createElement(ActionNotificationProvider));
+  view.rerender(createElement(ActionNotificationProvider, null, createElement(SaleScreen, { session })));
+  await screen.findByRole("dialog", { name: "Revisar y cobrar" });
+  assert.equal(!!document.querySelector('[data-ui-checkout-content] [data-ui-feedback="error"]'), false);
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 1);
+  assert.equal(session.getSnapshot().lines[0].quantity, 1);
 });
 
 test("deferred persistence replaces checkout with one non-dismissible receipt over Sales", async () => {

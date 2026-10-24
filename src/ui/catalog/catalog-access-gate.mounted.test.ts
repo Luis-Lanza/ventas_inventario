@@ -7,6 +7,21 @@ import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { CatalogAccessGate } from "./catalog-access-gate.ts";
 import { catalogAccessCommands } from "../../commands/catalog.ts";
+import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
+
+test("access prerequisite rejection notifies without unlocking or retaining the submitted credential", async () => {
+  let calls = 0, unlocks = 0;
+  mockIPC(() => { calls++; return { kind: "error", code: "license_required", message: "private" }; });
+  render(createElement(ActionNotificationProvider, null, createElement(CatalogAccessGate, { status: "locked", notice: null, onUnlocked() { unlocks++; } })));
+  await userEvent.type(screen.getByLabelText("Contraseña"), "password1");
+  await userEvent.click(screen.getByRole("button", { name: "Desbloquear catálogo" }));
+  assert.ok(await within(screen.getByRole("region", { name: "Notificaciones de acciones" })).findByText("Se requiere una licencia válida para configurar el acceso al catálogo."));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1);
+  assert.equal(document.querySelector('[data-ui-catalog-access] [data-ui-feedback="error"]'), null);
+  assert.equal((screen.getByLabelText("Contraseña") as HTMLInputElement).value, "");
+  assert.equal(unlocks, 0);
+  assert.equal(calls, 1);
+});
 
 const props = { status: "locked" as const, notice: null, onUnlocked() {} };
 const passwordInput = () => screen.getByLabelText<HTMLInputElement>("Contraseña");

@@ -2,7 +2,7 @@ import { createElement, type ReactElement, type ChangeEvent, type MouseEvent, ty
 
 import { createPortal } from "react-dom";
 
-import { CATALOG_INTENT, CATALOG_TARGET, browseProducts, catalogAccessCommands, catalogMaintenanceCommands, catalogProductImageCommands, productLocationCommands, type CatalogProductBrowseResult, type CatalogAccessStatus, type CatalogMaintenanceRecord, type CatalogMetadataDetail, type ProductLocationRecord } from "../../commands/catalog.ts";
+import { CATALOG_INTENT, CATALOG_TARGET, browseProducts, catalogAccessCommands, catalogMaintenanceCommands, catalogProductImageCommands, productLocationCommands, type CatalogProductBrowseResult, type CatalogAccessStatus, type CatalogMaintenanceRecord, type CatalogMaintenanceError, type CatalogMetadataDetail, type ProductLocationRecord } from "../../commands/catalog.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback } from "../visual-system/controls.ts";
 import { captureCatalogProductOpening, type CatalogProductOpening } from "../visual-system/catalog-product-motion.ts";
@@ -44,7 +44,7 @@ function CatalogPasswordChange() {
       const response = await catalogAccessCommands.changePassword(current, next);
       if (!mounted.current || request !== requestId.current) return;
       if (response.kind === "success") { setCurrent(""); setNext(""); setConfirm(""); if (notifications) notifications.publish({ severity: "success", message: "Contraseña actualizada." }); else setFeedback("Contraseña actualizada."); }
-      else if (response.kind === "error" && response.code === "access_unavailable" && notifications) notifications.publish({ severity: "error", message: accessErrorMessage(response) });
+      else if (response.kind === "error" && !["invalid_credentials", "validation_error"].includes(response.code) && notifications) notifications.publish({ severity: "error", message: accessErrorMessage(response) });
       else setFeedback(accessErrorMessage(response));
     } catch {
       if (mounted.current && request === requestId.current) {
@@ -281,7 +281,7 @@ export function CatalogMaintenanceScreen() {
       setForm(null); setProductLocations([]); setImageThumbnail(null); setBrowseThumbnails({});
       dispatch({ type: "selection_cleared" });
       setAccessStatus("locked");
-    } else if (response.kind === "error" && response.code === "access_unavailable" && notifications) notifications.publish({ severity: "error", message: accessErrorMessage(response) });
+    } else if (notifications) notifications.publish({ severity: "error", message: accessErrorMessage(response) });
     else setLockFeedback(accessErrorMessage(response));
   };
   const reload = async () => {
@@ -311,9 +311,9 @@ export function CatalogMaintenanceScreen() {
     const refreshed = await refreshCatalogList(reloadDetail);
     if (refreshed && reloadDetail && mounted.current) await loadDetail(selected);
   };
-  // Only ordinary persistence failures migrate; validation and recovery remain domain-owned.
-  const publishFailure = (code: string, message = "No se pudo completar el cambio del catálogo.") => {
-    const routine = code === "persistence_failure";
+  // Reload instructions remain durable; field validation is handled before mutation.
+  const publishFailure = (code: CatalogMaintenanceError["code"], message = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "mutation_failed", code }).feedback!) => {
+    const routine = !["stale_catalog_record", "stale_category_schema", "catalog_unavailable"].includes(code);
     setRoutineFailure(routine);
     if (routine) notifications?.publish({ severity: "error", message });
     return routine;
@@ -405,6 +405,11 @@ export function CatalogMaintenanceScreen() {
     if (!mounted.current || current !== attempt.current) return;
     if (response.kind === "error") {
       mutationLocked.current = false;
+      const priceField = response.code === "invalid_purchase_price" ? "purchase_price_centavos" : response.code === "invalid_sale_price" ? "sale_price_centavos" : ["invalid_minimum_sale_price", "minimum_sale_price_exceeds_sale_price"].includes(response.code) ? "minimum_sale_price_centavos" : null;
+      if (priceField) {
+        dispatch({ type: "edit_validation_failed", field_errors: response.code === "minimum_sale_price_exceeds_sale_price" ? { minimum_sale_price_centavos: "El precio mínimo no puede superar el precio de venta." } : fieldErrorsForCatalogEdit(detail, { ...form, [priceField]: "0" }) });
+        return;
+      }
       publishFailure(response.code);
       refreshDetailAfterRecovery.current = response.code === "stale_catalog_record" || response.code === "stale_category_schema";
       dispatch({ type: "edit_failed", code: response.code });
@@ -451,7 +456,7 @@ export function CatalogMaintenanceScreen() {
       if (response.code === "stale_catalog_record") dispatch({ type: "mutation_failed", code: response.code });
       else {
         const message = "No se pudo actualizar la imagen del producto.";
-        if (response.code === "persistence_failure" && notifications) notifications.publish({ severity: "error", message });
+        if (notifications) notifications.publish({ severity: "error", message });
         else setImageFeedback(message);
       }
       return;
@@ -621,7 +626,7 @@ export function CatalogMaintenanceScreen() {
         ),
       ),
     ),
-    state.selected ? createElement(CatalogEditDialog, { record: state.selected, opening: productOpening.current, restoreFocusFallback: () => state.selected?.target === "category" ? categoryManagementHeading.current : catalogMainHeading.current, categoryName: browser.result?.categories.find((category) => category.category_id === (state.detail?.target === "product" ? state.detail.category_id : null))?.name,  detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: notifications && routineFailure && !state.recovery_required ? null : state.feedback, lifecycleFeedback: inlineLifecycleFeedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, locations: productLocations, locationsStatus: productLocationsStatus, imageThumbnail, imagePending, imageFeedback, imageFeedbackKind, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onRemoveCategoryFieldDraft: removeCategoryFieldDraft, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
+    state.selected ? createElement(CatalogEditDialog, { record: state.selected, opening: productOpening.current, restoreFocusFallback: () => state.selected?.target === "category" ? categoryManagementHeading.current : catalogMainHeading.current, categoryName: browser.result?.categories.find((category) => category.category_id === (state.detail?.target === "product" ? state.detail.category_id : null))?.name,  detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: notifications && (routineFailure || Object.keys(state.field_errors).length > 0) && !state.recovery_required ? null : state.feedback, lifecycleFeedback: inlineLifecycleFeedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, locations: productLocations, locationsStatus: productLocationsStatus, imageThumbnail, imagePending, imageFeedback, imageFeedbackKind, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onRemoveCategoryFieldDraft: removeCategoryFieldDraft, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
     retiringProduct ? createElement(CatalogProductRetirement, { ...retiringProduct, onRetired: () => setRetiringProduct(null) }) : null,
     retirementConfirmation ? createPortal(createElement(ConfirmationDialog, {
       open: true,

@@ -220,12 +220,56 @@ test("publishes category outcomes repeatedly but keeps category validation inlin
   }
   code = "duplicate_category";
   await u.click(dialog.getByRole("button", { name: "Crear categoría" }));
-  await waitFor(() => assert.ok(document.querySelector('[data-ui-onboarding-category-dialog] [data-ui-feedback="error"]')));
-  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 2);
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 3));
+  assert.ok(screen.getByText("Ya existe una categoría con ese nombre."));
+  assert.equal(document.querySelector('[data-ui-onboarding-category-dialog] [data-ui-feedback="error"]'), null);
+  assert.equal((dialog.getByLabelText("Nombre de la categoría") as HTMLInputElement).value, "Filtros");
+  for (const button of screen.getAllByRole("button", { name: "Cerrar notificación: Error" })) await u.click(button);
   code = "success";
   await u.click(dialog.getByRole("button", { name: "Crear categoría" }));
   await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
   assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="success"]'), null);
+});
+
+test("onboarding lock outcomes use the host and preserve access on rejection", async () => {
+  let allowed = false, calls = 0;
+  mockIPC((command) => {
+    if (command === "list_categories_command") return success();
+    if (command === "catalog_access_lock_command") { calls++; return allowed ? { kind: "success" } : { kind: "error", code: "license_required", message: "private" }; }
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(OnboardingScreen, { onBack() {} })));
+  await screen.findByLabelText("Marca");
+  await userEvent.type(screen.getByLabelText("SKU"), "DRAFT");
+  await userEvent.click(screen.getByRole("button", { name: "Bloquear catálogo" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  assert.equal((screen.getByLabelText("SKU") as HTMLInputElement).value, "DRAFT");
+  assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="error"]'), null);
+  await userEvent.click(screen.getByRole("button", { name: "Cerrar notificación: Error" }));
+  allowed = true;
+  await userEvent.click(screen.getByRole("button", { name: "Bloquear catálogo" }));
+  await screen.findByRole("button", { name: "Desbloquear catálogo" });
+  assert.ok(screen.getByText("Catálogo bloqueado."));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1);
+  assert.equal(document.querySelector('[data-ui-catalog-access] [data-ui-feedback]'), null);
+  assert.equal(calls, 2);
+});
+
+test("product operational rejection notifies while server price validation stays beside its field", async () => {
+  let code = "missing_category", attempts = 0;
+  mockIPC((command) => command === "list_categories_command" ? success() : command === "create_product_command" ? (attempts++, { kind: "error", code, message: "private" }) : undefined);
+  render(createElement(ActionNotificationProvider, null, createElement(OnboardingScreen, { onBack() {} })));
+  await screen.findByLabelText("Marca");
+  await enterValidProduct(userEvent.setup({ document }));
+  await userEvent.click(screen.getByRole("button", { name: "Crear producto" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  assert.ok(screen.getByText("La categoría seleccionada ya no está disponible."));
+  assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="error"]'), null);
+  assert.equal((screen.getByLabelText("SKU") as HTMLInputElement).value, "FIL-1");
+  code = "invalid_sale_price";
+  await userEvent.click(screen.getByRole("button", { name: "Crear producto" }));
+  await waitFor(() => assert.equal(screen.getByLabelText("Precio de venta (Bs)").getAttribute("aria-invalid"), "true"));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 1);
+  assert.equal(attempts, 2);
 });
 
 test("reports product creation with failed location as partial success and preserves correction without duplicate creation", async () => {
@@ -280,7 +324,8 @@ test("publishes product persistence error and subsequent full success without hi
   assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="error"]'), null);
   code = "invalid_attribute_value";
   await u.click(screen.getByRole("button", { name: "Crear producto" }));
-  assert.ok(await screen.findByText("Revisá el valor de este campo.", { selector: "[data-ui-feedback]" }));
+  assert.ok(await screen.findByText("Revisá el valor de este campo.", { selector: "[data-ui-field-error]" }));
+  assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="error"]'), null);
   assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 1);
   code = "success";
   await u.click(screen.getByRole("button", { name: "Crear producto" }));
@@ -631,14 +676,17 @@ test("focuses and marks the backend-identified category attribute without exposi
   assert.equal(screen.queryByText(/Producto creado:/), null);
 });
 
-test("shows the safe specific create-product failure reason", async () => {
+test("notifies duplicate SKU in Spanish without losing the product draft", async () => {
   mockIPC((command) => command === "list_categories_command" ? success() : command === "create_product_command" ? { kind: "error", code: "duplicate_sku", message: "raw native detail" } : undefined);
   const user = userEvent.setup({ document });
-  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  render(createElement(ActionNotificationProvider, null, createElement(OnboardingScreen, { onBack: () => undefined })));
   await screen.findByLabelText("Marca");
   await enterValidProduct(user);
   await user.click(screen.getByRole("button", { name: "Crear producto" }));
-  assert.equal((await screen.findByRole("alert")).textContent, "SKU already exists.");
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  assert.ok(screen.getByText("Ya existe un producto con ese SKU."));
+  assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="error"]'), null);
+  assert.equal((screen.getByLabelText("SKU") as HTMLInputElement).value, "FIL-1");
 });
 
 test("offers guided native controls for active locations with live status and an optional clear choice", async () => {

@@ -487,12 +487,61 @@ test("publishes ordinary category lifecycle failure and success, retaining block
   assert.equal(within(management).queryByText("No se pudo actualizar el estado de la categoría."), null);
   code = "lifecycle_blocked";
   await userEvent.click(within(management).getByRole("button", { name: "Reactivar Filtros" }));
-  assert.ok(await within(management).findByText(/No se puede archivar/));
-  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 1);
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 2));
+  assert.ok(screen.getByText("No se puede archivar esta categoría mientras tenga productos activos."));
+  assert.equal(within(management).queryByText(/No se puede archivar/), null);
   code = "success";
   await userEvent.click(within(management).getByRole("button", { name: "Reactivar Filtros" }));
   await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
   assert.equal(within(management).queryByText("Catálogo actualizado."), null);
+});
+
+for (const target of ["metadata", "image", "lock", "password"] as const) test(`catalog ${target} operational rejection uses exactly one notice`, async () => {
+  let attempts = 0;
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") return productDetail;
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "private" };
+    const selected = target === "metadata" ? "edit_catalog_command" : target === "image" ? "choose_product_image_command" : target === "lock" ? "catalog_access_lock_command" : "catalog_access_change_password_command";
+    if (command === selected) { attempts++; return { kind: "error", code: target === "metadata" ? "duplicate_sku" : target === "image" ? "validation_error" : "license_required", message: "private" }; }
+    return baseIPC(command);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await screen.findByRole("button", { name: "Editar" });
+  if (target === "metadata" || target === "image") {
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
+    await userEvent.click(within(dialog).getByRole("button", { name: target === "metadata" ? "Guardar metadatos" : "Elegir imagen" }));
+  } else if (target === "password") {
+    await userEvent.click(screen.getByText("Cambiar contraseña del catálogo"));
+    for (const label of ["Contraseña actual", "Nueva contraseña", "Confirmar nueva contraseña"]) await userEvent.type(screen.getByLabelText(label), "password1");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar contraseña" }));
+  } else await userEvent.click(screen.getByRole("button", { name: "Bloquear catálogo" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  const expected = target === "metadata" ? "El SKU ya existe. Usá otro SKU." : target === "image" ? "No se pudo actualizar la imagen del producto." : "Se requiere una licencia válida para configurar el acceso al catálogo.";
+  assert.ok(within(screen.getByRole("region", { name: "Notificaciones de acciones" })).getByText(expected));
+  assert.equal(document.querySelector('[data-ui-catalog] [data-ui-feedback="error"]'), null);
+  assert.equal(document.querySelector('[data-ui-catalog-editor] [data-ui-feedback="error"]'), null);
+  assert.equal(attempts, 1);
+  if (target === "metadata") assert.equal((screen.getByLabelText("SKU") as HTMLInputElement).value, productDetail.sku);
+  if (target === "password") assert.equal((screen.getByLabelText("Contraseña actual") as HTMLInputElement).value, "password1");
+});
+
+test("server price validation stays at the product price field without a result banner", async () => {
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") return productDetail;
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "private" };
+    if (command === "edit_catalog_command") return { kind: "error", code: "invalid_sale_price", message: "private" };
+    return baseIPC(command);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Guardar metadatos" }));
+  await waitFor(() => assert.equal(screen.getByLabelText("Precio de venta (Bs)").getAttribute("aria-invalid"), "true"));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+  assert.equal(document.querySelector('[data-ui-catalog-editor] [data-ui-feedback="error"]'), null);
+  assert.equal((screen.getByLabelText("SKU") as HTMLInputElement).value, productDetail.sku);
 });
 
 test("suppresses duplicate and unmounted access completions while the provider stays mounted", async () => {
@@ -620,15 +669,16 @@ test("publishes product edits and partial assignment without hiding stale and va
   const name = within(dialog).getByRole("textbox", { name: "Nombre del producto" });
   await userEvent.clear(name);
   await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
-  assert.match(dialog.querySelector('[data-ui-catalog-editor]')!.textContent!, /Corregí los campos indicados/);
+  assert.ok(within(dialog).getByText("Ingresá un nombre."));
   await userEvent.type(name, "Filtro Premium");
   code = "validation_error";
   await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
   assert.match((await within(dialog).findByText("Revisá los valores del catálogo e intentá nuevamente.")).textContent!, /Revisá/);
-  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 1);
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 2);
+  assert.equal(dialog.querySelector('[data-ui-catalog-editor] [data-ui-feedback="error"]'), null);
   await userEvent.click(within(dialog).getByRole("button", { name: "Elegir imagen" }));
-  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 2));
-  assert.match(dialog.querySelector('[data-ui-catalog-editor]')!.textContent!, /Revisá los valores del catálogo/);
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 3));
+  assert.equal(dialog.querySelector('[data-ui-catalog-editor] [data-ui-feedback="error"]'), null);
   for (const button of screen.getAllByRole("button", { name: "Cerrar notificación: Error" })) await userEvent.click(button);
   code = "stale_catalog_record";
   await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));

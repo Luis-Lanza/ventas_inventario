@@ -60,9 +60,8 @@ export function LocationManagementScreen() {
   };
   useEffect(() => { void load(); }, []);
 
-  const fail = (code: string) => {
-    const message = locationError(code);
-    const routine = code === "persistence_failure";
+  const fail = (code: string, message = locationError(code)) => {
+    const routine = !["stale_location", "location_unavailable"].includes(code);
     setRoutineError(routine);
     if (routine) notifications?.publish({ severity: "error", message });
     dispatch({ type: "failed", message });
@@ -82,7 +81,7 @@ export function LocationManagementScreen() {
     if (response.kind === "schema_success") succeed({ type: "succeeded", notice: "Esquema actualizado.", schema: response.schema });
     else if (response.kind === "location_success") { succeed({ type: "succeeded", notice: `Ubicación ${response.location.code} creada.`, location: response.location }); setValues(segments.map(() => "")); setValueErrors({}); }
     else if (response.kind === "deleted") succeed({ type: "succeeded", notice: "Ubicación eliminada." });
-    else { setRoutineError(false); dispatch({ type: "failed", message: "La respuesta del servicio no coincide con la operación solicitada." }); }
+    else fail("persistence_failure", "La respuesta del servicio no coincide con la operación solicitada.");
   };
   const saveSchema = () => {
     if (!state.schema || schemaFrozen || pending) return;
@@ -105,7 +104,7 @@ export function LocationManagementScreen() {
     locked.current = false; setPending(false); closeConfirmation();
     if (response.kind === "error") fail(response.code);
     else if (response.kind === "location_success") succeed({ type: "succeeded", notice: `Ubicación ${response.location.code} ${active ? "activada" : "desactivada"}.`, location: response.location });
-    else { setRoutineError(false); dispatch({ type: "failed", message: "No se pudo confirmar el estado actualizado." }); }
+    else fail("persistence_failure", "No se pudo confirmar el estado actualizado.");
   };
   const deleteLocation = async () => {
     const location = confirm?.location;
@@ -117,7 +116,7 @@ export function LocationManagementScreen() {
     locked.current = false; setPending(false); closeConfirmation();
     if (response.kind === "error") fail(response.code);
     else if (response.kind === "deleted") succeed({ type: "succeeded", notice: `Ubicación ${location.code} eliminada.`, location_id: location.location_id });
-    else { setRoutineError(false); dispatch({ type: "failed", message: "No se pudo confirmar la eliminación." }); }
+    else fail("persistence_failure", "No se pudo confirmar la eliminación.");
   };
 
   const selectTemplate = (name: string) => {

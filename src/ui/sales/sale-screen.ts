@@ -22,6 +22,11 @@ export function SaleScreen(props: SaleScreenProps) {
   const [session] = useState(() => props.session ?? createSaleSession(() => crypto.randomUUID()));
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const { routineOutcome, paymentErrors, checkoutOpen } = state;
+  // The session survives navigation. Classify its retained failed request too, not
+  // just a screen-local completion, so re-entry cannot resurrect a result banner.
+  const recoveryFeedback = state.feedback === "El catálogo cambió. Revisá el precio de venta e intentá nuevamente."
+    || state.feedback === "El ID de solicitud ya fue usado con datos de venta diferentes. Revisá la venta antes de intentar nuevamente.";
+  const sharedRejection = state.confirmation === "error" && state.request_id !== null && !recoveryFeedback;
   const [checkoutOpening, setCheckoutOpening] = useState<CheckoutOpening | null>(null);
   const openingSequence = useRef(0);
   const closingRef = useRef(false);
@@ -136,6 +141,10 @@ export function SaleScreen(props: SaleScreenProps) {
     // Only the session's live owner and original token can accept delivery, even while Sales is absent.
     const effect = session.settle(attempt.token, response);
     if (effect?.kind === "success" || effect?.kind === "routine_error") notifications?.publish(effect.notice);
+    // Stale-catalog and request-identity instructions remain actionable recovery state.
+    if (effect?.kind === "inline_error" && response?.kind !== "stale_catalog_record" && !(response?.kind === "error" && response.code === "request_conflict") && notifications) {
+      notifications.publish({ severity: "error", message: effect.message });
+    }
     if (effect?.kind === "success") props.onInventoryAlertsRefresh?.();
   }
 
@@ -189,7 +198,7 @@ export function SaleScreen(props: SaleScreenProps) {
         createElement("h3", { id: "checkout-payment-heading" }, "Pago"),
         createElement(Field, { kind: "money", label: "Efectivo recibido", error: paymentErrors.amount_tendered_centavos, control: createElement("input", { ref: cashRef, value: state.payment.amount_tendered_centavos, disabled: pending, onChange: (event) => draftDispatch({ type: "payment_changed", field: "amount_tendered_centavos", value: event.target.value }) }) } as never),
         createElement(Field, { kind: "money", label: "Pago QR", error: paymentErrors.qr_applied_centavos, control: createElement("input", { ref: qrRef, value: state.payment.qr_applied_centavos, disabled: pending, onChange: (event) => draftDispatch({ type: "payment_changed", field: "qr_applied_centavos", value: event.target.value }) }) } as never)),
-      state.feedback && !(notifications && routineOutcome) && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
+      state.feedback && !(notifications && (routineOutcome || sharedRejection)) && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
       createElement("div", { "data-ui-sale-actions": true },
         createElement(Action, { variant: "tertiary", disabled: pending, onClick: onDiscard }, "Descartar borrador")),
     checkoutDetail ? createElement(SalesProductDetail, { key: checkoutDetail.product_id, product: checkoutDetail, thumbnails: checkoutDetailThumbnails, loadOriginal: catalogProductImageCommands.salesOriginal, triggerRef: checkoutDetailTriggerRef, onClose: () => setCheckoutDetail(null) }) : null));

@@ -1098,8 +1098,8 @@ test("accepted save notifies even when the subsequent read-only alert refresh fa
   assert.equal(screen.queryByRole("dialog"), null);
 });
 
-for (const code of ["invalid_price", "persisted_data_invalid"] as const) {
-  test(`shared host leaves ${code} validation/recovery feedback inline`, async () => {
+for (const code of ["invalid_price", "inactive_product", "unchanged_count"] as const) {
+  test(`shared host notifies ${code} action rejection without losing the draft`, async () => {
     mockIPC((command) => {
       if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
       if (command === "browse_products_command") return browse();
@@ -1111,9 +1111,28 @@ for (const code of ["invalid_price", "persisted_data_invalid"] as const) {
     await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
     await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
     assert.ok(await within(screen.getByRole("dialog", { name: "Operación de inventario" })).findByText("No se pudo guardar la operación de inventario. Reintentá."));
-    assert.equal(document.querySelectorAll("[data-ui-action-notice]").length, 0);
+    await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+    assert.equal(document.querySelector('[data-ui-inventory-operation] [data-ui-feedback="error"]'), null);
+    assert.equal((screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }) as HTMLInputElement).value, "3");
   });
 }
+
+test("invalid persisted inventory rejection notifies without discarding retry state", async () => {
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_stock_entry_command") return { kind: "error", code: "persisted_data_invalid", message: "private" };
+    throw new Error(command);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(InventoryScreen)));
+  const user = await searchAndSelect();
+  await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  assert.ok(await screen.findByText("No se pudo guardar la operación de inventario. Reintentá."));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  assert.equal(document.querySelector('[data-ui-inventory-operation] [data-ui-feedback="error"]'), null);
+  assert.ok(screen.getByRole("button", { name: "Reintentar" }));
+});
 
 test("shared host does not migrate request-conflict recovery guidance", async () => {
   mockIPC((command) => {

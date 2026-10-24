@@ -44,13 +44,81 @@ test("publishes accepted location activity outcomes repeatedly while retaining i
   }
   code = "location_in_use";
   await userEvent.click(screen.getByRole("button", { name: "Activar PA-2" }));
-  await waitFor(() => assert.match(document.querySelector('[data-ui-location-management]')!.textContent!, /quitá la asignación/));
-  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 2);
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 3));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 3);
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]')[2].textContent?.includes("Esta ubicación está asignada a un producto. Para desactivarla o eliminarla, quitá la asignación desde la edición del producto y después volvé a intentarlo."), true);
+  assert.equal(document.querySelector('[data-ui-location-management] [data-ui-feedback="error"]'), null);
+  assert.ok(screen.getByRole("button", { name: "Activar PA-2" }));
   for (const button of screen.getAllByRole("button", { name: "Cerrar notificación: Error" })) await userEvent.click(button);
   code = "success";
   await userEvent.click(screen.getByRole("button", { name: "Activar PA-2" }));
   await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
   assert.equal(document.querySelector('[data-ui-location-management] [data-ui-feedback="success"]'), null);
+});
+
+for (const operation of ["deactivate", "delete"] as const) test(`assigned location ${operation} refusal notifies once per confirmed attempt and preserves the stored row`, async () => {
+  let calls = 0, hold = false;
+  let finish!: (response: unknown) => void;
+  const stored = { ...row };
+  const message = "Esta ubicación está asignada a un producto. Para desactivarla o eliminarla, quitá la asignación desde la edición del producto y después volvé a intentarlo.";
+  mockIPC((command) => {
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }] } };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [stored] };
+    if (command === `${operation}_product_location_command`) {
+      calls++;
+      return hold ? new Promise(resolve => { finish = resolve; }) : { kind: "error", code: "location_in_use", message: "private" };
+    }
+  });
+  const view = render(createElement(ActionNotificationProvider, null, createElement(LocationManagementScreen)));
+  const label = operation === "delete" ? "Eliminar PB-12" : "Desactivar PB-12";
+  const confirm = operation === "delete" ? "Confirmar eliminación" : "Confirmar desactivación";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    await userEvent.click(await screen.findByRole("button", { name: label }));
+    assert.equal(calls, attempt - 1);
+    await userEvent.click(screen.getByRole("button", { name: confirm }));
+    await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+    assert.ok(within(screen.getByRole("region", { name: "Notificaciones de acciones" })).getByText(message));
+    assert.equal(screen.queryByRole("dialog"), null);
+    assert.equal(document.querySelector('[data-ui-location-management] [data-ui-feedback="error"]'), null);
+    assert.equal(document.querySelectorAll('[data-ui-location-row]').length, 1);
+    assert.equal(document.querySelector('[data-ui-location-state]')?.textContent, "Activa");
+    assert.deepEqual(stored, row);
+    await userEvent.click(screen.getByRole("button", { name: "Cerrar notificación: Error" }));
+    assert.ok(screen.getByRole("button", { name: label }));
+    assert.equal(calls, attempt);
+  }
+  hold = true;
+  await userEvent.click(screen.getByRole("button", { name: label }));
+  const submit = screen.getByRole("button", { name: confirm });
+  act(() => { fireEvent.click(submit); fireEvent.click(submit); });
+  assert.equal(calls, 3);
+  view.rerender(createElement(ActionNotificationProvider));
+  await act(async () => { finish({ kind: "error", code: "location_in_use", message: "private" }); });
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+  assert.deepEqual(stored, row);
+});
+
+test("duplicate location code is an action rejection, while empty values do not write", async () => {
+  let attempts = 0;
+  mockIPC((command) => {
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }] } };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    if (command === "create_product_location_command") { attempts++; return { kind: "error", code: "duplicate_location_code", message: "private" }; }
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(LocationManagementScreen)));
+  const input = await screen.findByLabelText("Sector") as HTMLInputElement;
+  await userEvent.click(screen.getByRole("button", { name: "Crear ubicación" }));
+  assert.ok(screen.getByText("Completá este valor."));
+  assert.equal(attempts, 0);
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+  await userEvent.type(input, "A");
+  await userEvent.click(screen.getByRole("button", { name: "Crear ubicación" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  assert.ok(screen.getByText("Ya existe una ubicación con ese código. Elegí otros valores."));
+  assert.equal(document.querySelector('[data-ui-location-management] [data-ui-feedback="error"]'), null);
+  assert.equal(input.value, "A");
+  assert.equal(document.querySelectorAll('[data-ui-location-row]').length, 0);
+  assert.equal(attempts, 1);
 });
 
 test("suppresses duplicate and unmounted location creation completions with a surviving host", async () => {

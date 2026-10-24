@@ -40,7 +40,7 @@ export function CatalogAccessGate({ status, notice, onUnlocked }: { status: Cata
         setShownCode(null); onUnlocked(message);
       } else {
         const message = accessErrorMessage(response);
-        if (response.kind === "error" && response.code === "access_unavailable" && notifications) notifications.publish({ severity: "error", message });
+        if (response.kind === "error" && !["invalid_credentials", "validation_error"].includes(response.code) && notifications) notifications.publish({ severity: "error", message });
         else setFeedback(message);
       }
     } catch {
