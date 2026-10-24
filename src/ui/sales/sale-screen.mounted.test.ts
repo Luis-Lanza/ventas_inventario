@@ -9,6 +9,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 
 import type { ProductBrowseAttribute } from "../../commands/catalog.ts";
+import { App } from "../app.ts";
 import { SaleScreen } from "./sale-screen.ts";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 
@@ -56,6 +57,89 @@ const user = () => userEvent.setup({ document });
 async function searchFor(value = "filtro") { const u = user(); await u.type(screen.getByRole("searchbox", { name: "Buscar en el catálogo" }), `${value}{Enter}`); return u; }
 async function addFirst() { const u = await searchFor(); await u.click(await screen.findByRole("button", { name: "Agregar" })); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); return u; }
 function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? UUID }); }
+
+test("accepted sale refreshes stock before Nueva venta, keeps receipt and resets only on explicit new sale", async () => {
+  installUuid(UUID, RETRY_UUID);
+  const requests: unknown[] = [];
+  const reads: unknown[] = [];
+  let saved = false;
+  mockIPC((command, payload) => {
+    if (command === "browse_products_command") { reads.push(payload); return browse([{ ...products[0], available_quantity: saved ? 7 : 8 }]); }
+    if (command === "confirm_sale_command") { requests.push(payload); saved = true; return success; }
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(SaleScreen)));
+  const u = await addFirst();
+  const before = reads.length;
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  assert.ok(await screen.findByRole("button", { name: "Nueva venta" }));
+  await waitFor(() => assert.equal(reads.length, before + 1));
+  assert.deepEqual(reads.at(-1), reads.at(-2));
+  assert.ok(screen.getByText("Disponible: 7"));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1);
+  await u.click(screen.getByRole("button", { name: "Nueva venta" }));
+  assert.ok(await screen.findByText("Disponible: 7"));
+  assert.equal(requests.length, 1);
+  assert.equal(screen.queryByRole("button", { name: "Nueva venta" }), null);
+});
+
+test("App accepts a sale once while Sales is absent and refreshes the mounted Inventory without replay on return", async () => {
+  installUuid(UUID);
+  const pending = deferred<unknown>();
+  let saved = false, writes = 0;
+  mockIPC((command) => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse([products[0]]);
+    if (command === "browse_inventory_products_command") return { ...browse([]), products: [{ product_id: 1, category_id: 1, sku: "FIL-1", name: "Filtro aceite", category_name: "Filtros", available_quantity: saved ? 7 : 8, sale_price_centavos: 8550, minimum_sale_price_centavos: 8550, primary_location_code: null }], total: 1, total_pages: 1 };
+    if (command === "confirm_sale_command") { writes++; return pending.promise; }
+  });
+  render(createElement(App));
+  const u = user();
+  const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+  await u.click(within(nav).getByRole("button", { name: "Ventas" }));
+  await u.click(await screen.findByRole("button", { name: "Agregar" }));
+  await u.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  // Pending checkout deliberately blocks navigation; use its real navigation event once absent.
+  fireEvent.click(within(nav).getByRole("button", { name: /^Inventario/ }));
+  await screen.findByText("Disponible: 8");
+  saved = true;
+  await act(async () => pending.resolve(success));
+  assert.ok(await screen.findByText("Disponible: 7"));
+  await u.click(within(nav).getByRole("button", { name: "Ventas" }));
+  assert.ok(await screen.findByRole("button", { name: "Nueva venta" }));
+  assert.equal(writes, 1);
+  assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1);
+});
+
+test("a late accepted sale refreshes an already mounted History list without changing its date edits", async () => {
+  installUuid(UUID);
+  const pending = deferred<unknown>();
+  let saved = false;
+  const ranges: unknown[] = [];
+  mockIPC((command, payload) => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse([products[0]]);
+    if (command === "confirm_sale_command") return pending.promise;
+    if (command === "list_sales_history_command") { ranges.push(payload); return { kind: "success", sales: saved ? [{ sale_id: 9, confirmed_at: "2026-01-01", status: "confirmed", total_centavos: 8550, line_count: 1, payment_count: 1, payment_methods: ["cash"], has_corrections: false }] : [], has_more: false }; }
+  });
+  render(createElement(App));
+  const u = user();
+  const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+  await u.click(within(nav).getByRole("button", { name: "Ventas" }));
+  await u.click(await screen.findByRole("button", { name: "Agregar" }));
+  await u.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  fireEvent.click(within(nav).getByRole("button", { name: "Historial de ventas" }));
+  await screen.findByText("No hay ventas en este rango.");
+  fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2020-01-01" } });
+  saved = true;
+  await act(async () => pending.resolve(success));
+  assert.ok(await screen.findByText("Venta #9"));
+  assert.deepEqual(ranges[1], ranges[0]);
+  assert.equal((screen.getByLabelText("Desde") as HTMLInputElement).value, "2020-01-01");
+});
 
 test("checkout captures the clicked button before session opening; navigation re-entry stays static", async (t) => {
   mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
@@ -1565,7 +1649,7 @@ test("starts and renders the active first page browse after Nueva venta", async 
     if (command === "browse_products_command") {
       browseCalls.push(payload);
       browseCount += 1;
-      return browseCount === 3 ? resetBrowse.promise : browse([products[0]]);
+      return browseCount === 4 ? resetBrowse.promise : browse([products[0]]);
     }
     return success;
   });
@@ -1579,8 +1663,9 @@ test("starts and renders the active first page browse after Nueva venta", async 
   const searchInput = screen.getByRole("searchbox", { name: "Buscar en el catálogo" });
   assert.equal(document.activeElement, searchInput);
   assert.equal(screen.queryByRole("dialog", { name: "Revisar y cobrar" }), null);
-  assert.equal(browseCalls.length, 3);
-  assert.deepEqual(browseCalls[2], { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });
+  assert.equal(browseCalls.length, 4);
+  assert.deepEqual(browseCalls[2], browseCalls[1], "accepted success refreshes the applied query before reset");
+  assert.deepEqual(browseCalls[3], { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });
   screen.getByText("Buscando productos…");
 
   await act(() => { resetBrowse.resolve(browse([products[1]])); return resetBrowse.promise; });

@@ -3,6 +3,7 @@ import { createElement, type ReactElement, type ChangeEvent, type MouseEvent, ty
 import { createPortal } from "react-dom";
 
 import { CATALOG_INTENT, CATALOG_TARGET, browseProducts, catalogAccessCommands, catalogMaintenanceCommands, catalogProductImageCommands, productLocationCommands, type CatalogProductBrowseResult, type CatalogAccessStatus, type CatalogMaintenanceRecord, type CatalogMetadataDetail, type ProductLocationRecord } from "../../commands/catalog.ts";
+import type { AcceptedMutations } from "../accepted-mutations.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback } from "../visual-system/controls.ts";
 import { captureCatalogProductOpening, type CatalogProductOpening } from "../visual-system/catalog-product-motion.ts";
@@ -12,7 +13,7 @@ import { CatalogEditDialog, CatalogMetadataEditor, CatalogProductRetirement } fr
 import { CatalogCategoryArchiveDialog, CatalogCategoryArchiveRetirement, categoryArchiveFocusFallback } from "../visual-system/catalog-category-archive-dialog.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
 import { createCatalogEditRequest, createCategorySchemaEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState, type CatalogEditFieldErrors, type CatalogEditForm, type CatalogMaintenanceAction } from "./catalog-maintenance-flow.ts";
-import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, readCatalogViewMode, writeCatalogViewMode, type CatalogViewMode, type ProductBrowserState } from "./product-browser.ts";
+import { createRefreshingProductBrowserFlow, initialProductBrowserState, ProductBrowser, readCatalogViewMode, writeCatalogViewMode, type CatalogViewMode, type ProductBrowserState } from "./product-browser.ts";
 import { LocationManagementScreen } from "./location-management-screen.ts";
 import { CatalogAccessGate, accessErrorMessage } from "./catalog-access-gate.ts";
 
@@ -97,7 +98,7 @@ export async function reloadCatalogRecords(commands: CatalogLoadCommands, dispat
   if (selected) await loadCatalogDetail(commands, dispatch, setForm, selected);
 }
 
-export function CatalogMaintenanceScreen() {
+export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutations?: AcceptedMutations }) {
   const notifications = useActionNotifications();
   const [routineFailure, setRoutineFailure] = useState(false);
   const [flowState, dispatch] = useReducer(createCatalogMaintenanceFlow, initialCatalogMaintenanceState);
@@ -150,7 +151,8 @@ export function CatalogMaintenanceScreen() {
   const [retirementConfirmation, setRetirementConfirmation] = useState<{ index: number; label: string } | null>(null);
   const catalogMainHeading = useRef<HTMLHeadingElement>(null);
   const categoryManagementHeading = useRef<HTMLHeadingElement>(null);
-  const [browser, browserDispatch] = useReducer(createProductBrowserFlow<CatalogProductBrowseResult>, { ...initialProductBrowserState, activity: "all" });
+  const [browser, browserDispatch] = useReducer(createRefreshingProductBrowserFlow<CatalogProductBrowseResult>, { ...initialProductBrowserState, activity: "all" });
+  const appliedBrowse = useRef<BrowserSnapshot | null>(null);
   const browserRef = useRef(browser);
   browserRef.current = browser;
   const mutationLocked = useRef(false);
@@ -161,10 +163,11 @@ export function CatalogMaintenanceScreen() {
     const current = browserRef.current;
     return { query: current.query, category_id: current.category_id, stock_state: current.stock_state, activity: current.activity, page: current.page, request_id: current.request_id };
   };
-  const browseCatalogProducts = async (snapshot: BrowserSnapshot, page = 1) => {
-    const current = Math.max(++browseAttempt.current, snapshot.request_id + 1);
+  const browseCatalogProducts = async (snapshot: BrowserSnapshot, page = 1, refresh = false) => {
+    const current = Math.max(++browseAttempt.current, browserRef.current.request_id + 1);
     browseAttempt.current = current;
-    browserDispatch({ type: "browse_started", query: snapshot.query, category_id: snapshot.category_id, stock_state: snapshot.stock_state, activity: snapshot.activity, page, request_id: current });
+    appliedBrowse.current = { ...snapshot, page };
+    browserDispatch(refresh ? { type: "refresh_started", request_id: current } : { type: "browse_started", query: snapshot.query, category_id: snapshot.category_id, stock_state: snapshot.stock_state, activity: snapshot.activity, page, request_id: current });
     try {
       const result = await browseProducts({ query: snapshot.query, category_id: snapshot.category_id, activity: snapshot.activity, page, page_size: 20 });
       if (!mounted.current || current !== browseAttempt.current) return false;
@@ -245,7 +248,8 @@ export function CatalogMaintenanceScreen() {
     if (!mounted.current || current !== attempt.current) return false;
     if (response.kind !== "success") { dispatch({ type: "refresh_failed" }); return false; }
     dispatch({ type: "refresh_list_succeeded", records: response.records });
-    const browsed = await browseCatalogProducts(browserSnapshot());
+    const applied = appliedBrowse.current ?? browserSnapshot();
+    const browsed = await browseCatalogProducts(applied, applied.page, true);
     if (!browsed || !mounted.current || current !== attempt.current) {
       if (mounted.current && current === attempt.current) dispatch({ type: "refresh_failed" });
       return false;
@@ -354,6 +358,7 @@ export function CatalogMaintenanceScreen() {
     setRoutineFailure(false);
     dispatch({ type: "mutation_started" });
     const response = await catalogMaintenanceCommands.maintain({ target: target.target, entity_id: target.entity_id, intent: archiveRecord ? CATALOG_INTENT.ARCHIVE : target.activity === "active" ? CATALOG_INTENT.ARCHIVE : CATALOG_INTENT.REACTIVATE, expected_revision: target.revision });
+    if (response.kind !== "error" && target.target === "product") acceptedMutations?.accepted(["stock"]);
     if (!mounted.current || current !== attempt.current) return;
     mutationLocked.current = false;
     if (response.kind === "error") {
@@ -402,6 +407,7 @@ export function CatalogMaintenanceScreen() {
     setRoutineFailure(false);
     dispatch({ type: "edit_started" });
     const response = await catalogMaintenanceCommands.edit(request);
+    if (response.kind !== "error" && detail.target === "product") acceptedMutations?.accepted(["stock"]);
     if (!mounted.current || current !== attempt.current) return;
     if (response.kind === "error") {
       mutationLocked.current = false;
@@ -410,6 +416,7 @@ export function CatalogMaintenanceScreen() {
       dispatch({ type: "edit_failed", code: response.code });
       return;
     }
+    // Metadata persisted independently of any subsequent primary-location assignment.
     let updatedRevision = response.revision;
     if (detail.target === CATALOG_TARGET.PRODUCT && (form.primary_location_id ?? null) !== detail.primary_location_id) {
       const assignment = await productLocationCommands.assignPrimary({ product_id: detail.entity_id, expected_revision: response.revision, location_id: form.primary_location_id ?? null });
@@ -421,6 +428,8 @@ export function CatalogMaintenanceScreen() {
         setPartialSaveGuidance(message);
         notifications?.publish({ severity: "warning", message });
         dispatch({ type: "location_assignment_failed" });
+        const applied = appliedBrowse.current;
+        if (applied) void browseCatalogProducts(applied, applied.page, true);
         return;
       }
       updatedRevision = assignment.revision;
@@ -516,6 +525,8 @@ export function CatalogMaintenanceScreen() {
         const message = "Campos de categoría guardados, pero no se pudo actualizar el nombre. Recargá para revisar la categoría antes de volver a guardar.";
         setPartialSaveGuidance(message);
         notifications?.publish({ severity: "warning", message });
+        const applied = appliedBrowse.current;
+        if (applied) void browseCatalogProducts(applied, applied.page, true);
       } else publishFailure(response.code);
       refreshDetailAfterRecovery.current = schemaChanged || response.code === "stale_category_schema" || response.code === "stale_catalog_record";
       dispatch({ type: "edit_failed", code: response.code });

@@ -39,6 +39,7 @@ export type HistoryState = {
   message: string | null;
   return_intent: ReturnIntent | null;
   cancellation_intent: CancellationIntent | null;
+  retained_list_status?: "loading" | "ready" | "error";
 };
 
 export const initialHistoryState: HistoryState = {
@@ -54,6 +55,9 @@ export const initialHistoryState: HistoryState = {
 };
 
 export type HistoryAction =
+  | { type: "retained_list_started" }
+  | { type: "retained_list_loaded"; sales: SalesHistorySummary[]; has_more: boolean }
+  | { type: "retained_list_failed" }
   | { type: "list_started" }
   | { type: "list_loaded"; sales: SalesHistorySummary[]; has_more: boolean }
   | { type: "list_failed"; message: string }
@@ -222,10 +226,17 @@ export function createHistoryFlow(
   action: HistoryAction,
 ): HistoryState {
   switch (action.type) {
+    case "retained_list_started":
+      return { ...state, retained_list_status: "loading", ...(state.view === "list" ? { status: "loading" } : {}) };
+    case "retained_list_loaded":
+      return { ...state, sales: action.sales, has_more: action.has_more, retained_list_status: "ready", ...(state.view === "list" ? { status: action.sales.length ? "ready" : "empty", message: null } as const : {}) };
+    case "retained_list_failed":
+      return { ...state, sales: [], has_more: false, retained_list_status: "error", ...(state.view === "list" ? { status: "error", message: "No se pudo cargar el historial de ventas." } as const : {}) };
     case "list_started":
       return {
         ...state,
         view: "list",
+        retained_list_status: undefined,
         status: "loading",
         detail: null,
         message: null,
@@ -544,7 +555,7 @@ export function createHistoryFlow(
       return {
         ...state,
         view: "list",
-        status: state.sales.length ? "ready" : "empty",
+        status: state.retained_list_status === "loading" ? "loading" : state.retained_list_status === "error" ? "error" : state.sales.length ? "ready" : "empty",
         selected_id: null,
         detail: null,
         message: null,

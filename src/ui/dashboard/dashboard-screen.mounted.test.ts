@@ -3,12 +3,36 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { createAcceptedMutations } from "../accepted-mutations.ts";
 import { DashboardScreen } from "./dashboard-screen.ts";
 
 const dashboardStyles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+
+test("subscribes before initial Dashboard IPC and ignores that obsolete response and post-unmount invalidation", async () => {
+ const acceptedMutations = createAcceptedMutations();
+ let calls = 0;
+ let finishOld!: (value: unknown) => void;
+ const metrics = { effective_sale_count: 1, effective_total_centavos: 2500, net_units_out: 1, cancelled_sale_count: 0, realized_gross_profit: { amount_centavos: 1250, missing_cost_line_count: 1 } };
+ const report = { kind: "success", report: { today: { metrics }, month: { metrics }, top_products: [], payment_distribution: [], recent_sales: [], stock_alerts: [] } };
+ mockIPC(() => {
+  if (++calls === 1) {
+   acceptedMutations.accepted(["stock", "sales"]);
+   return new Promise(resolve => { finishOld = resolve; });
+  }
+  return report;
+ });
+ const view = render(createElement(DashboardScreen, { acceptedMutations, onOpenInventoryAlerts() {} }));
+ assert.ok(await screen.findAllByText("Bs 12,50"));
+ assert.equal(calls, 2);
+ await act(async () => finishOld({ kind: "error", code: "persistence_failure", message: "obsolete" }));
+ assert.ok(screen.getAllByText("Bs 12,50").length === 2);
+ view.unmount();
+ act(() => acceptedMutations.accepted(["stock"]));
+ assert.equal(calls, 2);
+});
 
 test("defines the approved desktop composition and compact labeled-record CSS contract", () => {
   assert.match(dashboardStyles, /\[data-ui-dashboard-supporting\]\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);

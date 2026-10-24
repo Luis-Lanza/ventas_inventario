@@ -37,6 +37,113 @@ function mockIPC(handler: (command: string, payload?: { request?: unknown }) => 
   installIPC(adapter);
   return adapter;
 }
+for (const operation of ["entry", "count"] as const) {
+  test(`accepted ${operation} refreshes authoritative browse and alerts without applying unsent fields or replaying the write`, async () => {
+    let saved = false;
+    let writes = 0;
+    const reads: unknown[] = [];
+    mockIPC((command, payload) => {
+      if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: saved ? [] : [{ product_id: 1, product_name: "Filter", quantity: 1, classification: "low_stock" }] };
+      if (command === "browse_products_command") { reads.push(payload); return browse([{ ...product, available_quantity: saved ? 14 : 1 }]); }
+      if (command === "confirm_stock_entry_command" || command === "confirm_physical_count_command") { writes++; saved = true; return { ...success("accepted"), resulting_quantity: 14 }; }
+      throw Error(`Unexpected command: ${command}`);
+    });
+    render(createElement(InventoryScreen));
+    await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" });
+    const user = userEvent.setup({ document });
+    await user.type(screen.getByRole("searchbox"), "unsent");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Estado del stock" }), "out_of_stock");
+    await user.click(screen.getByRole("button", { name: "Vista de galería" }));
+    await user.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+    if (operation === "count") {
+      await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
+      await user.type(screen.getByLabelText("Motivo"), "Recuento");
+      await user.type(screen.getByLabelText("Contraseña del catálogo"), "test-password");
+    }
+    await user.type(screen.getByRole("spinbutton"), operation === "entry" ? "13" : "14");
+    await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+    assert.ok(await screen.findByText("Disponible: 14"));
+    assert.ok(await screen.findByText("No hay alertas de stock."));
+    assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "unsent");
+    assert.equal((screen.getByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement).value, "out_of_stock");
+    assert.equal(screen.getByRole("button", { name: "Vista de galería" }).getAttribute("aria-pressed"), "true");
+    assert.equal(writes, 1);
+    assert.equal(reads.length, 2);
+    assert.deepEqual(reads[1], reads[0]);
+    await user.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+    assert.ok(screen.getByText("Stock actual: 14"));
+    await user.click(screen.getByRole("button", { name: "Nueva operación" }));
+    assert.equal(writes, 1);
+    assert.equal(reads.length, 2);
+  });
+}
+
+test("mutation browse supersedes old reads, survives unsent edits, and yields to a newer submitted search", async () => {
+  const pending: Array<(value: ReturnType<typeof browse>) => void> = [];
+  let reads = 0;
+  let writes = 0;
+  mockIPC(command => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return ++reads === 1 ? browse() : new Promise(resolve => pending.push(resolve));
+    if (command === "confirm_stock_entry_command") { writes++; return success("race-save"); }
+    throw Error(command);
+  });
+  const view = render(createElement(InventoryScreen));
+  const user = userEvent.setup({ document });
+  await screen.findByText("Filter");
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  await user.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+  await user.type(screen.getByRole("spinbutton"), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  assert.equal(reads, 3);
+  await user.type(screen.getByRole("searchbox"), "draft");
+  await act(async () => pending[1](browse([{ ...product, available_quantity: 14 }])));
+  assert.ok(screen.getByText("Disponible: 14"));
+  await act(async () => pending[0](browse([{ ...product, available_quantity: 2 }])));
+  assert.ok(screen.getByText("Disponible: 14"));
+  assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "draft");
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  await user.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+  await user.type(screen.getByRole("spinbutton"), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await user.type(screen.getByRole("searchbox"), "new{Enter}");
+  await act(async () => pending[4](browse([{ ...product, name: "Newest", available_quantity: 20 }])));
+  await act(async () => { pending[3](browse()); pending[2](browse()); });
+  assert.ok(screen.getByText("Newest"));
+  assert.equal(screen.queryByText("Filter"), null);
+  assert.equal(writes, 2);
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  view.unmount();
+  await act(async () => pending[5](browse()));
+  assert.equal(screen.queryByText("Filter"), null);
+});
+
+test("App sidebar and mounted Inventory both refresh after an accepted stock entry", async () => {
+  let saved = false;
+  let writes = 0;
+  let alertReads = 0;
+  mockIPC(command => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
+    if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
+    if (command === "list_inventory_alerts_command") { alertReads++; return { kind: "alerts", alerts: saved ? [{ product_id: 1, product_name: "Filter", quantity: 1, classification: "low_stock" }] : [] }; }
+    if (command === "browse_products_command") return browse([{ ...product, available_quantity: saved ? 1 : 8 }]);
+    if (command === "confirm_stock_entry_command") { writes++; saved = true; return success("app-save"); }
+    throw Error(command);
+  });
+  render(createElement(App));
+  const user = userEvent.setup({ document });
+  const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+  await user.click(within(nav).getByRole("button", { name: /^Inventario/ }));
+  await user.click(await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+  const before = alertReads;
+  await user.type(screen.getByRole("spinbutton"), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await waitFor(() => assert.match(within(nav).getByRole("button", { name: /^Inventario/ }).textContent ?? "", /1 alerta de stock/));
+  assert.ok(within(screen.getByRole("region", { name: "Productos de inventario" })).getByText("Stock bajo: 1"));
+  assert.equal(alertReads, before + 2);
+  assert.equal(writes, 1);
+});
+
 function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? ids.at(-1) }); }
 
 async function searchAndSelect() {
@@ -266,7 +373,7 @@ test("loads operational Inventory browse while the Catalog session is locked", a
   assert.equal(screen.queryByText("No registrado"), null);
 });
 
-test("Inventory retains its local view, submitted filters and page through selection and operation reset without browsing again", async () => {
+test("Inventory retains its local view, submitted filters and page through selection and operation reset", async () => {
   const calls: unknown[] = [];
   const zeroStock = { ...product, available_quantity: 0 };
   mockIPC((command, payload) => {
@@ -295,7 +402,7 @@ test("Inventory retains its local view, submitted filters and page through selec
     { request: { query: "filter", category_id: 1, stock_state: "out_of_stock", activity: "active", page: 2, page_size: 20 } },
   ]);
   await user.click(screen.getByRole("button", { name: "Vista de galería" }));
-  const assertBrowser = () => {
+  const assertBrowser = (expectedCalls = 3) => {
     assert.equal(screen.getByRole("button", { name: "Vista de galería" }).getAttribute("aria-pressed"), "true");
     assert.equal(screen.getByRole("button", { name: "Vista de tabla" }).getAttribute("aria-pressed"), "false");
     assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filter");
@@ -303,7 +410,7 @@ test("Inventory retains its local view, submitted filters and page through selec
     assert.equal((screen.getByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement).value, "out_of_stock");
     assert.ok(screen.getByText("Página 2 de 2"));
     assert.ok(screen.getByText("Sin stock: 0"));
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, expectedCalls);
   };
   assertBrowser();
   await user.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
@@ -314,7 +421,7 @@ test("Inventory retains its local view, submitted filters and page through selec
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
-  assertBrowser();
+  assertBrowser(4);
   view.unmount();
   render(createElement(InventoryScreen));
   await screen.findByText("Filter");
@@ -1079,12 +1186,13 @@ test("a duplicate click and an unmounted inventory completion never publish", as
   assert.equal(document.querySelectorAll("[data-ui-action-notice]").length, 0);
 });
 
-test("accepted save notifies even when the subsequent read-only alert refresh fails", async () => {
+test("accepted save notifies even when subsequent browse and alert refreshes fail without replaying the write", async () => {
   let saved = false;
+  let writes = 0;
   mockIPC((command) => {
     if (command === "list_inventory_alerts_command") return saved ? { kind: "error", code: "persistence_failure", message: "Native" } : { kind: "alerts", alerts: [] };
-    if (command === "browse_products_command") return browse();
-    if (command === "confirm_stock_entry_command") { saved = true; return success("saved-request"); }
+    if (command === "browse_products_command") { if (saved) throw Error("Read unavailable"); return browse(); }
+    if (command === "confirm_stock_entry_command") { writes++; saved = true; return success("saved-request"); }
     throw new Error(`Unexpected command: ${command}`);
   });
   render(createElement(ActionNotificationProvider, null, createElement(InventoryScreen)));
@@ -1093,6 +1201,8 @@ test("accepted save notifies even when the subsequent read-only alert refresh fa
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   assert.ok(await within(screen.getByRole("region", { name: "Notificaciones de acciones" })).findByText("Operación guardada. Stock actual: 11."));
   assert.ok(await within(screen.getByRole("region", { name: "Alertas de stock" })).findByText("Las alertas de stock no están disponibles."));
+  assert.ok(await screen.findByText("No se pudo buscar en el catálogo local. Reintentá."));
+  assert.equal(writes, 1);
   assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1);
   assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 0);
   assert.equal(screen.queryByRole("dialog"), null);

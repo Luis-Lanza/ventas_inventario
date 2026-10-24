@@ -2,6 +2,7 @@ import { createElement as h, Fragment, useEffect, useReducer, useRef, useState, 
 import { createCategory, createProduct, FIELD_TYPE, listCategories, type Category, type CategoryFieldInput, type FieldType } from "../../commands/onboarding.ts";
 import { catalogAccessCommands, onboardingProductLocationCommands, type CatalogAccessStatus, type ProductLocationRecord, type ProductLocationSegment } from "../../commands/catalog.ts";
 import { CatalogAccessGate, accessErrorMessage } from "../catalog/catalog-access-gate.ts";
+import type { AcceptedMutations } from "../accepted-mutations.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { LocationPicker } from "../visual-system/location-picker.ts";
@@ -11,11 +12,11 @@ import { canSubmitCategory, canSubmitProduct, createOnboardingFlow, initialOnboa
 import { CategoryCreateDialog } from "./category-create-dialog.ts";
 import { useCategoryDialogMotion } from "./category-dialog-motion.ts";
 
-interface Props { onBack: () => void }
+interface Props { onBack: () => void; acceptedMutations?: AcceptedMutations }
 type PendingField = CategoryFieldInput & { optionsText: string };
 const emptyField: PendingField = { label: "", field_type: FIELD_TYPE.TEXT, required: false, options: [], optionsText: "" };
 
-export function OnboardingScreen({ onBack }: Props) {
+export function OnboardingScreen({ onBack, acceptedMutations }: Props) {
   const [status, setStatus] = useState<CatalogAccessStatus | "loading">("loading");
   const [notice, setNotice] = useState<string | null>(null);
   const [lockPending, setLockPending] = useState(false);
@@ -40,10 +41,10 @@ export function OnboardingScreen({ onBack }: Props) {
   if (status !== "unlocked") return h("div", null,
     h(Action, { variant: "tertiary", onClick: onBack }, "Volver a ventas"),
     h(CatalogAccessGate, { status, notice, onUnlocked: () => { setNotice(null); setStatus("unlocked"); } }));
-  return h(OnboardingForm, { onBack, lockPending, notice, onLock: () => void lockCatalog(), onAccessRequired: (message: string) => { setNotice(message); setStatus("locked"); } });
+  return h(OnboardingForm, { onBack, acceptedMutations, lockPending, notice, onLock: () => void lockCatalog(), onAccessRequired: (message: string) => { setNotice(message); setStatus("locked"); } });
 }
 
-function OnboardingForm({ onBack, onLock, onAccessRequired, lockPending, notice }: Props & { onLock: () => void; onAccessRequired: (message: string) => void; lockPending: boolean; notice: string | null }) {
+function OnboardingForm({ onBack, acceptedMutations, onLock, onAccessRequired, lockPending, notice }: Props & { onLock: () => void; onAccessRequired: (message: string) => void; lockPending: boolean; notice: string | null }) {
   const notifications = useActionNotifications();
   const [routineOutcome, setRoutineOutcome] = useState(false);
   const [state, dispatch] = useReducer(createOnboardingFlow, initialOnboardingState);
@@ -157,6 +158,7 @@ function OnboardingForm({ onBack, onLock, onAccessRequired, lockPending, notice 
         return;
       }
       const response = await createProduct({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, purchase_price_centavos: purchaseCost, sale_price_centavos: parseBsToCentavos(listPrice)!, minimum_sale_price_centavos: parseBsToCentavos(minimumSalePrice)!, low_stock_threshold: lowStockThreshold.trim() === "" ? 1 : parsePositiveWhole(lowStockThreshold)!, opening_quantity: parseOpeningQuantity(stock)!, attribute_values: attributeValuesFor(latest!, attributes) });
+      if (response.kind === "success") acceptedMutations?.accepted(["stock"]);
       if (!mounted.current || id !== mutation.current) return;
       if (response.kind === "success") {
         let locationMessage = "";

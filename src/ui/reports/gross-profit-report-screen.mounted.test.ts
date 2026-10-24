@@ -6,6 +6,7 @@ import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
+import { createAcceptedMutations } from "../accepted-mutations.ts";
 import { GrossProfitReportScreen } from "./gross-profit-report-screen.ts";
 import type { GrossProfitOperation } from "../../commands/gross-profit-operations.ts";
 function localContractDiagnostics(source: string) {
@@ -52,6 +53,64 @@ test("strict local props reject non-date period values without ignoring program 
 const report = (amount_centavos = 1250, missing_cost_line_count = 0, activity_count = 1) => ({ kind: "success", report: { amount_centavos, missing_cost_line_count, activity_count } });
 const operation = (id: number, page = 1): GrossProfitOperation => ({ occurred_at: "2024-03-10T11:30:00Z", operation_kind: "venta", sale_id: id, return_id: null, product_name: "Filtro", sku: `SKU-${id}`, signed_quantity: 2, negotiated_unit_price_centavos: 1250, unit_cost_snapshot_centavos: null, cost_state: "unknown", signed_gross_profit_centavos: null });
 const operations = (rows = [operation(7)], page = 1, total = 1) => ({ kind: "success", report: { rows, page, page_size: 20, total, total_pages: Math.ceil(total / 20) } });
+test("mutation refresh subscribes before initial profit IPC, preserves drafts and export ownership, and ignores stock-only events", async () => {
+ const acceptedMutations = createAcceptedMutations();
+ let summaries = 0, pages = 0, exports = 0;
+ let finishOld!: (value: unknown) => void, finishExport!: (value: unknown) => void;
+ const ranges: unknown[] = [];
+ mockIPC((command, payload) => {
+  if (command === "gross_profit_report_command") {
+   ranges.push(payload);
+   if (++summaries === 1) {
+    acceptedMutations.accepted(["sales"]);
+    return new Promise(resolve => { finishOld = resolve; });
+   }
+   return report(summaries * 1250);
+  }
+  if (command === "gross_profit_operations_command") { pages++; return operations(); }
+  if (command === "export_gross_profit_operations_command") { exports++; return new Promise(resolve => { finishExport = resolve; }); }
+  throw Error(command);
+ });
+ const view = render(createElement(GrossProfitReportScreen, { acceptedMutations }));
+ await screen.findByRole("heading", { name: "Bs 25.00" });
+ await act(async () => finishOld(report(100)));
+ assert.ok(screen.getByRole("heading", { name: "Bs 25.00" }));
+ fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2020-01-01" } });
+ fireEvent.click(screen.getByRole("button", { name: "Exportar PDF" }));
+ act(() => acceptedMutations.accepted(["stock"]));
+ assert.equal(summaries, 2);
+ act(() => acceptedMutations.accepted(["stock", "sales"]));
+ await screen.findByRole("heading", { name: "Bs 37.50" });
+ assert.deepEqual(ranges[2], ranges[0]);
+ assert.equal((screen.getByLabelText("Desde") as HTMLInputElement).value, "2020-01-01");
+ assert.equal(exports, 1);
+ assert.equal((screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement).disabled, true);
+ await act(async () => finishExport({ kind: "success" }));
+ assert.ok(screen.getByText("PDF guardado correctamente."));
+ view.unmount();
+ act(() => acceptedMutations.accepted(["sales"]));
+ assert.equal(summaries, 3);
+ assert.equal(pages, 2, "reentrant invalidation retires the initial operations read before it starts");
+});
+
+test("mutation refresh synchronously retires a captured pager before another page can claim its request owner", async () => {
+ const acceptedMutations = createAcceptedMutations();
+ let pages = 0;
+ let finish!: (value: unknown) => void;
+ mockIPC(command => {
+  if (command === "gross_profit_report_command") return report();
+  if (++pages === 1) return operations(Array.from({ length: 20 }, (_, index) => operation(index + 1)), 1, 21);
+  return new Promise(resolve => { finish = resolve; });
+ });
+ render(createElement(GrossProfitReportScreen, { acceptedMutations }));
+ const next = await screen.findByRole("button", { name: "Siguiente" });
+ act(() => { acceptedMutations.accepted(["sales"]); fireEvent.click(next); });
+ assert.equal(pages, 2, "a stale captured pager cannot retire the mutation refresh");
+ await act(async () => finish(operations(Array.from({ length: 20 }, (_, index) => operation(index + 31)), 1, 21)));
+ assert.ok(screen.getByText("Venta #31"));
+ assert.ok(screen.getByText("Página 1 de 2"));
+});
+
 test("shared profit PDF outcomes leave missing-cost disclosures inline", async () => {
  let outcome: unknown = { kind: "success" };
  mockIPC(command => command === "gross_profit_report_command" ? report(1250, 2) : command === "gross_profit_operations_command" ? operations() : outcome);

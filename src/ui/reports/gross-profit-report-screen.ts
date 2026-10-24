@@ -1,4 +1,5 @@
 import { createElement, useEffect, useReducer, useRef, type ChangeEvent, type FormEvent } from "react";
+import type { AcceptedMutations } from "../accepted-mutations.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { grossProfitCommands } from "../../commands/gross-profit.ts";
 import { exportGrossProfitOperationsCommand, grossProfitOperationsCommands, type GrossProfitOperation } from "../../commands/gross-profit-operations.ts";
@@ -12,25 +13,35 @@ const money = (centavos: number) => `Bs ${centavos < 0 ? "−" : ""}${(Math.abs(
 const signed = (value: number) => `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value)}`;
 const rowName = (row: GrossProfitOperation) => row.operation_kind === "venta" ? `Venta #${row.sale_id}` : `Devolución #${row.return_id} · Venta #${row.sale_id}`;
 
-export interface GrossProfitReportScreenProps { period?: Period }
+export interface GrossProfitReportScreenProps { period?: Period; acceptedMutations?: AcceptedMutations }
 
-export function GrossProfitReportScreen({ period }: GrossProfitReportScreenProps) {
+export function GrossProfitReportScreen({ period, acceptedMutations }: GrossProfitReportScreenProps) {
  const [state, dispatch] = useReducer(createGrossProfitReportFlow, undefined, () => initialGrossProfitReportState(currentMonth()));
  const notifications = useActionNotifications();
+ const appliedRead = useRef({ period: period ?? state.applied, page: 1 });
  const mounted = useRef(true); const rangeRequest = useRef(0); const operationsRequest = useRef(0); const pageRequestInFlight = useRef<number | null>(null); const exportInFlight = useRef(false);
  useEffect(() => { mounted.current = true; return () => { mounted.current = false; rangeRequest.current++; operationsRequest.current++; pageRequestInFlight.current = null; }; }, []);
- const runRange = (period: Period) => {
-  const rangeId = ++rangeRequest.current; const operationsId = ++operationsRequest.current; pageRequestInFlight.current = null;
-  dispatch({ type: "range_applied", period, range_id: rangeId, operations_request_id: operationsId });
+ const readRange = (period: Period, page: number, refresh: boolean) => {
+  const rangeId = ++rangeRequest.current; const operationsId = ++operationsRequest.current;
+  pageRequestInFlight.current = operationsId;
+  appliedRead.current = { period, page };
+  dispatch(refresh ? { type: "refresh_started", range_id: rangeId, operations_request_id: operationsId } : { type: "range_applied", period, range_id: rangeId, operations_request_id: operationsId });
   void grossProfitCommands.load(period.from, period.to).then(response => { if (!mounted.current || rangeId !== rangeRequest.current) return; dispatch(response.kind === "success" ? { type: "summary_succeeded", range_id: rangeId, report: response.report } : { type: "summary_failed", range_id: rangeId }); });
-  void grossProfitOperationsCommands.load(period.from, period.to, 1).then(response => { if (!mounted.current || rangeId !== rangeRequest.current || operationsId !== operationsRequest.current) return; dispatch(response.kind === "success" ? { type: "operations_succeeded", range_id: rangeId, operations_request_id: operationsId, report: response.report } : { type: "operations_failed", range_id: rangeId, operations_request_id: operationsId }); });
+  if (rangeId !== rangeRequest.current || operationsId !== operationsRequest.current) return;
+  void grossProfitOperationsCommands.load(period.from, period.to, page).then(response => { if (!mounted.current || rangeId !== rangeRequest.current || operationsId !== operationsRequest.current) return; dispatch(response.kind === "success" ? { type: "operations_succeeded", range_id: rangeId, operations_request_id: operationsId, report: response.report } : { type: "operations_failed", range_id: rangeId, operations_request_id: operationsId }); }).finally(() => { if (pageRequestInFlight.current === operationsId) pageRequestInFlight.current = null; });
  };
+ const runRange = (period: Period) => readRange(period, 1, false);
+ useEffect(() => acceptedMutations?.subscribe("sales", () => {
+  const applied = appliedRead.current;
+  readRange(applied.period, applied.page, true);
+ }), [acceptedMutations]);
  useEffect(() => { runRange(period ?? state.applied); }, [period?.from, period?.to]);
  const valid = Boolean(state.draft.from && state.draft.to && state.draft.from <= state.draft.to);
  const exportReady = state.summary_status === "ready" && state.operations_status === "ready";
  const requestPage = (page: number) => {
   if (pageRequestInFlight.current !== null || state.operations_status !== "ready") return;
   const requestId = ++operationsRequest.current; const rangeId = state.range_id; pageRequestInFlight.current = requestId;
+  appliedRead.current = { period: state.applied, page };
   dispatch({ type: "page_requested", page, operations_request_id: requestId });
   void grossProfitOperationsCommands.load(state.applied.from, state.applied.to, page).then(response => { if (!mounted.current || rangeId !== rangeRequest.current || requestId !== operationsRequest.current) return; dispatch(response.kind === "success" ? { type: "operations_succeeded", range_id: rangeId, operations_request_id: requestId, report: response.report } : { type: "operations_failed", range_id: rangeId, operations_request_id: requestId }); }).finally(() => { if (pageRequestInFlight.current === requestId) pageRequestInFlight.current = null; });
  };

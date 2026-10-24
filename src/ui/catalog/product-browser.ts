@@ -62,6 +62,16 @@ export function createProductBrowserFlow<T extends ProductBrowserProduct>(state:
   }
 }
 
+/** Refresh the applied result without submitting editable toolbar fields. */
+export type RefreshingProductBrowserState<T extends ProductBrowserProduct> = ProductBrowserState<T> & { refreshing?: boolean };
+export type RefreshingProductBrowserAction<T extends ProductBrowserProduct> = ProductBrowserAction<T> | { type: "refresh_started"; request_id: number };
+export function createRefreshingProductBrowserFlow<T extends ProductBrowserProduct>(state: RefreshingProductBrowserState<T>, action: RefreshingProductBrowserAction<T>): RefreshingProductBrowserState<T> {
+  if (action.type === "refresh_started") return { ...createProductBrowserFlow(state, { ...state, type: "browse_started", request_id: action.request_id }), refreshing: true };
+  const next = createProductBrowserFlow(state, action);
+  if (state.refreshing && ["query_changed", "category_changed", "stock_state_changed", "activity_changed"].includes(action.type)) return { ...next, request_id: state.request_id, refreshing: true };
+  return { ...next, refreshing: action.type === "browse_started" ? false : state.refreshing && next.status === "loading" };
+}
+
 function stockText(product: ProductBrowserProduct) {
   return product.available_quantity === 0 ? "Sin stock: 0" : product.available_quantity === 1 ? "Stock bajo: 1" : `Disponible: ${product.available_quantity}`;
 }

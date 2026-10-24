@@ -1,4 +1,5 @@
 import { createElement, useEffect, useReducer, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
+import type { AcceptedMutations } from "../accepted-mutations.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { MOVEMENT_TYPES, movementLedgerCommands, type MovementType } from "../../commands/movement-ledger.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
@@ -14,20 +15,27 @@ const columns = [
  { label: "Saldo registrado", align: "end", kind: "numeric" }, { label: "Detalle guardado", align: "start", kind: "text" }, { label: "Referencia", align: "start", kind: "text" },
 ] as const;
 const emptyMessage = (state: LedgerState) => state.status === "empty" ? "No hay movimientos para los filtros aplicados." : "";
-export function MovementLedgerScreen() {
+export function MovementLedgerScreen({ acceptedMutations }: { acceptedMutations?: AcceptedMutations }) {
  const [state, dispatch] = useReducer(createMovementLedgerFlow, undefined, () => initialLedgerState());
  const [reportMode, setReportMode] = useState<ReportMode>("");
  const [appliedMode, setAppliedMode] = useState<ReportMode | null>(null);
  const [profitPeriod, setProfitPeriod] = useState({ from: state.applied.from, to: state.applied.to });
+ const appliedRead = useRef({ filters: state.applied, page: 1 });
+ const appliedModeRef = useRef<ReportMode | null>(null);
  const notifications = useActionNotifications();
  const exportInFlight = useRef(false);
+ const exportOwner = useRef<number | null>(null);
  const [exportResourceLimit, setExportResourceLimit] = useState(false);
  const mounted = useRef(true); const listAttempt = useRef(0); const productsAttempt = useRef(0); const exportAttempt = useRef(0);
  useEffect(() => { mounted.current = true; return () => { mounted.current = false; listAttempt.current++; productsAttempt.current++; exportAttempt.current++; }; }, []);
- const load = (page: number, filters = state.applied) => {
+ const load = (page: number, filters = state.applied, preserveExport = false) => {
   const request_id = ++listAttempt.current;
-  exportAttempt.current++;
+  appliedRead.current = { filters, page };
+  if (!preserveExport) exportAttempt.current++;
   dispatch({ type: "page_requested", request_id, page });
+  // A read refresh is not a new export owner. Reattach the existing pending
+  // export after the normal page transition, without issuing another export.
+  if (preserveExport && exportInFlight.current && exportOwner.current === exportAttempt.current) dispatch({ type: "export_started", request_id: exportAttempt.current });
   void movementLedgerCommands.list(filters, page).then(response => { if (!mounted.current || request_id !== listAttempt.current) return; dispatch(response.kind === "success" ? { type: "list_succeeded", request_id, response } : { type: "list_failed", request_id }); });
  };
  const searchProducts = (query = state.product_query, page = 1) => {
@@ -39,15 +47,23 @@ export function MovementLedgerScreen() {
   });
  };
  useEffect(() => {
+  const dispose = acceptedMutations?.subscribe("stock", () => {
+   if (appliedModeRef.current === "gross_profit") return;
+   const applied = appliedRead.current;
+   load(applied.page, applied.filters, true);
+  });
   const request_id = ++listAttempt.current; dispatch({ type: "filters_applied", request_id });
-  void movementLedgerCommands.list(state.applied, 1).then(response => { if (!mounted.current || request_id !== listAttempt.current) return; dispatch(response.kind === "success" ? { type: "list_succeeded", request_id, response } : { type: "list_failed", request_id }); });
- }, []);
+  void movementLedgerCommands.list(appliedRead.current.filters, 1).then(response => { if (!mounted.current || request_id !== listAttempt.current) return; dispatch(response.kind === "success" ? { type: "list_succeeded", request_id, response } : { type: "list_failed", request_id }); });
+  return dispose;
+ }, [acceptedMutations]);
  const apply = () => {
   const filters = { ...state.draft, movement_type: reportMode === "gross_profit" ? null : reportMode || null };
   dispatch({ type: "draft_changed", filters });
   setAppliedMode(reportMode || null);
+  appliedModeRef.current = reportMode || null;
   const request_id = ++listAttempt.current; exportAttempt.current++;
   if (reportMode === "gross_profit") { setProfitPeriod({ from: filters.from, to: filters.to }); return; }
+  appliedRead.current = { filters, page: 1 };
   dispatch({ type: "filters_applied", request_id });
   void movementLedgerCommands.list(filters, 1).then(response => { if (!mounted.current || request_id !== listAttempt.current) return; dispatch(response.kind === "success" ? { type: "list_succeeded", request_id, response } : { type: "list_failed", request_id }); });
  };
@@ -60,6 +76,7 @@ export function MovementLedgerScreen() {
   if (exportInFlight.current || state.status !== "ready") return;
   exportInFlight.current = true; setExportResourceLimit(false);
   const request_id = ++exportAttempt.current;
+  exportOwner.current = request_id;
   dispatch({ type: "export_started", request_id });
   void movementLedgerCommands.export(state.applied).then(response => {
    if (!mounted.current || request_id !== exportAttempt.current) return;
@@ -67,7 +84,7 @@ export function MovementLedgerScreen() {
    setExportResourceLimit(resourceLimit);
    notifications?.publish({ severity: response.kind === "success" ? "success" : response.kind === "cancelled" ? "info" : "error", message: response.kind === "success" ? "El PDF se generó correctamente." : response.kind === "cancelled" ? "Se canceló la exportación." : resourceLimit ? "El registro supera los límites de recursos y no se guardó. Ajustá los filtros e intentá de nuevo." : "No se pudo exportar el registro." });
    dispatch({ type: "export_finished", request_id, response });
-  }).finally(() => { exportInFlight.current = false; });
+  }).finally(() => { exportInFlight.current = false; exportOwner.current = null; });
  };
  const filtersValid = Boolean(state.draft.from && state.draft.to && state.draft.from <= state.draft.to);
  const rows = state.rows.map(row => [
@@ -109,7 +126,7 @@ export function MovementLedgerScreen() {
      productStatus,
      state.products_status === "ready" ? createElement("ul", { "aria-label": "Resultados de productos", "data-ui-ledger-product-results": true }, state.products.map(product => createElement("li", { key: product.product_id }, createElement("span", null, `${product.product_name} · ${product.product_sku}${product.active ? "" : " · Archivado"}`), createElement(Action, { variant: "secondary", onClick: () => selectProduct(product), "aria-label": `Seleccionar ${product.product_name} (SKU: ${product.product_sku})` }, "Seleccionar")))) : null,
      state.products_status === "ready" && state.products_has_more ? createElement(Action, { variant: "tertiary", onClick: () => searchProducts(state.product_submitted_query, state.products_page + 1) }, "Más productos") : null) : null)),
-  appliedMode === "gross_profit" ? createElement(GrossProfitReportScreen, { period: profitPeriod }) : createElement("section", { "data-ui-ledger-results": true, "aria-labelledby": "movement-results-heading" },
+  appliedMode === "gross_profit" ? createElement(GrossProfitReportScreen, { period: profitPeriod, acceptedMutations }) : createElement("section", { "data-ui-ledger-results": true, "aria-labelledby": "movement-results-heading" },
    createElement("header", { "data-ui-ledger-results-header": true },
     createElement("div", null, createElement("h2", { id: "movement-results-heading" }, "Movimientos de inventario"), createElement("p", null, "Movimientos persistidos; los datos de producto reflejan el catálogo actual. El saldo es el registrado en cada movimiento, no el stock actual.")),
    createElement("div", { "data-ui-report-actions": true }, createElement(Action, { variant: "secondary", disabled: state.status !== "ready", pending: state.export_status === "pending", pendingLabel: "Exportar PDF", onClick: exportPdf }, "Exportar PDF"))),

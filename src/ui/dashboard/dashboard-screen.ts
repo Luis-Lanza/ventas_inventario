@@ -1,5 +1,6 @@
 import { createElement, useEffect, useReducer, useRef, type ReactNode } from "react";
 
+import type { AcceptedMutations } from "../accepted-mutations.ts";
 import { dashboardCommands, type DashboardMetrics } from "../../commands/dashboard.ts";
 import { Action, Badge, Feedback } from "../visual-system/controls.ts";
 import { AlignedData, Panel } from "../visual-system/structure.ts";
@@ -53,11 +54,10 @@ function SectionMessage({ status, hasItems, loadingMessage, errorMessage, emptyM
   return hasItems ? children : createElement(QuietSectionMessage, { kind: "empty" }, emptyMessage);
 }
 
-export function DashboardScreen({ onOpenInventoryAlerts }: { onOpenInventoryAlerts: () => void }) {
+export function DashboardScreen({ onOpenInventoryAlerts, acceptedMutations }: { onOpenInventoryAlerts: () => void; acceptedMutations?: AcceptedMutations }) {
   const [state, dispatch] = useReducer(createDashboardFlow, initialDashboardState);
   const mounted = useRef(true);
   const attempt = useRef(0);
-  useEffect(() => () => { mounted.current = false; attempt.current += 1; }, []);
   const load = () => {
     const request_id = ++attempt.current;
     dispatch({ type: "load_started", request_id });
@@ -66,7 +66,12 @@ export function DashboardScreen({ onOpenInventoryAlerts }: { onOpenInventoryAler
       dispatch(response.kind === "success" ? { type: "load_succeeded", request_id, report: response.report } : { type: "load_failed", request_id });
     });
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    mounted.current = true;
+    const dispose = acceptedMutations?.subscribe("stock", load);
+    load();
+    return () => { dispose?.(); mounted.current = false; attempt.current++; };
+  }, [acceptedMutations]);
 
   const report = state.report;
   const periodPanels = report
