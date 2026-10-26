@@ -1,6 +1,6 @@
 # Restore certainty is separate from write permission
 
-A confirmed installation retires the old sale draft; an unknown result does not. Neither a readable database nor a familiar error code proves which database won. T3a supplies native admission and command decoding; T3b must consume the result in the App-owned operation/session coordinator. No UI reset or frontend unlock is implemented by T3a.
+A confirmed installation retires the old sale draft; an unknown result does not. Neither a readable database nor a familiar error code proves which database won. T3a supplies native admission and command decoding. T3b1 supplies the coordinator below; **App/consumer integration and UI/session resets remain pending in T3b2**. Neither native decoding nor an unwired coordinator implements the frontend policy.
 
 ## Confirm contract
 
@@ -34,6 +34,27 @@ Examples:
 - Missing, partial, invalid or contradictory confirm metadata produces a redacted `storage_unavailable` error with **unknown/blocked/false**. In particular, an unclassified error never becomes unchanged based on its code.
 - Explicit `unknown` requires blocked admission. A restored result with a cleanup warning also requires blocked admission. Error results cannot claim restored certainty.
 - Prepare/picker cancellation or failure is not an attempted replacement. Their existing decoding remains separate.
+
+## App-owned coordinator (T3b1)
+
+`createAppOperationCoordinator(ports, confirmRestore)` in `src/ui/app-operation-coordinator.ts` is framework-independent. Create one per App lifetime, not per screen. Its 26 typed mutation methods cover checkout, corrections, inventory, onboarding, catalog metadata/schema/images, locations and catalog access. Reads, file backup creation and restore preparation are not mutation ports.
+
+| Interface | Consumer responsibility / guarantee |
+| --- | --- |
+| `generation()` | Cache these stable, frozen ports for a consumer's lifetime and chained follow-ups. Each call reserves synchronously **before adapter entry**, including lazy transport, and releases only when its promise settles. |
+| `confirmRestore(token)` | Exclusively reserve before entering the native adapter. Pending mutations, pending confirmation or blocked admission return resolving bounded refusals without forwarding. All mutation families refuse during confirmation. |
+| `getSnapshot()` | Stable immutable snapshot until a transition: `generation`, `pendingMutations`, `restorePending`, `writeAdmission`, and retained `completion`. |
+| `subscribe(listener)` | Observe transitions; unsubscribe only detaches observation. It never cancels native work or releases leases. Observer exceptions cannot change ownership or outcome classification. |
+
+`completion` is `{id, result}`: the ID advances only when a forwarded confirmation settles, including a transport rejection normalized to unknown/blocked. Local busy/blocked refusals neither create a completion nor erase existing evidence. Returned decoded results preserve identity; the snapshot retains a frozen copy. Later App ownership must consume each completion ID once for session/readers and action notifications, even if Backup has unmounted.
+
+- **Known restored:** advance generation, retiring every saved old port. New ports forward only if admitted; cleanup-warning restoration advances generation but remains blocked.
+- **Unchanged:** keep the generation and existing admission; native blocked admission can close it, never reopen a previously blocked coordinator.
+- **Unknown:** retain the generation as evidence, block writes and retain completion. Getters, subscriptions and blind confirmation retries cannot unlock it. There is no local unlock method.
+
+Mutation refusals use the existing `persistence_failure` shape, except catalog access uses `access_unavailable`; messages are bounded Spanish guidance. These are not fabricated successes. A local confirmation refusal describes that local non-forwarded request, not certainty about another pending native attempt: App must use the retained completion for replacement decisions.
+
+T3b2 still must wire every owned consumer, retire the sale draft **and receipt only on confirmed restoration**, invalidate readers/alert request identities, preserve evidence on unknown, and render durable recovery guidance. This module does not implement those UI effects or promise native cancellation on unmount.
 
 ## Native admission boundary
 
