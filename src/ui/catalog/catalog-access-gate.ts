@@ -1,3 +1,4 @@
+import { useAppOperations } from "../app-operation-context.ts";
 import { createElement, type ChangeEvent, type FormEvent, useEffect, useRef, useState } from "react";
 import { catalogAccessCommands, type CatalogAccessResponse, type CatalogAccessStatus } from "../../commands/catalog.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
@@ -6,6 +7,8 @@ import { Action, Feedback } from "../visual-system/controls.ts";
 export const accessErrorMessage = (response: CatalogAccessResponse) => response.kind === "error" && response.code === "invalid_credentials" ? "La contraseña o el código de recuperación no es válido." : response.kind === "error" && response.code === "license_required" ? "Se requiere una licencia válida para configurar el acceso al catálogo." : response.kind === "error" && response.code === "validation_error" ? "La contraseña debe tener entre 8 y 1024 caracteres." : "No se pudo completar la solicitud de acceso al catálogo.";
 
 export function CatalogAccessGate({ status, notice, onUnlocked }: { status: CatalogAccessStatus | "loading"; notice: string | null; onUnlocked: (message: string) => void }) {
+  const operations = useAppOperations();
+  const ownerCurrent = () => !operations || operations.isCurrent();
   const notifications = useActionNotifications();
   const mounted = useRef(true), locked = useRef(false), request = useRef(0);
   useEffect(() => () => { mounted.current = false; request.current++; }, []);
@@ -24,12 +27,12 @@ export function CatalogAccessGate({ status, notice, onUnlocked }: { status: Cata
     locked.current = true; setPending(true); setFeedback(null);
     const current = ++request.current;
     try {
-      const response = mode === "setup" ? await catalogAccessCommands.beginSetup(password)
-        : mode === "unlock" ? await catalogAccessCommands.unlock(password)
-          : mode === "recovery" ? await catalogAccessCommands.beginRecovery(recoveryCode, password)
-            : mode === "confirm_setup" ? await catalogAccessCommands.finishSetup()
-              : await catalogAccessCommands.finishRecovery();
-      if (!mounted.current || current !== request.current) return;
+      const response = mode === "setup" ? await (operations?.mutations.access.beginSetup ?? catalogAccessCommands.beginSetup)(password)
+        : mode === "unlock" ? await (operations?.mutations.access.unlock ?? catalogAccessCommands.unlock)(password)
+          : mode === "recovery" ? await (operations?.mutations.access.beginRecovery ?? catalogAccessCommands.beginRecovery)(recoveryCode, password)
+            : mode === "confirm_setup" ? await (operations?.mutations.access.finishSetup ?? catalogAccessCommands.finishSetup)()
+              : await (operations?.mutations.access.finishRecovery ?? catalogAccessCommands.finishRecovery)();
+      if (!ownerCurrent() || !mounted.current || current !== request.current) return;
       setPassword(""); setConfirmation(""); setRecoveryCode("");
       if (response.kind === "recovery_code") {
         setShownCode(response.recovery_code); setMode(mode === "setup" ? "confirm_setup" : "confirm_recovery");
@@ -44,11 +47,11 @@ export function CatalogAccessGate({ status, notice, onUnlocked }: { status: Cata
         else setFeedback(message);
       }
     } catch {
-      if (mounted.current && current === request.current) {
+      if (ownerCurrent() && mounted.current && current === request.current) {
         const message = "No se pudo completar la solicitud de acceso al catálogo.";
         if (notifications) notifications.publish({ severity: "error", message }); else setFeedback(message);
       }
-    } finally { if (mounted.current && current === request.current) { locked.current = false; setPending(false); } }
+    } finally { if (ownerCurrent() && mounted.current && current === request.current) { locked.current = false; setPending(false); } }
   };
   const isSetup = status === "setup_required" && mode === "setup";
   const isUnlock = status === "locked" && mode === "unlock";

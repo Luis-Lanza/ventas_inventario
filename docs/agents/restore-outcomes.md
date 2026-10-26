@@ -1,6 +1,6 @@
 # Restore certainty is separate from write permission
 
-A confirmed installation retires the old sale draft; an unknown result does not. Neither a readable database nor a familiar error code proves which database won. T3a supplies native admission and command decoding. T3b1 supplies the coordinator below; **App/consumer integration and UI/session resets remain pending in T3b2**. Neither native decoding nor an unwired coordinator implements the frontend policy.
+A confirmed installation retires the old sale draft; an unknown result does not. Neither a readable database nor a familiar error code proves which database won. T3a supplies native admission and command decoding. T3b1 supplies the coordinator below. T3b2 connects it to App and mutation consumers; **mounted integration validation remains required before frontend approval**.
 
 ## Confirm contract
 
@@ -54,7 +54,15 @@ Examples:
 
 Mutation refusals use the existing `persistence_failure` shape, except catalog access uses `access_unavailable`; messages are bounded Spanish guidance. These are not fabricated successes. A local confirmation refusal describes that local non-forwarded request, not certainty about another pending native attempt: App must use the retained completion for replacement decisions.
 
-T3b2 still must wire every owned consumer, retire the sale draft **and receipt only on confirmed restoration**, invalidate readers/alert request identities, preserve evidence on unknown, and render durable recovery guidance. This module does not implement those UI effects or promise native cancellation on unmount.
+## App integration (T3b2)
+
+`app-operation-context.ts` creates production adapters per App owner and exposes a stable generation-scoped React context. Consumers substitute only mutation methods; read/status/list/export and file backup/preparation methods keep their existing paths. Standalone screens retain default adapters. A current-generation check also suppresses retired controller delivery and follow-ups; navigation alone does not retire a generation.
+
+App observes the coordinator snapshot. Only an advanced restore generation replaces its SaleSession (draft **and receipt**), accepted-mutation owner and screen readers. Ordinary mutation notifications retain the existing T2 refresh/context behavior; cancellation and unchanged restore keep their original owners. Alert responses check both request identity and the coordinator's current generation before delivery, including before passive cleanup runs.
+
+The App-owned confirmation wrapper announces each returned outcome/refusal once while App is alive; managed Backup confirmation suppresses its local announcement. This wrapper survives Backup navigation, but full App unmount suppresses delivery. Recovery instructions derive from the retained root snapshot, independently of dismissible notices or backup/preparation state. Unknown preserves evidence without allowing submission; restored cleanup resets owners while keeping writes and new restoration workflows closed. Backup file creation remains available without changing that evidence.
+
+Before confirmation, Backup warns that draft/receipt retirement occurs only if restoration succeeds, and retains its existing explicit acknowledgement. Normal charged receipts remain Nueva venta-only; confirmed restoration is a separate owner-replacement boundary. None of this promises native cancellation on unmount, multiwindow coordination, or admission for arbitrary external IPC clients.
 
 ## Native admission boundary
 

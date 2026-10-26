@@ -1,3 +1,4 @@
+import { useAppOperations } from "../app-operation-context.ts";
 import { createElement as h, Fragment, useEffect, useReducer, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { createCategory, createProduct, FIELD_TYPE, listCategories, type Category, type CategoryFieldInput, type FieldType } from "../../commands/onboarding.ts";
 import { catalogAccessCommands, onboardingProductLocationCommands, type CatalogAccessStatus, type ProductLocationRecord, type ProductLocationSegment } from "../../commands/catalog.ts";
@@ -17,6 +18,8 @@ type PendingField = CategoryFieldInput & { optionsText: string };
 const emptyField: PendingField = { label: "", field_type: FIELD_TYPE.TEXT, required: false, options: [], optionsText: "" };
 
 export function OnboardingScreen({ onBack, acceptedMutations }: Props) {
+  const operations = useAppOperations();
+  const ownerCurrent = () => !operations || operations.isCurrent();
   const notifications = useActionNotifications();
   const [status, setStatus] = useState<CatalogAccessStatus | "loading">("loading");
   const [notice, setNotice] = useState<string | null>(null);
@@ -24,16 +27,16 @@ export function OnboardingScreen({ onBack, acceptedMutations }: Props) {
   const mounted = useRef(true), lock = useRef(false);
   useEffect(() => {
     void catalogAccessCommands.status().then((response) => {
-      if (mounted.current) setStatus(response.kind === "status" ? response.status : "unavailable");
-    }).catch(() => { if (mounted.current) setStatus("unavailable"); });
+      if (ownerCurrent() && mounted.current) setStatus(response.kind === "status" ? response.status : "unavailable");
+    }).catch(() => { if (ownerCurrent() && mounted.current) setStatus("unavailable"); });
     return () => { mounted.current = false; };
   }, []);
   const lockCatalog = async () => {
     if (lock.current) return;
     lock.current = true; setLockPending(true); setNotice(null);
     try {
-      const response = await catalogAccessCommands.lock();
-      if (!mounted.current) return;
+      const response = await (operations?.mutations.access.lock ?? catalogAccessCommands.lock)();
+      if (!ownerCurrent() || !mounted.current) return;
       if (response.kind === "success") {
         setStatus("locked");
         if (notifications) notifications.publish({ severity: "success", message: "Catálogo bloqueado." }); else setNotice("Catálogo bloqueado.");
@@ -41,8 +44,8 @@ export function OnboardingScreen({ onBack, acceptedMutations }: Props) {
         const message = accessErrorMessage(response);
         if (notifications) notifications.publish({ severity: "error", message }); else setNotice(message);
       }
-    } catch { if (mounted.current) { const message = "No se pudo bloquear el catálogo."; if (notifications) notifications.publish({ severity: "error", message }); else setNotice(message); } }
-    finally { if (mounted.current) { lock.current = false; setLockPending(false); } }
+    } catch { if (ownerCurrent() && mounted.current) { const message = "No se pudo bloquear el catálogo."; if (notifications) notifications.publish({ severity: "error", message }); else setNotice(message); } }
+    finally { if (ownerCurrent() && mounted.current) { lock.current = false; setLockPending(false); } }
   };
   if (status !== "unlocked") return h("div", null,
     h(Action, { variant: "tertiary", onClick: onBack }, "Volver a ventas"),
@@ -51,6 +54,8 @@ export function OnboardingScreen({ onBack, acceptedMutations }: Props) {
 }
 
 function OnboardingForm({ onBack, acceptedMutations, onLock, onAccessRequired, lockPending, notice }: Props & { onLock: () => void; onAccessRequired: (message: string) => void; lockPending: boolean; notice: string | null }) {
+  const operations = useAppOperations();
+  const ownerCurrent = () => !operations || operations.isCurrent();
   const notifications = useActionNotifications();
   const [routineOutcome, setRoutineOutcome] = useState(false);
   const [state, dispatch] = useReducer(createOnboardingFlow, initialOnboardingState);
@@ -85,14 +90,14 @@ function OnboardingForm({ onBack, acceptedMutations, onLock, onAccessRequired, l
     dispatch({ type: "categories_started", requestId: id });
     try {
       const response = await listCategories();
-      if (!mounted.current || id !== request.current) return;
+      if (!ownerCurrent() || !mounted.current || id !== request.current) return;
       dispatch(response.kind === "success" ? { type: "categories_succeeded", requestId: id, categories: response.categories } : { type: "categories_failed", requestId: id });
       if (response.kind === "success" && response.categories[0]) setSelectedId(String(response.categories[0].category_id));
-    } catch { if (mounted.current && id === request.current) dispatch({ type: "categories_failed", requestId: id }); }
+    } catch { if (ownerCurrent() && mounted.current && id === request.current) dispatch({ type: "categories_failed", requestId: id }); }
   };
   const loadProductLocations = async () => {
     const [response, schema] = await Promise.all([onboardingProductLocationCommands.list(), onboardingProductLocationCommands.schema()]);
-    if (!mounted.current) return;
+    if (!ownerCurrent() || !mounted.current) return;
     if (response.kind === "locations_success") { setProductLocations(response.locations.filter((location) => location.active)); setLocationsStatus("ready"); }
     else { setProductLocations([]); setLocationsStatus("error"); }
     setLocationSegments(schema.kind === "schema_success" ? schema.schema.segments : []);
@@ -121,8 +126,8 @@ function OnboardingForm({ onBack, acceptedMutations, onLock, onAccessRequired, l
     if (!categoryName.trim()) { setCategoryError(true); focus("category-name"); return; }
     const id = ++mutation.current; categoryLock.current = true; setRoutineOutcome(false); setCategoryError(false); dispatch({ type: "category_started", requestId: id });
     try {
-      const response = await createCategory({ name: categoryName.trim(), fields: categoryFields });
-      if (!mounted.current || id !== mutation.current) return;
+      const response = await (operations?.mutations.createCategory ?? createCategory)({ name: categoryName.trim(), fields: categoryFields });
+      if (!ownerCurrent() || !mounted.current || id !== mutation.current) return;
       if (response.kind === "success") {
         setRoutineOutcome(true); notifications?.publish({ severity: "success", message: `Categoría creada: ${response.name}.` });
         request.current++; // An older in-flight list must not overwrite the newly selected category.
@@ -137,7 +142,7 @@ function OnboardingForm({ onBack, acceptedMutations, onLock, onAccessRequired, l
         }
         dispatch({ type: "category_failed", requestId: id });
       }
-    } catch { if (mounted.current && id === mutation.current) { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear la categoría." }); dispatch({ type: "category_failed", requestId: id }); } }
+    } catch { if (ownerCurrent() && mounted.current && id === mutation.current) { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear la categoría." }); dispatch({ type: "category_failed", requestId: id }); } }
     finally { categoryLock.current = false; }
   };
   const submitProduct = async (event: FormEvent<HTMLFormElement>) => {
@@ -154,7 +159,7 @@ function OnboardingForm({ onBack, acceptedMutations, onLock, onAccessRequired, l
     const id = ++mutation.current; productLock.current = true; setRoutineOutcome(false); setFieldError(""); setFieldErrorMessage(""); dispatch({ type: "product_started", requestId: id });
     try {
       const refreshed = await listCategories();
-      if (!mounted.current || id !== mutation.current) return;
+      if (!ownerCurrent() || !mounted.current || id !== mutation.current) return;
       if (refreshed.kind !== "success") {
         dispatch({ type: "product_failed", requestId: id, message: "No se pudo actualizar la categoría. Reintentá antes de crear el producto." });
         return;
@@ -167,16 +172,17 @@ function OnboardingForm({ onBack, acceptedMutations, onLock, onAccessRequired, l
         if (latest) setSelectedId(String(latest.category_id));
         return;
       }
-      const response = await createProduct({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, purchase_price_centavos: purchaseCost, sale_price_centavos: parseBsToCentavos(listPrice)!, minimum_sale_price_centavos: parseBsToCentavos(minimumSalePrice)!, low_stock_threshold: lowStockThreshold.trim() === "" ? 1 : parsePositiveWhole(lowStockThreshold)!, opening_quantity: parseOpeningQuantity(stock)!, attribute_values: attributeValuesFor(latest!, attributes) });
+      const response = await (operations?.mutations.createProduct ?? createProduct)({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, purchase_price_centavos: purchaseCost, sale_price_centavos: parseBsToCentavos(listPrice)!, minimum_sale_price_centavos: parseBsToCentavos(minimumSalePrice)!, low_stock_threshold: lowStockThreshold.trim() === "" ? 1 : parsePositiveWhole(lowStockThreshold)!, opening_quantity: parseOpeningQuantity(stock)!, attribute_values: attributeValuesFor(latest!, attributes) });
+      if (!ownerCurrent()) return;
       if (response.kind === "success") acceptedMutations?.accepted(["stock"]);
-      if (!mounted.current || id !== mutation.current) return;
+      if (!ownerCurrent() || !mounted.current || id !== mutation.current) return;
       if (response.kind === "success") {
         let locationMessage = "";
         let locationAssigned = !primaryLocationId;
         if (primaryLocationId) {
           locationMessage = " No se pudo asignar la ubicación principal; podés corregirla desde el Catálogo.";
           try {
-            const assignment = await onboardingProductLocationCommands.assignPrimary({ product_id: response.product_id, expected_revision: 0, location_id: Number(primaryLocationId) });
+            const assignment = await (operations?.mutations.onboardingLocations.assignPrimary ?? onboardingProductLocationCommands.assignPrimary)({ product_id: response.product_id, expected_revision: 0, location_id: Number(primaryLocationId) });
             const location = productLocations.find((item) => item.location_id === Number(primaryLocationId));
             if (assignment?.kind === "assignment_success" && assignment.product_id === response.product_id && assignment.location_id === Number(primaryLocationId) && location) {
               locationAssigned = true;
@@ -186,7 +192,7 @@ function OnboardingForm({ onBack, acceptedMutations, onLock, onAccessRequired, l
             // Product creation succeeded; assignment is an independent follow-up operation.
           }
         }
-        if (!mounted.current || id !== mutation.current) return;
+        if (!ownerCurrent() || !mounted.current || id !== mutation.current) return;
         const message = `Producto creado: ${response.sku}. Stock inicial: ${response.available_quantity} unidades.${locationMessage}`;
         setRoutineOutcome(locationAssigned);
         notifications?.publish({ severity: locationAssigned ? "success" : "warning", message });
@@ -222,7 +228,7 @@ function OnboardingForm({ onBack, acceptedMutations, onLock, onAccessRequired, l
           dispatch({ type: "product_failed", requestId: id, message });
         }
       }
-    } catch { if (mounted.current && id === mutation.current) { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear el producto." }); dispatch({ type: "product_failed", requestId: id }); } }
+    } catch { if (ownerCurrent() && mounted.current && id === mutation.current) { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear el producto." }); dispatch({ type: "product_failed", requestId: id }); } }
     finally { productLock.current = false; }
   };
   const pending = lockPending || state.categoryStatus === "pending" || state.productStatus === "pending";

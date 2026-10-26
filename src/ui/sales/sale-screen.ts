@@ -1,3 +1,4 @@
+import { useAppOperations } from "../app-operation-context.ts";
 import { createElement, useCallback, type FormEvent, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { browseSalesProducts, catalogProductImageCommands, type SalesBrowseProduct } from "../../commands/catalog.ts";
 import { confirmSale, type ConfirmSaleRequest, type ConfirmSaleResponse } from "../../commands/confirm-sale.ts";
@@ -20,6 +21,8 @@ export interface SaleScreenProps {
 }
 
 export function SaleScreen(props: SaleScreenProps) {
+  const operations = useAppOperations();
+  const ownerCurrent = () => !operations || operations.isCurrent();
   const notifications = useActionNotifications();
   const [localMutations] = useState(createAcceptedMutations);
   const mutations = props.acceptedMutations ?? localMutations;
@@ -89,7 +92,7 @@ export function SaleScreen(props: SaleScreenProps) {
       const response = await catalogProductImageCommands.salesThumbnail(product.product_id);
       return response.kind === "success" && response.product_id === product.product_id ? [key, product.product_id, response.src] as const : null;
     })).then((thumbnails) => {
-      if (!mounted.current || current !== browseThumbnailAttempt.current || browserRef.current.request_id !== requestId) return;
+      if (!ownerCurrent() || !mounted.current || current !== browseThumbnailAttempt.current || browserRef.current.request_id !== requestId) return;
       for (const item of thumbnails) if (item) thumbnailCache.current.set(item[0], item[2]);
       if (thumbnails.some(Boolean)) setThumbnailCacheVersion((version) => version + 1);
     });
@@ -115,8 +118,8 @@ export function SaleScreen(props: SaleScreenProps) {
     browserDispatch(refresh ? { type: "refresh_started", request_id: attempt } : { type: "browse_started", query, category_id, stock_state: "all", activity: "active", page, request_id: attempt });
     try {
       const result = await browseSalesProducts({ query, category_id, stock_state: "all", activity: "active", page, page_size: 20 });
-      if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
-    } catch { if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local." }); }
+      if (ownerCurrent() && mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
+    } catch { if (ownerCurrent() && mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local." }); }
   }
   useEffect(() => { void browsePage("", null, 1); }, []);
   useEffect(() => mutations.subscribe("stock", () => {
@@ -147,8 +150,9 @@ export function SaleScreen(props: SaleScreenProps) {
       payment: { ...attempt.request.payment },
     };
     let response: ConfirmSaleResponse | null = null;
-    try { response = await confirmSale(request); } catch { /* Settle adapter exceptions as recoverable failures. */ }
+    try { response = await (operations?.mutations.confirmSale ?? confirmSale)(request); } catch { /* Settle adapter exceptions as recoverable failures. */ }
     // Only the session's live owner and original token can accept delivery, even while Sales is absent.
+    if (!ownerCurrent()) return;
     const effect = session.settle(attempt.token, response);
     if (effect?.kind === "success" || effect?.kind === "routine_error") notifications?.publish(effect.notice);
     // Stale-catalog and request-identity instructions remain actionable recovery state.

@@ -1,4 +1,5 @@
 import { createElement as h, useEffect, useReducer, useRef, useState } from "react";
+import { useAppOperations, useOperationSnapshot, restoreRecoveryGuidance } from "../app-operation-context.ts";
 
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { backupCommands } from "../../commands/backup.ts";
@@ -17,6 +18,10 @@ export interface BackupScreenProps {
 }
 
 export function BackupScreen({ canRestore = true }: BackupScreenProps) {
+  const operations = useAppOperations();
+  const operationState = useOperationSnapshot();
+  const recoveryGuidance = restoreRecoveryGuidance(operationState);
+  const managedConfirmation = useRef(false);
   const [state, dispatch] = useReducer(createBackupFlow, initialBackupState);
   const dialog = useRestoreDialogMotion();
   const notifications = useActionNotifications();
@@ -34,8 +39,9 @@ export function BackupScreen({ canRestore = true }: BackupScreenProps) {
     } else if (action.type === "backup_failed" || (action.type === "restore_failed" && ["failure", "unavailable"].includes(action.status))) {
       message = action.message;
     }
-    if (message) notifications?.publish({ severity, message });
-    setSharedOutcome(Boolean(notifications && message));
+    const managed = !!operations && managedConfirmation.current && (action.type === "restore_succeeded" || action.type === "restore_failed");
+    if (message && !managed) notifications?.publish({ severity, message });
+    setSharedOutcome(managed || Boolean(notifications && message));
     // Unknown recovery must never invite a blind destructive retry.
     dispatch(action.type === "restore_failed" && action.status === "recovery"
       ? { ...action, message: "No se pudo recuperar la restauración. El estado local es incierto; conservá el respaldo y solicitá asistencia antes de restaurar nuevamente." }
@@ -43,17 +49,18 @@ export function BackupScreen({ canRestore = true }: BackupScreenProps) {
   };
   const dispatchRef = useRef<(action: BackupAction) => void>(accept); dispatchRef.current = accept;
   const interactionRef = useRef<ReturnType<typeof createBackupInteraction> | null>(null);
-  if (!interactionRef.current) interactionRef.current = createBackupInteraction(backupCommands, (action) => dispatchRef.current(action));
+  if (!interactionRef.current) interactionRef.current = createBackupInteraction(operations ? { ...backupCommands, confirmRestore: operations.confirmRestore } : backupCommands, (action) => dispatchRef.current(action));
   useEffect(() => () => interactionRef.current?.dispose(), []);
   useEffect(() => { if (state.restore_status === "success" || state.restore_status === "failure" || state.restore_status === "recovery") dialog.retire(); }, [state.restore_status]);
   const interaction = interactionRef.current;
-  const pending = state.backup_status === "pending" || state.restore_status === "pending";
+  const pending = state.backup_status === "pending" || state.restore_status === "pending" || !!operationState?.restorePending;
   const backupMessage = backupState(state.backup_status) ? state.feedback : null;
   const restoreMessage = restoreState(state.restore_status) ? state.feedback : null;
   const cancelDialog = () => { if (!pending && !dialog.closing) { dispatch({ type: "restore_confirmation_changed", confirmed: false }); dispatch({ type: "restore_cancelled" }); dialog.close(); } };
   return h("main", { "aria-labelledby": "backup-heading", "data-ui-backup": true },
     h("h1", { id: "backup-heading" }, "Copia y restauración"),
     h("p", null, "Creá una copia local o restaurá un respaldo validado."),
+    recoveryGuidance ? h("p", { role: "note", "data-ui-restore-recovery": true }, recoveryGuidance) : null,
     h("div", { "data-ui-backup-layout": true },
       h(Panel, { label: "Copia de seguridad" } as never,
         h(Action, { variant: "primary", pending: state.backup_status === "pending", pendingLabel: "Creando copia…", disabled: pending, onClick: () => void interaction.backup() }, "Elegir destino de la copia"),
@@ -65,7 +72,7 @@ export function BackupScreen({ canRestore = true }: BackupScreenProps) {
           h("p", null, `Guardada en el destino elegido como ${state.backup.file_name}.`),
           h("dl", null, h("dt", null, "Archivo"), h("dd", null, state.backup.file_name), h("dt", null, "Fecha"), h("dd", null, date(state.backup.created_at_unix_seconds)), h("dt", null, "Tamaño"), h("dd", null, `${state.backup.size_bytes} bytes`), h("dt", null, "Esquema"), h("dd", null, state.backup.schema_version))) : null),
       h(Panel, { label: "Restauración" } as never,
-        canRestore ? h(Action, { variant: "secondary", pending: state.restore_status === "pending" && !state.summary, pendingLabel: "Preparando restauración…", disabled: pending, onClick: () => void interaction.prepareRestore() }, "Elegir archivo de respaldo") : h("p", { role: "note" }, "La restauración está disponible con una licencia activa."),
+        canRestore ? h(Action, { variant: "secondary", pending: state.restore_status === "pending" && !state.summary, pendingLabel: "Preparando restauración…", disabled: pending || operationState?.writeAdmission === "blocked", onClick: () => { if (operationState?.writeAdmission !== "blocked") { managedConfirmation.current = false; void interaction.prepareRestore(); } } }, "Elegir archivo de respaldo") : h("p", { role: "note" }, "La restauración está disponible con una licencia activa."),
         canRestore ? null : h(Action, { variant: "secondary", disabled: true }, "Elegir archivo de respaldo"),
         restoreMessage && !sharedOutcome ? h(Feedback, { kind: state.restore_status === "success" ? "success" : state.restore_status === "unavailable" ? "unavailable" : "error" } as never, restoreMessage) : null,
         canRestore && state.summary ? h("section", { "aria-labelledby": "restore-summary-heading", "data-ui-restore-candidate": true },
@@ -75,7 +82,8 @@ export function BackupScreen({ canRestore = true }: BackupScreenProps) {
           h("p", null, "Revisá el respaldo antes de confirmar la restauración."),
           h(Action, { variant: "secondary", disabled: state.restore_status !== "prepared", onClick: (event) => dialog.show(event.currentTarget) }, "Revisar restauración")) : null),
     ),
-    canRestore ? h(ConfirmationDialog, { open: dialog.open && state.summary !== null, restorePresentation: dialog, purpose: "restore", title: "Restaurar datos locales", description: "Esta acción reemplazará los datos locales actuales", pending: state.restore_status === "pending", confirmLabel: "Restaurar datos", onCancel: cancelDialog, onConfirm: () => { if (!dialog.closing && canConfirmRestore(state)) void interaction.restore(state.summary!.token); } },
+    canRestore ? h(ConfirmationDialog, { open: dialog.open && state.summary !== null, restorePresentation: dialog, purpose: "restore", title: "Restaurar datos locales", description: "Esta acción reemplazará los datos locales actuales", pending: state.restore_status === "pending", confirmLabel: "Restaurar datos", onCancel: cancelDialog, onConfirm: () => { if (!dialog.closing && canConfirmRestore(state) && operationState?.writeAdmission !== "blocked") { managedConfirmation.current = true; void interaction.restore(state.summary!.token); } } },
+      h("p", null, "El borrador de venta y el comprobante se descartarán solo si la restauración tiene éxito."),
       h(Field, { kind: "checkbox", label: "Entiendo que la restauración reemplaza los datos locales.", control: h("input", { id: "restore-acknowledgement", type: "checkbox", checked: state.confirmed, disabled: state.restore_status === "pending", onChange: (event) => dispatch({ type: "restore_confirmation_changed", confirmed: event.target.checked }) }) } as never)) : null,
   );
 }

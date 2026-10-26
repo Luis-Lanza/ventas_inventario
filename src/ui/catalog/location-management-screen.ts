@@ -1,3 +1,4 @@
+import { useAppOperations } from "../app-operation-context.ts";
 import { createElement, useEffect, useReducer, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { productLocationCommands, type ProductLocationRecord } from "../../commands/catalog.ts";
@@ -10,6 +11,8 @@ import { createLocationManagementFlow, generateLocationCode, initialLocationMana
 const locationError = (code: string) => code === "validation_error" ? "Revisá los nombres de segmentos y valores; no pueden estar vacíos ni repetirse." : code === "location_schema_in_use" ? "Ya existen ubicaciones físicas. El esquema y su orden no se pueden cambiar." : code === "duplicate_location_code" ? "Ya existe una ubicación con ese código. Elegí otros valores." : code === "location_in_use" ? "Esta ubicación está asignada a un producto. Para desactivarla o eliminarla, quitá la asignación desde la edición del producto y después volvé a intentarlo." : code === "stale_location" ? "La ubicación cambió. Recargá los datos antes de volver a intentar." : code === "location_unavailable" ? "La ubicación ya no está disponible. Recargá los datos." : "No se pudo completar el cambio de ubicación.";
 
 export function LocationManagementScreen() {
+  const operations = useAppOperations();
+  const ownerCurrent = () => !operations || operations.isCurrent();
   const notifications = useActionNotifications();
   const [routineError, setRoutineError] = useState(false);
   const [state, dispatch] = useReducer(createLocationManagementFlow, initialLocationManagementState);
@@ -48,7 +51,7 @@ export function LocationManagementScreen() {
     const current = ++request.current;
     dispatch({ type: "started" });
     const [schema, list] = await Promise.all([productLocationCommands.schema(), productLocationCommands.list(true)]);
-    if (!mounted.current || current !== request.current) return;
+    if (!ownerCurrent() || !mounted.current || current !== request.current) return;
     if (schema.kind !== "schema_success" || list.kind !== "locations_success") { dispatch({ type: "load_failed" }); return; }
     dispatch({ type: "loaded", schema: schema.schema, locations: list.locations });
     const storedSegments = schema.schema.segments.map((segment) => segment.label);
@@ -75,7 +78,7 @@ export function LocationManagementScreen() {
     locked.current = true; setPending(true); dispatch({ type: "started" });
     const current = request.current;
     const response = await operation();
-    if (!mounted.current || current !== request.current) return;
+    if (!ownerCurrent() || !mounted.current || current !== request.current) return;
     locked.current = false; setPending(false);
     if (response.kind === "error") { fail(response.code); return; }
     if (response.kind === "schema_success") succeed({ type: "succeeded", notice: "Esquema actualizado.", schema: response.schema });
@@ -87,20 +90,20 @@ export function LocationManagementScreen() {
     if (!state.schema || schemaFrozen || pending) return;
     const errors = validateLocationSchema(segments); setSchemaErrors(errors);
     if (Object.keys(errors).length) return;
-    void run(() => productLocationCommands.saveSchema({ expected_revision: state.schema!.revision, segments }));
+    void run(() => (operations?.mutations.locations.saveSchema ?? productLocationCommands.saveSchema)({ expected_revision: state.schema!.revision, segments }));
   };
   const createLocation = () => {
     if (!state.schema || pending) return;
     const errors = validateLocationValues(values, state.schema.segments.length); setValueErrors(errors);
     if (Object.keys(errors).length) return;
-    void run(() => productLocationCommands.create(values));
+    void run(() => (operations?.mutations.locations.create ?? productLocationCommands.create)(values));
   };
   const updateActivity = async (location: ProductLocationRecord, active: boolean) => {
     if (locked.current) return;
     locked.current = true; setPending(true); dispatch({ type: "started" });
     const current = request.current;
-    const response = active ? await productLocationCommands.activate({ location_id: location.location_id, expected_revision: location.revision }) : await productLocationCommands.deactivate({ location_id: location.location_id, expected_revision: location.revision });
-    if (!mounted.current || current !== request.current) return;
+    const response = active ? await (operations?.mutations.locations.activate ?? productLocationCommands.activate)({ location_id: location.location_id, expected_revision: location.revision }) : await (operations?.mutations.locations.deactivate ?? productLocationCommands.deactivate)({ location_id: location.location_id, expected_revision: location.revision });
+    if (!ownerCurrent() || !mounted.current || current !== request.current) return;
     locked.current = false; setPending(false); closeConfirmation();
     if (response.kind === "error") fail(response.code);
     else if (response.kind === "location_success") succeed({ type: "succeeded", notice: `Ubicación ${response.location.code} ${active ? "activada" : "desactivada"}.`, location: response.location });
@@ -111,8 +114,8 @@ export function LocationManagementScreen() {
     if (!location || locked.current) return;
     locked.current = true; setPending(true); dispatch({ type: "started" });
     const current = request.current;
-    const response = await productLocationCommands.delete({ location_id: location.location_id, expected_revision: location.revision });
-    if (!mounted.current || current !== request.current) return;
+    const response = await (operations?.mutations.locations.delete ?? productLocationCommands.delete)({ location_id: location.location_id, expected_revision: location.revision });
+    if (!ownerCurrent() || !mounted.current || current !== request.current) return;
     locked.current = false; setPending(false); closeConfirmation();
     if (response.kind === "error") fail(response.code);
     else if (response.kind === "deleted") succeed({ type: "succeeded", notice: `Ubicación ${location.code} eliminada.`, location_id: location.location_id });

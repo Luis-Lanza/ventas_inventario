@@ -1,4 +1,6 @@
-import { createElement, useCallback, useEffect, useRef, useState } from "react";
+import { createElement, Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { AppOperationProvider, createAppOperations, createOperationContext, restoreRecoveryGuidance, BLOCKED_RESTORE_GUIDANCE, UNKNOWN_RESTORE_GUIDANCE } from "./app-operation-context.ts";
+import { backupFeedback } from "./backup/backup-flow.ts";
 
 import { createAcceptedMutations, type AcceptedMutations } from "./accepted-mutations.ts";
 import { inventoryCommands } from "../commands/inventory.ts";
@@ -42,8 +44,11 @@ export function App() {
 }
 function AppContent() {
   const notifications = useActionNotifications();
-  const [acceptedMutations] = useState(createAcceptedMutations);
-  const [saleSession] = useState(() => createSaleSession(() => crypto.randomUUID()));
+  const [coordinator] = useState(createAppOperations);
+  const operationState = useSyncExternalStore(coordinator.subscribe, coordinator.getSnapshot);
+  const { acceptedMutations, saleSession } = useMemo(() => ({
+    acceptedMutations: createAcceptedMutations(), saleSession: createSaleSession(() => crypto.randomUUID()),
+  }), [operationState.generation]);
   useEffect(() => saleSession.attachOwner(), [saleSession]);
   const [screen, setScreen] = useState<Screen>(SCREEN.DASHBOARD);
   const [accessMode, setAccessMode] = useState<"loading" | "activation" | "active" | "recovery">("loading");
@@ -56,16 +61,33 @@ function AppContent() {
     mounted.current = true;
     return () => { mounted.current = false; alertAttempt.current += 1; };
   }, []);
+  const confirmRestore = useCallback(async (token: string) => {
+    const admission = coordinator.getSnapshot();
+    const localRefusal = admission.writeAdmission === "blocked" || admission.restorePending || admission.pendingMutations > 0;
+    const result = await coordinator.confirmRestore(token);
+    if (mounted.current) {
+      // Classify this return, not a later completion observed after the await.
+      const recovery = localRefusal ? restoreRecoveryGuidance(admission) : result.write_admission === "blocked"
+        ? result.restore_certainty === "restored" ? BLOCKED_RESTORE_GUIDANCE : result.restore_certainty === "unknown" ? UNKNOWN_RESTORE_GUIDANCE
+          : "Las escrituras locales están bloqueadas; conservá el respaldo y solicitá asistencia antes de restaurar nuevamente."
+        : null;
+      const message = recovery ?? (result.kind === "restored" ? "Restauración completada correctamente." : localRefusal ? result.message : backupFeedback(result.code, true));
+      notifications?.publish({ severity: recovery ? "warning" : result.kind === "restored" ? "success" : "error", message });
+    }
+    return result;
+  }, [coordinator, notifications]);
+  const operations = useMemo(() => createOperationContext(coordinator, confirmRestore), [coordinator, confirmRestore, operationState.generation]);
   const refreshInventoryCount = useCallback(() => {
+    const generation = coordinator.getSnapshot().generation;
     const attempt = ++alertAttempt.current;
     setInventoryCount(null);
     void inventoryCommands.listAlerts().then((response) => {
-      if (!mounted.current || attempt !== alertAttempt.current) return;
+      if (!mounted.current || attempt !== alertAttempt.current || generation !== coordinator.getSnapshot().generation) return;
       setInventoryCount(response.kind === "success" ? response.alerts.length : null);
     }).catch(() => {
-      if (mounted.current && attempt === alertAttempt.current) setInventoryCount(null);
+      if (mounted.current && attempt === alertAttempt.current && generation === coordinator.getSnapshot().generation) setInventoryCount(null);
     });
-  }, []);
+  }, [coordinator]);
   useEffect(() => acceptedMutations.subscribe("stock", refreshInventoryCount), [acceptedMutations, refreshInventoryCount]);
   useEffect(() => {
     let current = true;
@@ -74,7 +96,7 @@ function AppContent() {
     });
     return () => { current = false; };
   }, []);
-  useEffect(() => { if (accessMode === "active" || accessMode === "recovery") refreshInventoryCount(); }, [accessMode]);
+  useEffect(() => { if (accessMode === "active" || accessMode === "recovery") refreshInventoryCount(); }, [accessMode, operationState.generation, refreshInventoryCount]);
   const navigate = (action: NavigationAction) => {
     const recoveryActions: readonly NavigationAction[] = [NAVIGATION_ACTION.OPEN_DASHBOARD, NAVIGATION_ACTION.OPEN_SALES_HISTORY, NAVIGATION_ACTION.OPEN_REPORTS, NAVIGATION_ACTION.OPEN_BACKUP];
     if (accessMode === "recovery" && !recoveryActions.includes(action)) return;
@@ -101,6 +123,9 @@ function AppContent() {
           setAccessMode("active");
         },
       })
-      : createElement(AppShell, { screen, onNavigate: navigate, onInventoryAlerts: openInventoryAlerts, inventoryCue, recoveryMode: accessMode === "recovery" }, screenContent(screen, navigate, inventoryFilter, openInventoryAlerts, accessMode === "active", inventoryEntry, saleSession, acceptedMutations));
+      : createElement(AppShell, { screen, onNavigate: navigate, onInventoryAlerts: openInventoryAlerts, inventoryCue, recoveryMode: accessMode === "recovery" },
+        createElement(Fragment, null,
+          createElement("aside", { "aria-label": "Recuperación local", role: "note", hidden: screen === SCREEN.BACKUP || !restoreRecoveryGuidance(operationState) }, restoreRecoveryGuidance(operationState)),
+          createElement(AppOperationProvider, { key: operationState.generation, value: operations }, screenContent(screen, navigate, inventoryFilter, openInventoryAlerts, accessMode === "active", inventoryEntry, saleSession, acceptedMutations))));
   return content;
 }

@@ -1,3 +1,4 @@
+import { useAppOperations } from "../app-operation-context.ts";
 import {
   createElement,
   Fragment,
@@ -612,6 +613,8 @@ export function HistoryScreen({
 }
 export function SalesHistoryScreen({ acceptedMutations }: { acceptedMutations?: AcceptedMutations }) {
   const [state, dispatch] = useReducer(createHistoryFlow, initialHistoryState);
+  const operations = useAppOperations();
+  const ownerCurrent = () => !operations || operations.isCurrent();
   const notifications = useActionNotifications();
   const [persistedRequests, setPersistedRequests] = useState<Record<number, string>>({});
   const persistedRequest = state.selected_id === null ? null : persistedRequests[state.selected_id] ?? null;
@@ -621,11 +624,14 @@ export function SalesHistoryScreen({ acceptedMutations }: { acceptedMutations?: 
       createSalesHistoryInteraction({
         ...salesHistoryCommands,
         ...postSaleCommands,
+        ...(operations ? { createReturn: operations.mutations.createReturn, cancelSale: operations.mutations.cancelSale } : {}),
       }, (requestId, message, saleId) => {
+        if (!ownerCurrent()) return;
         setPersistedRequests(previous => ({ ...previous, [saleId]: requestId }));
         if (notifications) notifications.publish({ severity: "success", message });
         else setOutcomeNotice(message);
       }, () => {
+        if (!ownerCurrent()) return true;
         acceptedMutations?.accepted(["stock", "sales"]);
         return !!acceptedMutations;
       }),

@@ -1,3 +1,4 @@
+import { useAppOperations } from "../app-operation-context.ts";
 import { createElement, type ReactElement, type ChangeEvent, type MouseEvent, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
 
 import { createPortal } from "react-dom";
@@ -25,6 +26,8 @@ type CatalogLoadCommands = Pick<typeof catalogMaintenanceCommands, "detail" | "l
 type BrowserSnapshot = Pick<ProductBrowserState<CatalogProductBrowseResult>, "query" | "category_id" | "stock_state" | "activity" | "page" | "request_id">;
 
 function CatalogPasswordChange() {
+  const operations = useAppOperations();
+  const ownerCurrent = () => !operations || operations.isCurrent();
   const notifications = useActionNotifications();
   const disclosure = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -42,18 +45,18 @@ function CatalogPasswordChange() {
     pendingRef.current = true; setPending(true); setFeedback(null);
     const request = ++requestId.current;
     try {
-      const response = await catalogAccessCommands.changePassword(current, next);
-      if (!mounted.current || request !== requestId.current) return;
+      const response = await (operations?.mutations.access.changePassword ?? catalogAccessCommands.changePassword)(current, next);
+      if (!ownerCurrent() || !mounted.current || request !== requestId.current) return;
       if (response.kind === "success") { setCurrent(""); setNext(""); setConfirm(""); if (notifications) notifications.publish({ severity: "success", message: "Contraseña actualizada." }); else setFeedback("Contraseña actualizada."); }
       else if (response.kind === "error" && !["invalid_credentials", "validation_error"].includes(response.code) && notifications) notifications.publish({ severity: "error", message: accessErrorMessage(response) });
       else setFeedback(accessErrorMessage(response));
     } catch {
-      if (mounted.current && request === requestId.current) {
+      if (ownerCurrent() && mounted.current && request === requestId.current) {
         const message = "No se pudo completar la solicitud de acceso al catálogo.";
         if (notifications) notifications.publish({ severity: "error", message }); else setFeedback(message);
       }
     } finally {
-      if (mounted.current && request === requestId.current) { pendingRef.current = false; setPending(false); }
+      if (ownerCurrent() && mounted.current && request === requestId.current) { pendingRef.current = false; setPending(false); }
     }
   };
   const hintId = "catalog-password-hint";
@@ -99,6 +102,8 @@ export async function reloadCatalogRecords(commands: CatalogLoadCommands, dispat
 }
 
 export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutations?: AcceptedMutations }) {
+  const operations = useAppOperations();
+  const ownerCurrent = () => !operations || operations.isCurrent();
   const notifications = useActionNotifications();
   const [routineFailure, setRoutineFailure] = useState(false);
   const [flowState, dispatch] = useReducer(createCatalogMaintenanceFlow, initialCatalogMaintenanceState);
@@ -170,11 +175,11 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     browserDispatch(refresh ? { type: "refresh_started", request_id: current } : { type: "browse_started", query: snapshot.query, category_id: snapshot.category_id, stock_state: snapshot.stock_state, activity: snapshot.activity, page, request_id: current });
     try {
       const result = await browseProducts({ query: snapshot.query, category_id: snapshot.category_id, activity: snapshot.activity, page, page_size: 20 });
-      if (!mounted.current || current !== browseAttempt.current) return false;
+      if (!ownerCurrent() || !mounted.current || current !== browseAttempt.current) return false;
       browserDispatch({ type: "browse_succeeded", request_id: current, result });
       return true;
     } catch {
-      if (!mounted.current || current !== browseAttempt.current) return false;
+      if (!ownerCurrent() || !mounted.current || current !== browseAttempt.current) return false;
       browserDispatch({ type: "browse_failed", request_id: current, message: "La navegación paginada de productos no está disponible en esta versión." });
       return false;
     }
@@ -184,7 +189,7 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     const initialBrowseSnapshot = browserSnapshot();
     dispatch({ type: "load_started" });
     const response = await catalogMaintenanceCommands.listCategories();
-    if (mounted.current && current === attempt.current) {
+    if (ownerCurrent() && mounted.current && current === attempt.current) {
       dispatch(response.kind === "success" ? { type: "loaded", records: response.records } : { type: "load_failed" });
       if (response.kind === "success" && browserRef.current.request_id === initialBrowseSnapshot.request_id) await browseCatalogProducts(initialBrowseSnapshot);
     }
@@ -199,11 +204,11 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     setProductLocationsStatus("loading");
     dispatch({ type: "detail_started", record });
     const response = await catalogMaintenanceCommands.detail(record);
-    if (!mounted.current || current !== attempt.current) return;
+    if (!ownerCurrent() || !mounted.current || current !== attempt.current) return;
     if (response.kind === "success") {
       if (response.detail.target === CATALOG_TARGET.PRODUCT) {
         const locations = await productLocationCommands.list(false);
-        if (!mounted.current || current !== attempt.current) return;
+        if (!ownerCurrent() || !mounted.current || current !== attempt.current) return;
         if (locations.kind === "locations_success") { setProductLocations(locations.locations.filter((location) => location.active)); setProductLocationsStatus("ready"); }
         else setProductLocationsStatus("error");
       } else setProductLocationsStatus("ready");
@@ -216,7 +221,7 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     const detail = state.detail;
     if (!detail || detail.target !== "product") { setImageThumbnail(null); return; }
     void catalogProductImageCommands.thumbnail({ product_id: detail.entity_id, expected_revision: detail.revision }).then((response) => {
-      if (!mounted.current || current !== detailThumbnailAttempt.current) return;
+      if (!ownerCurrent() || !mounted.current || current !== detailThumbnailAttempt.current) return;
       if (response.kind === "success" && response.product_id === detail.entity_id && response.revision === detail.revision) {
         setImageThumbnail(response.src);
         setImageFeedback(null);
@@ -236,7 +241,7 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
       const response = await catalogProductImageCommands.thumbnail({ product_id: product.product_id, expected_revision: product.revision });
       return response.kind === "success" && response.product_id === product.product_id && response.revision === product.revision ? [product.product_id, response.src] as const : null;
     })).then((thumbnails) => {
-      if (!mounted.current || current !== browseThumbnailAttempt.current || browserRef.current.request_id !== requestId) return;
+      if (!ownerCurrent() || !mounted.current || current !== browseThumbnailAttempt.current || browserRef.current.request_id !== requestId) return;
       setBrowseThumbnails(Object.fromEntries(thumbnails.filter((item): item is readonly [number, string] => item !== null)));
     });
   }, [browser.result, browser.status]);
@@ -245,19 +250,19 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     const current = ++attempt.current;
     dispatch({ type: "refresh_started" });
     const response = await catalogMaintenanceCommands.listCategories();
-    if (!mounted.current || current !== attempt.current) return false;
+    if (!ownerCurrent() || !mounted.current || current !== attempt.current) return false;
     if (response.kind !== "success") { dispatch({ type: "refresh_failed" }); return false; }
     dispatch({ type: "refresh_list_succeeded", records: response.records });
     const applied = appliedBrowse.current ?? browserSnapshot();
     const browsed = await browseCatalogProducts(applied, applied.page, true);
     if (!browsed || !mounted.current || current !== attempt.current) {
-      if (mounted.current && current === attempt.current) dispatch({ type: "refresh_failed" });
+      if (ownerCurrent() && mounted.current && current === attempt.current) dispatch({ type: "refresh_failed" });
       return false;
     }
     dispatch({ type: "refresh_succeeded", records: response.records, keep_recovery_locked: keepRecoveryLocked });
     return true;
   };
-  useEffect(() => { void catalogAccessCommands.status().then((response) => { if (mounted.current) setAccessStatus(response.kind === "status" ? response.status : "unavailable"); }); }, []);
+  useEffect(() => { void catalogAccessCommands.status().then((response) => { if (ownerCurrent() && mounted.current) setAccessStatus(response.kind === "status" ? response.status : "unavailable"); }); }, []);
   useEffect(() => { if (accessStatus === "unlocked") void load(); }, [accessStatus]);
   useEffect(() => {
     const first = Object.keys(state.field_errors)[0];
@@ -272,8 +277,8 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     lockPendingRef.current = true;
     setLockPending(true);
     setLockFeedback(null);
-    const response = await catalogAccessCommands.lock();
-    if (!mounted.current) return;
+    const response = await (operations?.mutations.access.lock ?? catalogAccessCommands.lock)();
+    if (!ownerCurrent() || !mounted.current) return;
     lockPendingRef.current = false;
     setLockPending(false);
     if (response.kind === "success") {
@@ -292,7 +297,7 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     const selected = state.selected;
     const selectionAttempt = attempt.current;
     await load();
-    if (mounted.current && selected && attempt.current === selectionAttempt + 1) await loadDetail(selected);
+    if (ownerCurrent() && mounted.current && selected && attempt.current === selectionAttempt + 1) await loadDetail(selected);
   };
   const close = () => {
     if (mutationLocked.current || imageMutationLocked.current) return;
@@ -334,8 +339,8 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     setRoutineFailure(false);
     setCategoryActionPending(record.entity_id);
     setCategoryActionFeedback((current) => ({ ...current, [record.entity_id]: "" }));
-    const response = await catalogMaintenanceCommands.maintain({ target: record.target, entity_id: record.entity_id, intent: record.activity === "active" ? CATALOG_INTENT.ARCHIVE : CATALOG_INTENT.REACTIVATE, expected_revision: record.revision });
-    if (!mounted.current || current !== attempt.current) return;
+    const response = await (operations?.mutations.catalog.maintain ?? catalogMaintenanceCommands.maintain)({ target: record.target, entity_id: record.entity_id, intent: record.activity === "active" ? CATALOG_INTENT.ARCHIVE : CATALOG_INTENT.REACTIVATE, expected_revision: record.revision });
+    if (!ownerCurrent() || !mounted.current || current !== attempt.current) return;
     mutationLocked.current = false;
     setCategoryActionPending(null);
     if (response.kind === "error") {
@@ -357,9 +362,10 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     const current = attempt.current;
     setRoutineFailure(false);
     dispatch({ type: "mutation_started" });
-    const response = await catalogMaintenanceCommands.maintain({ target: target.target, entity_id: target.entity_id, intent: archiveRecord ? CATALOG_INTENT.ARCHIVE : target.activity === "active" ? CATALOG_INTENT.ARCHIVE : CATALOG_INTENT.REACTIVATE, expected_revision: target.revision });
+    const response = await (operations?.mutations.catalog.maintain ?? catalogMaintenanceCommands.maintain)({ target: target.target, entity_id: target.entity_id, intent: archiveRecord ? CATALOG_INTENT.ARCHIVE : target.activity === "active" ? CATALOG_INTENT.ARCHIVE : CATALOG_INTENT.REACTIVATE, expected_revision: target.revision });
+    if (!ownerCurrent()) return;
     if (response.kind !== "error" && target.target === "product") acceptedMutations?.accepted(["stock"]);
-    if (!mounted.current || current !== attempt.current) return;
+    if (!ownerCurrent() || !mounted.current || current !== attempt.current) return;
     mutationLocked.current = false;
     if (response.kind === "error") {
       publishFailure(response.code);
@@ -391,7 +397,7 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
       if (confirmation.context === "category-list") await manageCategoryLifecycle(confirmation.record, true);
       else await maintain(confirmation.record);
     } finally {
-      if (mounted.current && epoch === archiveEpoch.current) {
+      if (ownerCurrent() && mounted.current && epoch === archiveEpoch.current) {
         setArchivePending(false);
         closeArchive();
       }
@@ -406,9 +412,10 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     const current = attempt.current;
     setRoutineFailure(false);
     dispatch({ type: "edit_started" });
-    const response = await catalogMaintenanceCommands.edit(request);
+    const response = await (operations?.mutations.catalog.edit ?? catalogMaintenanceCommands.edit)(request);
+    if (!ownerCurrent()) return;
     if (response.kind !== "error" && detail.target === "product") acceptedMutations?.accepted(["stock"]);
-    if (!mounted.current || current !== attempt.current) return;
+    if (!ownerCurrent() || !mounted.current || current !== attempt.current) return;
     if (response.kind === "error") {
       mutationLocked.current = false;
       const priceField = response.code === "invalid_purchase_price" ? "purchase_price_centavos" : response.code === "invalid_sale_price" ? "sale_price_centavos" : ["invalid_minimum_sale_price", "minimum_sale_price_exceeds_sale_price"].includes(response.code) ? "minimum_sale_price_centavos" : null;
@@ -424,8 +431,8 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     // Metadata persisted independently of any subsequent primary-location assignment.
     let updatedRevision = response.revision;
     if (detail.target === CATALOG_TARGET.PRODUCT && (form.primary_location_id ?? null) !== detail.primary_location_id) {
-      const assignment = await productLocationCommands.assignPrimary({ product_id: detail.entity_id, expected_revision: response.revision, location_id: form.primary_location_id ?? null });
-      if (!mounted.current || current !== attempt.current) return;
+      const assignment = await (operations?.mutations.locations.assignPrimary ?? productLocationCommands.assignPrimary)({ product_id: detail.entity_id, expected_revision: response.revision, location_id: form.primary_location_id ?? null });
+      if (!ownerCurrent() || !mounted.current || current !== attempt.current) return;
       if (assignment.kind !== "assignment_success" || assignment.product_id !== detail.entity_id || assignment.location_id !== (form.primary_location_id ?? null)) {
         mutationLocked.current = false;
         refreshDetailAfterRecovery.current = true;
@@ -454,8 +461,8 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     const current = attempt.current;
     setImagePending(true);
     setImageFeedback(null);
-    const response = await catalogProductImageCommands[operation]({ product_id: detail.entity_id, expected_revision: detail.revision });
-    if (!mounted.current || current !== attempt.current) return;
+    const response = await (operations?.mutations.images ?? catalogProductImageCommands)[operation]({ product_id: detail.entity_id, expected_revision: detail.revision });
+    if (!ownerCurrent() || !mounted.current || current !== attempt.current) return;
     imageMutationLocked.current = false;
     setImagePending(false);
     if (response.kind === "cancelled") { setImageFeedbackKind("advisory"); if (notifications) notifications.publish({ severity: "info", message: "No se modificó la imagen." }); else setImageFeedback("No se modificó la imagen."); return; }
@@ -509,8 +516,8 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     dispatch({ type: "edit_started" });
     const currentFields = detail.attribute_definitions.filter((field) => field.active !== false).map((field) => ({ definition_id: field.definition_id, label: field.label, field_type: field.field_type, required: field.required, options: field.field_type === "option" ? field.options : [] }));
     const schemaChanged = JSON.stringify(request.fields) !== JSON.stringify(currentFields);
-    const schemaResponse = schemaChanged ? await catalogMaintenanceCommands.editCategorySchema(request) : null;
-    if (!mounted.current || current !== attempt.current) return;
+    const schemaResponse = schemaChanged ? await (operations?.mutations.catalog.editCategorySchema ?? catalogMaintenanceCommands.editCategorySchema)(request) : null;
+    if (!ownerCurrent() || !mounted.current || current !== attempt.current) return;
     if (schemaResponse?.kind === "error") {
       mutationLocked.current = false;
       publishFailure(schemaResponse.code);
@@ -519,11 +526,11 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
       return;
     }
     const response = !schemaChanged
-      ? await catalogMaintenanceCommands.edit({ target: "category", entity_id: detail.entity_id, expected_revision: detail.revision, name: form.name })
+      ? await (operations?.mutations.catalog.edit ?? catalogMaintenanceCommands.edit)({ target: "category", entity_id: detail.entity_id, expected_revision: detail.revision, name: form.name })
       : form.name === detail.name
         ? schemaResponse!
-        : await catalogMaintenanceCommands.edit({ target: "category", entity_id: detail.entity_id, expected_revision: schemaResponse!.revision, name: form.name });
-    if (!mounted.current || current !== attempt.current) return;
+        : await (operations?.mutations.catalog.edit ?? catalogMaintenanceCommands.edit)({ target: "category", entity_id: detail.entity_id, expected_revision: schemaResponse!.revision, name: form.name });
+    if (!ownerCurrent() || !mounted.current || current !== attempt.current) return;
     mutationLocked.current = false;
     if (response.kind === "error") {
       if (schemaChanged) {

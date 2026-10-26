@@ -112,7 +112,8 @@ test("shared restore preparation and confirmation errors are results, not discar
  await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));
  assert.ok(within(host).getByText("El almacenamiento local no está disponible. Reintentá."));
  await user.click(within(host).getByRole("button", { name: /Cerrar/ }));
- mountIPC({ restore: { kind: "error", code: "restore_failed", message: "bounded" } });
+ // Native ambiguous recovery retains restore_failed with unknown certainty, never inferred unchanged.
+ mountIPC({ restore: { kind: "error", code: "restore_failed", message: "bounded", restore_certainty: "unknown", write_admission: "blocked", cleanup_warning: false } });
  await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));
  await user.click(screen.getByRole("button", { name: "Revisar restauración" }));
  await user.click(screen.getByRole("checkbox"));
@@ -143,7 +144,7 @@ test("invalid restore candidates retain inline guidance after preparation outcom
 
 test("invalid confirmation token retains inline recovery and cannot confirm the obsolete candidate", async () => {
   let confirmations = 0;
-  mountIPC({ restore: () => { confirmations++; return { kind: "error", code: "token_invalid", message: "native detail" }; } });
+  mountIPC({ restore: () => { confirmations++; return { kind: "error", code: "token_invalid", message: "native detail", restore_certainty: "unchanged", write_admission: "allowed", cleanup_warning: false }; } });
   const user = userEvent.setup({ document });
   render(createElement(ActionNotificationProvider, null, createElement(BackupScreen)));
   await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));
@@ -225,7 +226,7 @@ test("shows license denial after restore prepare without entering the confirmati
 });
 
 test("shows license denial after confirmation without reporting restore success", async () => {
-  mountIPC({ restore: { kind: "error", code: "license_required", message: "native detail" } });
+  mountIPC({ restore: { kind: "error", code: "license_required", message: "native detail", restore_certainty: "unchanged", write_admission: "allowed", cleanup_warning: false } });
   const user = userEvent.setup({ document });
   render(createElement(BackupScreen));
   await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));

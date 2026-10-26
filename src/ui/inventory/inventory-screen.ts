@@ -1,3 +1,4 @@
+import { useAppOperations } from "../app-operation-context.ts";
 import { createElement, type FormEvent, useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { browseInventoryProducts, type InventoryBrowseProduct, type ProductSearchResult, type ProductStockState } from "../../commands/catalog.ts";
@@ -33,6 +34,8 @@ function screenFlow(state: InventoryState, action: InventoryAction): InventorySt
 }
 
 export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; onAlertCueChange?: (cue: string | null) => void; onInventoryAlertsRefresh?: () => void; initialStockState?: ProductStockState }) {
+  const operations = useAppOperations();
+  const ownerCurrent = () => !operations || operations.isCurrent();
   const notifications = useActionNotifications();
   const [localMutations] = useState(createAcceptedMutations);
   const mutations = props.acceptedMutations ?? localMutations;
@@ -68,7 +71,7 @@ export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; 
     setAlertState("loading");
     const attempt = ++alertAttempt.current;
     const response = await inventoryCommands.listAlerts();
-    if (!mounted.current || attempt !== alertAttempt.current) return;
+    if (!ownerCurrent() || !mounted.current || attempt !== alertAttempt.current) return;
     if (response.kind === "success") { dispatch({ type: "alerts_refreshed", alerts: response.alerts }); setAlertState("ready"); }
     else setAlertState("unavailable");
   }, []);
@@ -85,8 +88,8 @@ export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; 
     browserDispatch(refresh ? { type: "refresh_started", request_id: attempt } : { type: "browse_started", query, category_id, stock_state, activity: "active", page, request_id: attempt });
     try {
       const result = await browseInventoryProducts({ query, category_id, stock_state, activity: "active", page, page_size: 20 });
-      if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
-    } catch { if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local. Reintentá." }); }
+      if (ownerCurrent() && mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
+    } catch { if (ownerCurrent() && mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local. Reintentá." }); }
   }
   useEffect(() => { void browsePage("", null, props.initialStockState ?? "all", 1); }, []);
   useEffect(() => mutations.subscribe("stock", () => {
@@ -125,10 +128,11 @@ export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; 
     dispatch({ type: "confirmation_started", request_id });
     const prices = stockEntryPrices(state);
     const response: InventoryResponse = state.operation === "stock_entry"
-      ? await inventoryCommands.confirmStockEntry({ request_id, product_id: state.product.product_id, quantity: Number(state.entry_quantity), ...(prices.purchase === undefined ? {} : { unit_purchase_price_centavos: prices.purchase! }), ...(prices.sale === undefined ? {} : { sale_price_centavos: prices.sale! }), ...(prices.minimum === undefined ? {} : { minimum_sale_price_centavos: prices.minimum! }), note: state.note || null })
-      : await inventoryCommands.confirmPhysicalCount({ request_id, product_id: state.product.product_id, count: Number(state.physical_count), reason: state.reason, catalog_password: catalogPassword });
+      ? await (operations?.mutations.confirmStockEntry ?? inventoryCommands.confirmStockEntry)({ request_id, product_id: state.product.product_id, quantity: Number(state.entry_quantity), ...(prices.purchase === undefined ? {} : { unit_purchase_price_centavos: prices.purchase! }), ...(prices.sale === undefined ? {} : { sale_price_centavos: prices.sale! }), ...(prices.minimum === undefined ? {} : { minimum_sale_price_centavos: prices.minimum! }), note: state.note || null })
+      : await (operations?.mutations.confirmPhysicalCount ?? inventoryCommands.confirmPhysicalCount)({ request_id, product_id: state.product.product_id, count: Number(state.physical_count), reason: state.reason, catalog_password: catalogPassword });
+    if (!ownerCurrent()) return;
     if (response.kind === "success") props.acceptedMutations?.accepted(["stock"]);
-    if (!mounted.current || attempt !== confirmAttempt.current) return;
+    if (!ownerCurrent() || !mounted.current || attempt !== confirmAttempt.current) return;
     setCatalogPassword("");
     confirmLocked.current = false;
     if (response.kind === "success") {
