@@ -14,6 +14,7 @@ import {
   useState,
 } from "react";
 
+import type { AcceptedMutations } from "../accepted-mutations.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { postSaleCommands, type PostSaleErrorCode } from "../../commands/post-sale.ts";
 import {
@@ -278,7 +279,7 @@ const correctionError = (code?: PostSaleErrorCode) =>
 
 const persistedRefreshGuidance = "La corrección ya fue guardada. No se pudo actualizar el detalle; recargalo antes de iniciar otra corrección.";
 
-export function createSalesHistoryInteraction(commands: InteractionCommands, onPersisted?: (requestId: string, message: string, saleId: number) => void) {
+export function createSalesHistoryInteraction(commands: InteractionCommands, onPersisted?: (requestId: string, message: string, saleId: number) => void, onAccepted?: () => boolean) {
   const persisted = new Set<string>();
   const awaitingDetail = new Map<number, string>();
   const acceptDetail = (detail: NonNullable<HistoryState["detail"]>) => {
@@ -287,7 +288,19 @@ export function createSalesHistoryInteraction(commands: InteractionCommands, onP
   };
   const submitting = new Set<string>();
   let requestIdentity = 0;
+  let listIdentity = 0;
+  let appliedRange: { from: string; to: string } | null = null;
   let active = true;
+  const refreshRetainedList = async (dispatch: Dispatch) => {
+    if (!appliedRange) return;
+    const identity = ++listIdentity;
+    dispatch({ type: "retained_list_started" });
+    try {
+      const response = await commands.list(appliedRange.from, appliedRange.to);
+      if (!active || identity !== listIdentity) return;
+      dispatch(response.kind === "success" ? { type: "retained_list_loaded", sales: response.sales, has_more: response.has_more } : { type: "retained_list_failed" });
+    } catch { if (active && identity === listIdentity) dispatch({ type: "retained_list_failed" }); }
+  };
   const beginIntent = () => ++requestIdentity;
   const isCurrent = (identity: number) => active && identity === requestIdentity;
   const invalidate = () => { requestIdentity += 1; };
@@ -337,13 +350,13 @@ export function createSalesHistoryInteraction(commands: InteractionCommands, onP
     const identity = beginIntent();
     try {
       const response = await command(intent);
-      if (!isCurrent(identity)) return;
       if (
         !response ||
         response.kind === "error" ||
         response.result.request_id !== intent.request_id ||
         response.result.sale_id !== intent.sale_id
       ) {
+        if (!isCurrent(identity)) return;
         dispatch({
           type: isReturn
             ? "return_submit_failed"
@@ -355,6 +368,10 @@ export function createSalesHistoryInteraction(commands: InteractionCommands, onP
       }
       persisted.add(intent.request_id);
       awaitingDetail.set(intent.sale_id, intent.request_id);
+      // Persistence invalidation belongs to App even if this detail owner retired.
+      const listInvalidated = onAccepted?.() ?? false;
+      if (active && !listInvalidated) void refreshRetainedList(dispatch);
+      if (!isCurrent(identity)) return;
       onPersisted?.(intent.request_id, isReturn ? "Devolución registrada correctamente." : "Cancelación registrada correctamente.", intent.sale_id);
       dispatch({
         type: isReturn
@@ -402,9 +419,11 @@ export function createSalesHistoryInteraction(commands: InteractionCommands, onP
   return {
     reload: async (from: string, to: string, dispatch: Dispatch) => {
       const identity = beginIntent();
+      const listRequest = ++listIdentity;
+      appliedRange = { from, to };
       dispatch({ type: "list_started" });
       const response = await commands.list(from, to);
-      if (!isCurrent(identity)) return;
+      if (!isCurrent(identity) || listRequest !== listIdentity) return;
       dispatch(
         response.kind === "success"
           ? {
@@ -419,11 +438,12 @@ export function createSalesHistoryInteraction(commands: InteractionCommands, onP
       await reloadDetail(sale.sale_id, dispatch);
     },
     reloadDetail,
+    refreshList: refreshRetainedList,
     submitReturn,
     submitCancellation,
     invalidate,
     activate: () => { active = true; },
-    dispose: () => { active = false; invalidate(); },
+    dispose: () => { active = false; listIdentity++; invalidate(); },
   };
 }
 
@@ -590,7 +610,7 @@ export function HistoryScreen({
     state.has_more ? createElement(Feedback, { kind: "advisory" } as never, "Hay más ventas. Reducí el rango de fechas.") : null,
   );
 }
-export function SalesHistoryScreen() {
+export function SalesHistoryScreen({ acceptedMutations }: { acceptedMutations?: AcceptedMutations }) {
   const [state, dispatch] = useReducer(createHistoryFlow, initialHistoryState);
   const notifications = useActionNotifications();
   const [persistedRequests, setPersistedRequests] = useState<Record<number, string>>({});
@@ -605,6 +625,9 @@ export function SalesHistoryScreen() {
         setPersistedRequests(previous => ({ ...previous, [saleId]: requestId }));
         if (notifications) notifications.publish({ severity: "success", message });
         else setOutcomeNotice(message);
+      }, () => {
+        acceptedMutations?.accepted(["stock", "sales"]);
+        return !!acceptedMutations;
       }),
     [],
   );
@@ -618,6 +641,7 @@ export function SalesHistoryScreen() {
     void reload(today, today);
     return interaction.dispose;
   }, [interaction]);
+  useEffect(() => acceptedMutations?.subscribe("sales", () => interaction.refreshList(dispatch)), [acceptedMutations, interaction]);
   return createElement(HistoryScreen, {
     state,
     persistedRequest,

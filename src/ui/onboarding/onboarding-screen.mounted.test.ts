@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { mockIPC as nativeMockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { App } from "../app.ts";
 import { OnboardingScreen } from "./onboarding-screen.ts";
 import { CatalogMaintenanceScreen } from "../catalog/catalog-maintenance-screen.ts";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
@@ -24,6 +25,27 @@ async function enterValidProduct(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3");
   await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco");
 }
+
+test("accepted product creation refreshes App alerts without a second creation or discarding the selected category", async () => {
+  let writes = 0;
+  mockIPC(command => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: writes ? [{ product_id: 1, product_name: "Filtro", quantity: 3, classification: "low_stock" }] : [] };
+    if (command === "list_categories_command") return success();
+    if (command === "create_product_command") { writes++; return { kind: "success", product_id: 1, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true }; }
+  });
+  render(createElement(App));
+  const user = userEvent.setup({ document });
+  const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+  await user.click(within(nav).getByRole("button", { name: "Alta de productos" }));
+  await screen.findByLabelText("SKU");
+  await enterValidProduct(user);
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  await waitFor(() => assert.match(within(nav).getByRole("button", { name: /^Inventario/ }).textContent ?? "", /1 alerta de stock/));
+  assert.equal(writes, 1);
+  assert.equal((screen.getByLabelText("SKU") as HTMLInputElement).value, "");
+  assert.equal((screen.getByLabelText("Categoría") as HTMLSelectElement).value, "1");
+});
 
 test("category modal discards every unsaved field while preserving the mounted product draft", async () => {
   let writes = 0;

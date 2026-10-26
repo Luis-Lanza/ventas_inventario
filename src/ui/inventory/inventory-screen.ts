@@ -2,10 +2,11 @@ import { createElement, type FormEvent, useCallback, useEffect, useReducer, useR
 
 import { browseInventoryProducts, type InventoryBrowseProduct, type ProductSearchResult, type ProductStockState } from "../../commands/catalog.ts";
 import { inventoryCommands, type InventoryResponse } from "../../commands/inventory.ts";
+import { createAcceptedMutations, type AcceptedMutations } from "../accepted-mutations.ts";
 import { Action, Badge, Feedback } from "../visual-system/controls.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { createInventoryFlow, initialInventoryState, stockEntryPrices, type InventoryAction, type InventoryProduct, type InventoryState } from "./inventory-flow.ts";
-import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, type CatalogViewMode } from "../catalog/product-browser.ts";
+import { createRefreshingProductBrowserFlow, initialProductBrowserState, ProductBrowser, type CatalogViewMode } from "../catalog/product-browser.ts";
 import { InventoryOperationDialog, inventoryOperationValid } from "./inventory-operation-dialog.ts";
 import { captureInventoryOpening } from "./inventory-operation-motion.ts";
 export { InventoryOperationChoices } from "./inventory-operation-dialog.ts";
@@ -31,13 +32,15 @@ function screenFlow(state: InventoryState, action: InventoryAction): InventorySt
   return action.type === "discard" ? { ...next, alerts: state.alerts } : next;
 }
 
-export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null) => void; onInventoryAlertsRefresh?: () => void; initialStockState?: ProductStockState }) {
+export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; onAlertCueChange?: (cue: string | null) => void; onInventoryAlertsRefresh?: () => void; initialStockState?: ProductStockState }) {
   const notifications = useActionNotifications();
+  const [localMutations] = useState(createAcceptedMutations);
+  const mutations = props.acceptedMutations ?? localMutations;
   const [ordinaryFailure, setOrdinaryFailure] = useState(false);
   const [savedOutcome, setSavedOutcome] = useState<{ quantity: number; stale: boolean } | null>(null);
   const onAlertCueChange = props?.onAlertCueChange;
   const [state, dispatch] = useReducer(screenFlow, initialInventoryState);
-  const [browser, browserDispatch] = useReducer(createProductBrowserFlow<InventoryBrowseProduct>, { ...initialProductBrowserState, stock_state: props.initialStockState ?? "all" });
+  const [browser, browserDispatch] = useReducer(createRefreshingProductBrowserFlow<InventoryBrowseProduct>, { ...initialProductBrowserState, stock_state: props.initialStockState ?? "all" });
   const [viewMode, setViewMode] = useState<CatalogViewMode>("table");
   const [alertState, setAlertState] = useState<LoadState>("loading");
   const [catalogPassword, setCatalogPassword] = useState("");
@@ -49,6 +52,9 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
   const operationId = useRef(0);
   const mounted = useRef(true);
   const searchAttempt = useRef(0);
+  const appliedBrowse = useRef({ query: "", category_id: null as number | null, stock_state: props.initialStockState ?? "all", page: 1 });
+  const browserRef = useRef(browser);
+  browserRef.current = browser;
   const alertAttempt = useRef(0);
   const confirmLocked = useRef(false);
   const confirmAttempt = useRef(0);
@@ -72,16 +78,22 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     onAlertCueChange?.(cue);
   }, [alertState, state.alerts.length, onAlertCueChange]);
 
-  async function browsePage(query: string, category_id: number | null, stock_state: ProductStockState, page: number) {
-    const attempt = Math.max(++searchAttempt.current, browser.request_id + 1);
+  async function browsePage(query: string, category_id: number | null, stock_state: ProductStockState, page: number, refresh = false) {
+    const attempt = Math.max(++searchAttempt.current, browserRef.current.request_id + 1);
     searchAttempt.current = attempt;
-    browserDispatch({ type: "browse_started", query, category_id, stock_state, activity: "active", page, request_id: attempt });
+    appliedBrowse.current = { query, category_id, stock_state, page };
+    browserDispatch(refresh ? { type: "refresh_started", request_id: attempt } : { type: "browse_started", query, category_id, stock_state, activity: "active", page, request_id: attempt });
     try {
       const result = await browseInventoryProducts({ query, category_id, stock_state, activity: "active", page, page_size: 20 });
       if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
     } catch { if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local. Reintentá." }); }
   }
   useEffect(() => { void browsePage("", null, props.initialStockState ?? "all", 1); }, []);
+  useEffect(() => mutations.subscribe("stock", () => {
+    const applied = appliedBrowse.current;
+    void browsePage(applied.query, applied.category_id, applied.stock_state, applied.page, true);
+    void refreshAlerts();
+  }), [mutations, refreshAlerts]);
   const search = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     await browsePage(browser.query, browser.category_id, browser.stock_state, 1);
@@ -115,6 +127,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     const response: InventoryResponse = state.operation === "stock_entry"
       ? await inventoryCommands.confirmStockEntry({ request_id, product_id: state.product.product_id, quantity: Number(state.entry_quantity), ...(prices.purchase === undefined ? {} : { unit_purchase_price_centavos: prices.purchase! }), ...(prices.sale === undefined ? {} : { sale_price_centavos: prices.sale! }), ...(prices.minimum === undefined ? {} : { minimum_sale_price_centavos: prices.minimum! }), note: state.note || null })
       : await inventoryCommands.confirmPhysicalCount({ request_id, product_id: state.product.product_id, count: Number(state.physical_count), reason: state.reason, catalog_password: catalogPassword });
+    if (response.kind === "success") props.acceptedMutations?.accepted(["stock"]);
     if (!mounted.current || attempt !== confirmAttempt.current) return;
     setCatalogPassword("");
     confirmLocked.current = false;
@@ -125,7 +138,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
       notifications?.publish({ severity: "success", message: `Operación guardada. Stock actual: ${response.resulting_quantity}.` });
       if (state.product.available_quantity !== response.previous_quantity) notifications?.publish({ severity: "warning", message: "Saldo proyectado desactualizado. Revisá el stock actual." });
       props.onInventoryAlertsRefresh?.();
-      void refreshAlerts();
+      if (!props.acceptedMutations) mutations.accepted(["stock"]);
     } else {
       const ordinary = !["catalog_password_invalid", "request_conflict"].includes(response.code);
       const message = response.code === "request_conflict" ? "El ID de solicitud ya fue usado con datos de inventario diferentes. Reintentá con los datos correctos." : response.code === "catalog_password_invalid" ? "La contraseña del catálogo no es correcta. Ingresala de nuevo." : "No se pudo guardar la operación de inventario. Reintentá.";

@@ -4,6 +4,29 @@ import { createGrossProfitReportFlow, initialGrossProfitReportState } from "./gr
 const period = { from: "2024-03-10", to: "2024-03-20" };
 const summary = { amount_centavos: 0, missing_cost_line_count: 0, activity_count: 1 };
 const page = { rows: [], page: 1, page_size: 20, total: 25, total_pages: 2 };
+test("mutation refresh keeps applied range, requested page, drafts and pending export while retiring both read owners", () => {
+ let state = createGrossProfitReportFlow(initialGrossProfitReportState(period), { type: "range_applied", period, range_id: 1, operations_request_id: 1 });
+ state = createGrossProfitReportFlow(state, { type: "summary_succeeded", range_id: 1, report: summary });
+ state = createGrossProfitReportFlow(state, { type: "operations_succeeded", range_id: 1, operations_request_id: 1, report: page });
+ state = createGrossProfitReportFlow(state, { type: "page_requested", page: 2, operations_request_id: 2 });
+ state = createGrossProfitReportFlow(state, { type: "draft_changed", period: { ...period, from: "2024-03-15" } });
+ state = createGrossProfitReportFlow(state, { type: "export_started" });
+ const refreshed = createGrossProfitReportFlow(state, { type: "refresh_started", range_id: 2, operations_request_id: 3 });
+ assert.ok(refreshed);
+ assert.deepEqual(refreshed.applied, period);
+ assert.deepEqual(refreshed.draft, state.draft);
+ assert.equal(refreshed.requested_page, 2);
+ assert.equal(refreshed.export_status, "pending");
+ assert.equal(refreshed.summary_status, "loading");
+ assert.equal(refreshed.operations_status, "loading");
+ assert.equal(createGrossProfitReportFlow(refreshed, { type: "summary_succeeded", range_id: 1, report: summary }), refreshed);
+ assert.equal(createGrossProfitReportFlow(refreshed, { type: "operations_succeeded", range_id: 1, operations_request_id: 2, report: { ...page, page: 2 } }), refreshed);
+ const loaded = createGrossProfitReportFlow(refreshed, { type: "operations_succeeded", range_id: 2, operations_request_id: 3, report: { ...page, page: 2 } });
+ assert.equal(loaded.operations?.page, 2);
+ assert.equal(createGrossProfitReportFlow(loaded, { type: "export_completed", outcome: "success" }).export_status, "success");
+ assert.equal(createGrossProfitReportFlow(loaded, { type: "refresh_started", range_id: 1, operations_request_id: 2 }), loaded);
+});
+
 test("applied range clears both result sets and accepts matching summary and first page", () => {
  let state = initialGrossProfitReportState(period);
  state = createGrossProfitReportFlow(state, { type: "range_applied", period, range_id: 1, operations_request_id: 1 });

@@ -17,6 +17,7 @@ export interface GrossProfitReportState {
 export type GrossProfitReportAction =
   | { type: "draft_changed"; period: Period }
   | { type: "range_applied"; period: Period; range_id: number; operations_request_id: number }
+  | { type: "refresh_started"; range_id: number; operations_request_id: number }
   | { type: "retry"; operations_request_id: number }
   | { type: "page_requested"; page: number; operations_request_id: number }
   | { type: "summary_succeeded"; range_id: number; report: GrossProfitReport }
@@ -33,6 +34,9 @@ export function createGrossProfitReportFlow(state: GrossProfitReportState, actio
   switch (action.type) {
     case "draft_changed": return { ...state, draft: action.period };
     case "range_applied": return { ...state, applied: action.period, range_id: action.range_id, operations_request_id: action.operations_request_id, summary_status: "loading", operations_status: "loading", report: null, operations: null, requested_page: 1, export_status: state.export_status === "pending" ? "pending" : "idle" };
+    case "refresh_started":
+      if (action.range_id <= state.range_id || action.operations_request_id <= state.operations_request_id) return state;
+      return { ...state, range_id: action.range_id, operations_request_id: action.operations_request_id, summary_status: "loading", operations_status: "loading", report: null, operations: null };
     case "retry": if (action.operations_request_id <= state.operations_request_id) return state; return { ...state, operations_request_id: action.operations_request_id, summary_status: "loading", operations_status: "loading", report: null, operations: null, requested_page: 1 };
     case "page_requested": if (state.operations_status !== "ready" || !state.operations || action.page < 1 || action.page > state.operations.total_pages || action.operations_request_id <= state.operations_request_id) return state; return { ...state, operations_request_id: action.operations_request_id, operations_status: "loading", requested_page: action.page };
     case "summary_succeeded": if (action.range_id !== state.range_id) return state; return { ...state, report: action.report, summary_status: action.report.activity_count === 0 ? "empty" : "ready" };

@@ -1,6 +1,7 @@
 import { createElement, useCallback, type FormEvent, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { browseSalesProducts, catalogProductImageCommands, type SalesBrowseProduct } from "../../commands/catalog.ts";
 import { confirmSale, type ConfirmSaleRequest, type ConfirmSaleResponse } from "../../commands/confirm-sale.ts";
+import { createAcceptedMutations, type AcceptedMutations } from "../accepted-mutations.ts";
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
@@ -8,17 +9,20 @@ import { captureCheckoutOpening, type CheckoutOpening } from "../visual-system/c
 import { CheckoutDialog } from "../visual-system/checkout-dialog.ts";
 import { draftLineSubtotalCentavos, draftTotalCentavos, draftTotalUnits, effectiveDraftUnitPriceCentavos, formatBs } from "./sale-flow.ts";
 import { createSaleSession, type SaleSession, type SaleSessionEdit } from "./sale-session.ts";
-import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, readSalesViewMode, SalesProductDetail, writeSalesViewMode, type CatalogViewMode, type ProductBrowserState } from "../catalog/product-browser.ts";
+import { createRefreshingProductBrowserFlow, initialProductBrowserState, ProductBrowser, readSalesViewMode, SalesProductDetail, writeSalesViewMode, type CatalogViewMode, type ProductBrowserState } from "../catalog/product-browser.ts";
 import { PersistedSaleSummaryView, projectPersistedSaleSummary } from "./persisted-summary.ts";
 
 const thumbnailCacheKey = (productId: number) => String(productId);
 export interface SaleScreenProps {
   session?: SaleSession;
+  acceptedMutations?: AcceptedMutations;
   onInventoryAlertsRefresh?: () => void;
 }
 
 export function SaleScreen(props: SaleScreenProps) {
   const notifications = useActionNotifications();
+  const [localMutations] = useState(createAcceptedMutations);
+  const mutations = props.acceptedMutations ?? localMutations;
   const [session] = useState(() => props.session ?? createSaleSession(() => crypto.randomUUID()));
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const { routineOutcome, paymentErrors, checkoutOpen } = state;
@@ -52,7 +56,7 @@ export function SaleScreen(props: SaleScreenProps) {
     payments: state.persisted_summary.payments.map((payment) => ({ ...payment })),
   }) : null, [state.persisted_summary]);
   useEffect(() => props.session ? undefined : session.attachOwner(), [session, props.session]);
-  const [browser, browserDispatch] = useReducer(createProductBrowserFlow<SalesBrowseProduct>, initialProductBrowserState);
+  const [browser, browserDispatch] = useReducer(createRefreshingProductBrowserFlow<SalesBrowseProduct>, initialProductBrowserState);
   const [salesViewMode, setSalesViewMode] = useState<CatalogViewMode>(readSalesViewMode);
   const [, setThumbnailCacheVersion] = useState(0);
   const thumbnailCache = useRef(new Map<string, string>());
@@ -103,16 +107,22 @@ export function SaleScreen(props: SaleScreenProps) {
   }, [persistedDetails]);
   const draftDispatch = (action: SaleSessionEdit) => !closingRef.current && session.edit(action);
 
-  async function browsePage(query: string, category_id: number | null, page: number) {
-    const attempt = Math.max(++searchSequence.current, browser.request_id + 1);
+  const appliedBrowse = useRef({ query: "", category_id: null as number | null, page: 1 });
+  async function browsePage(query: string, category_id: number | null, page: number, refresh = false) {
+    const attempt = Math.max(++searchSequence.current, browserRef.current.request_id + 1);
     searchSequence.current = attempt;
-    browserDispatch({ type: "browse_started", query, category_id, stock_state: "all", activity: "active", page, request_id: attempt });
+    appliedBrowse.current = { query, category_id, page };
+    browserDispatch(refresh ? { type: "refresh_started", request_id: attempt } : { type: "browse_started", query, category_id, stock_state: "all", activity: "active", page, request_id: attempt });
     try {
       const result = await browseSalesProducts({ query, category_id, stock_state: "all", activity: "active", page, page_size: 20 });
       if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
     } catch { if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local." }); }
   }
   useEffect(() => { void browsePage("", null, 1); }, []);
+  useEffect(() => mutations.subscribe("stock", () => {
+    const applied = appliedBrowse.current;
+    return browsePage(applied.query, applied.category_id, applied.page, true);
+  }), [mutations]);
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (locked()) return;
     await browsePage(browser.query, browser.category_id, 1);
@@ -145,7 +155,10 @@ export function SaleScreen(props: SaleScreenProps) {
     if (effect?.kind === "inline_error" && response?.kind !== "stale_catalog_record" && !(response?.kind === "error" && response.code === "request_conflict") && notifications) {
       notifications.publish({ severity: "error", message: effect.message });
     }
-    if (effect?.kind === "success") props.onInventoryAlertsRefresh?.();
+    if (effect?.kind === "success") {
+      mutations.accepted(["stock", "sales"]);
+      props.onInventoryAlertsRefresh?.();
+    }
   }
 
   const discardDraft = () => {

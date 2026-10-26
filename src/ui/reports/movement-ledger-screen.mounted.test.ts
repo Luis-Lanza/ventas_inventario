@@ -7,6 +7,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import type { GrossProfitOperationsResponse } from "../../commands/gross-profit-operations.ts";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
+import { createAcceptedMutations } from "../accepted-mutations.ts";
 import { MovementLedgerScreen } from "./movement-ledger-screen.ts";
 
 import type { MovementLedgerRow } from "../../commands/movement-ledger.ts";
@@ -44,6 +45,56 @@ function assertSharedPdfAction(panel: HTMLElement) {
  const button = actionBar?.querySelector('[data-ui-action="secondary"]');
  assert.equal(button?.textContent, "Exportar PDF");
 }
+test("mutation refresh subscribes before initial ledger IPC and preserves its pending export owner", async () => {
+ const acceptedMutations = createAcceptedMutations();
+ let lists = 0, exports = 0;
+ let finishOld!: (value: unknown) => void, finishExport!: (value: unknown) => void;
+ mockIPC(command => {
+  if (command === "list_movement_ledger_command") {
+   if (++lists === 1) {
+    acceptedMutations.accepted(["stock"]);
+    return new Promise(resolve => { finishOld = resolve; });
+   }
+   return page([{ ...movement, product_name: `Actualizado ${lists}` }]);
+  }
+  if (command === "export_movement_ledger_command") { exports++; return new Promise(resolve => { finishExport = resolve; }); }
+  throw Error(command);
+ });
+ const view = render(createElement(MovementLedgerScreen, { acceptedMutations }));
+ await screen.findByText("Actualizado 2");
+ await act(async () => finishOld(page()));
+ assert.equal(screen.queryByText("Filtro actual"), null);
+ fireEvent.click(screen.getByRole("button", { name: "Exportar PDF" }));
+ act(() => acceptedMutations.accepted(["stock", "sales"]));
+ await screen.findByText("Actualizado 3");
+ assert.equal(exports, 1);
+ assert.equal((screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement).disabled, true);
+ await act(async () => finishExport({ kind: "success" }));
+ assert.ok(screen.getByText("El PDF se generó correctamente."));
+ assert.equal(lists, 3);
+ view.unmount();
+ act(() => acceptedMutations.accepted(["stock"]));
+ assert.equal(lists, 3);
+});
+
+test("mutation refresh cannot resurrect a ledger export already retired by applying different filters", async () => {
+ const acceptedMutations = createAcceptedMutations();
+ let finishExport!: (value: unknown) => void;
+ mockIPC(command => command === "list_movement_ledger_command" ? page() : new Promise(resolve => { finishExport = resolve; }));
+ render(createElement(MovementLedgerScreen, { acceptedMutations }));
+ await screen.findByRole("table");
+ fireEvent.click(screen.getByRole("button", { name: "Exportar PDF" }));
+ fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2020-01-01" } });
+ fireEvent.click(screen.getByRole("button", { name: "Aplicar filtros" }));
+ await screen.findByRole("table");
+ act(() => acceptedMutations.accepted(["stock"]));
+ await screen.findByRole("table");
+ assert.equal((screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement).disabled, false);
+ await act(async () => finishExport({ kind: "success" }));
+ assert.equal(screen.queryByText("Preparando el PDF…"), null);
+ assert.equal(screen.queryByText("El PDF se generó correctamente."), null);
+});
+
 test("movement presentation preserves seven complete facts and independent draft/applied regions", async () => {
  const reason = "Conteo físico con evidencia completa ".repeat(8);
  const note = "Nota guardada sin recortar ".repeat(8);

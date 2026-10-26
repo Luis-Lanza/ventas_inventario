@@ -31,6 +31,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 
 import type { ProductBrowseResult } from "../../commands/catalog.ts";
+import { App } from "../app.ts";
 import { CatalogMaintenanceScreen } from "./catalog-maintenance-screen.ts";
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 
@@ -59,6 +60,45 @@ function baseIPC(command: string) {
 async function openCategoryEditor() {
   await userEvent.click(await screen.findByRole("button", { name: "Gestionar categorías" }));
   return screen.findByRole("button", { name: "Editar Filtros" });
+}
+
+for (const operation of ["threshold", "archive"] as const) {
+  test(`Catalog accepted ${operation} refreshes sidebar before unrelated navigation and retains applied browse`, async () => {
+    let writes = 0;
+    const reads: unknown[] = [];
+    mockIPC((command, payload) => {
+      if (command === "license_status_command") return { kind: "status", code: "active" };
+      if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: writes && operation === "threshold" ? [{ product_id: 1, product_name: "Filtro Premium", quantity: 3, classification: "low_stock" }] : !writes && operation === "archive" ? [{ product_id: 1, product_name: "Filtro Premium", quantity: 0, classification: "out_of_stock" }] : [] };
+      if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
+      if (command === "browse_products_command") { reads.push(payload); return { ...browse(operation === "archive" && writes ? [] : [browseProduct]), page: 2, total: 21, total_pages: 2 }; }
+      if (command === "catalog_metadata_detail_command") return { ...productDetail, low_stock_threshold: writes ? 5 : 1, revision: writes ? 8 : 7 };
+      if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+      if (command === "edit_catalog_command" || command === "maintain_catalog_command") { writes++; return { kind: "success", ...activeProduct, revision: 8, activity: operation === "archive" ? "archived" : "active" }; }
+      return { kind: "error", code: "image_unavailable", message: "unavailable" };
+    });
+    render(createElement(App));
+    const u = userEvent.setup({ document });
+    const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+    await u.click(within(nav).getByRole("button", { name: "Catálogo" }));
+    await screen.findByRole("button", { name: "Editar" });
+    // A visible but unsubmitted edit must not become the post-mutation query.
+    await u.type(screen.getByRole("searchbox"), "unsent");
+    await u.click(screen.getByRole("button", { name: "Editar" }));
+    await screen.findByLabelText("Nombre del producto");
+    if (operation === "threshold") {
+      fireEvent.change(screen.getByLabelText(/Umbral/), { target: { value: "5" } });
+      await u.click(screen.getByRole("button", { name: "Guardar metadatos" }));
+    } else {
+      await u.click(screen.getByRole("button", { name: "Archivar" }));
+      await u.click(screen.getByRole("button", { name: "Confirmar archivo" }));
+    }
+    await waitFor(() => assert.equal(writes, 1));
+    await waitFor(() => assert.equal(reads.length, 2));
+    const inventory = within(nav).getByRole("button", { name: /^Inventario/ });
+    await waitFor(() => operation === "threshold" ? assert.match(inventory.textContent ?? "", /1 alerta de stock/) : assert.doesNotMatch(inventory.textContent ?? "", /alerta de stock/));
+    assert.deepEqual(reads[1], reads[0]);
+    assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "unsent");
+  });
 }
 
 test("Catalog groups its title and lock in a header while disclosure and current subview remain independent", async () => {

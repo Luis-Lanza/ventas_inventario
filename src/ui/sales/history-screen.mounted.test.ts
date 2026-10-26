@@ -3,13 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { ReturnRequest, CancellationRequest } from "../../commands/post-sale.ts";
 import type { SalesHistoryDetail } from "../../commands/sales-history.ts";
 
 import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
+import { App } from "../app.ts";
 import { SalesHistoryScreen } from "./history-screen.ts";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -70,6 +71,70 @@ const deferred = <Value,>() => {
   const promise = new Promise<Value>((done) => { resolve = done; });
   return { promise, resolve };
 };
+
+test("accepted cancellation refreshes detail, retained applied list and App sidebar without applying date edits", async () => {
+  let requestId = "", writes = 0;
+  const ranges: unknown[] = [];
+  mockIPC((command, payload) => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: writes ? [{ product_id: 4, product_name: "Filter 184", quantity: 1, classification: "low_stock" }] : [] };
+    if (command === "list_sales_history_command") { ranges.push(payload); return { kind: "success", sales: [{ ...summary(184), status: writes ? "cancelled" : "confirmed", has_corrections: !!writes }], has_more: false }; }
+    if (command === "sale_history_detail_command") return { kind: "success", detail: { ...detail(184), status: writes ? "cancelled" : "confirmed", cancellation: writes ? { cancellation_id: 1, request_id: requestId, occurred_at: "2026-01-01", reason: "Duplicada", lines: [{ sale_line_id: 184, product_id: 4, restored_quantity: 1 }] } : null } };
+    if (command === "cancel_sale_command") { requestId = capturedRequestId(payload); writes++; return { kind: "success", result: { cancellation_id: 1, request_id: requestId, sale_id: 184, status: "cancelled", occurred_at: "2026-01-01", reason: "Duplicada", lines: [{ sale_line_id: 184, product_id: 4, restored_quantity: 1 }] } }; }
+  });
+  render(createElement(App));
+  const user = userEvent.setup({ document });
+  const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+  await user.click(within(nav).getByRole("button", { name: "Historial de ventas" }));
+  await screen.findByRole("button", { name: "Ver detalle" });
+  fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2020-01-01" } });
+  await user.click(screen.getByRole("button", { name: "Ver detalle" }));
+  await user.click(await screen.findByRole("button", { name: "Iniciar cancelación de venta" }));
+  await user.type(screen.getByLabelText("Motivo de cancelación"), "Duplicada");
+  await user.click(screen.getByRole("checkbox", { name: /Los pagos originales no cambian/ }));
+  await user.click(screen.getByRole("button", { name: "Continuar con la cancelación" }));
+  await user.click(screen.getByRole("button", { name: "Cancelar venta" }));
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+  assert.ok(screen.getAllByText("Cancelada").length >= 1);
+  assert.match(screen.getByRole("table", { name: "Pagos originales" }).textContent ?? "", /Bs 25,00/);
+  await user.click(screen.getByRole("button", { name: "Volver al historial" }));
+  assert.ok(await screen.findByText("Cancelada"));
+  assert.equal((screen.getByLabelText("Desde") as HTMLInputElement).value, "2020-01-01");
+  assert.equal(ranges.length, 2);
+  assert.deepEqual(ranges[1], ranges[0]);
+  assert.match(within(nav).getByRole("button", { name: /^Inventario/ }).textContent ?? "", /1 alerta de stock/);
+  assert.equal(writes, 1);
+});
+
+test("a cancelled sale accepted after leaving History refreshes the new Inventory reader without reviving old detail", async () => {
+  const pending = deferred<unknown>();
+  let saved = false;
+  let requestId = "";
+  mockIPC((command, payload) => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "list_sales_history_command") return { kind: "success", sales: [summary(184)], has_more: false };
+    if (command === "sale_history_detail_command") return { kind: "success", detail: detail(184) };
+    if (command === "cancel_sale_command") { requestId = capturedRequestId(payload); return pending.promise; }
+    if (command === "browse_inventory_products_command") return { products: [{ product_id: 4, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: saved ? 8 : 7, sale_price_centavos: 2500, minimum_sale_price_centavos: 2500, primary_location_code: null }], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 };
+  });
+  render(createElement(App));
+  const user = userEvent.setup({ document });
+  const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+  await user.click(within(nav).getByRole("button", { name: "Historial de ventas" }));
+  await user.click(await screen.findByRole("button", { name: "Ver detalle" }));
+  await user.click(await screen.findByRole("button", { name: "Iniciar cancelación de venta" }));
+  await user.type(screen.getByLabelText("Motivo de cancelación"), "Duplicada");
+  await user.click(screen.getByRole("checkbox", { name: /Los pagos originales no cambian/ }));
+  await user.click(screen.getByRole("button", { name: "Continuar con la cancelación" }));
+  await user.click(screen.getByRole("button", { name: "Cancelar venta" }));
+  fireEvent.click(within(nav).getByRole("button", { name: /^Inventario/ }));
+  await screen.findByText("Disponible: 7");
+  saved = true;
+  await act(async () => pending.resolve({ kind: "success", result: { cancellation_id: 1, request_id: requestId, sale_id: 184, status: "cancelled", occurred_at: "2026-01-01", reason: "Duplicada", lines: [{ sale_line_id: 184, product_id: 4, restored_quantity: 1 }] } }));
+  assert.ok(await screen.findByText("Disponible: 8"));
+  assert.equal(screen.queryByRole("heading", { name: "Detalle de venta" }), null);
+});
 
 test("detail page exposes the approved card headings and keyboard back navigation without a modal", async () => {
   mockIPC((command) => {

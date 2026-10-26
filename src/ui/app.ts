@@ -1,5 +1,6 @@
-import { createElement, useEffect, useRef, useState } from "react";
+import { createElement, useCallback, useEffect, useRef, useState } from "react";
 
+import { createAcceptedMutations, type AcceptedMutations } from "./accepted-mutations.ts";
 import { inventoryCommands } from "../commands/inventory.ts";
 import { licenseCommands } from "../commands/license.ts";
 import { AppShell } from "./app-shell.ts";
@@ -26,21 +27,22 @@ export type NavigationAction = (typeof NAVIGATION_ACTION)[keyof typeof NAVIGATIO
 export function screenAfter(_current: Screen, action: NavigationAction): Screen {
   return action === NAVIGATION_ACTION.OPEN_DASHBOARD ? SCREEN.DASHBOARD : action === NAVIGATION_ACTION.OPEN_SALES_HISTORY ? SCREEN.SALES_HISTORY : action === NAVIGATION_ACTION.OPEN_REPORTS ? SCREEN.REPORTS : action === NAVIGATION_ACTION.OPEN_INVENTORY ? SCREEN.INVENTORY : action === NAVIGATION_ACTION.OPEN_BACKUP ? SCREEN.BACKUP : action === NAVIGATION_ACTION.OPEN_CATALOG ? SCREEN.CATALOG : action === NAVIGATION_ACTION.START_ONBOARDING ? SCREEN.ONBOARDING : SCREEN.SALES;
 }
-function screenContent(screen: Screen, onNavigate: (action: NavigationAction) => void, refreshInventoryCount: () => void, inventoryFilter: "all" | "alerts", openInventoryAlerts: () => void, canRestore: boolean, inventoryEntry: number, saleSession: SaleSession) {
-  if (screen === SCREEN.DASHBOARD) return createElement(DashboardScreen, { onOpenInventoryAlerts: openInventoryAlerts });
-  if (screen === SCREEN.ONBOARDING) return createElement(OnboardingScreen, { onBack: () => onNavigate(NAVIGATION_ACTION.RETURN_TO_SALES) });
-  if (screen === SCREEN.INVENTORY) return createElement(InventoryScreen, { key: `${inventoryFilter}:${inventoryEntry}`, initialStockState: inventoryFilter, onInventoryAlertsRefresh: refreshInventoryCount });
+function screenContent(screen: Screen, onNavigate: (action: NavigationAction) => void, inventoryFilter: "all" | "alerts", openInventoryAlerts: () => void, canRestore: boolean, inventoryEntry: number, saleSession: SaleSession, acceptedMutations: AcceptedMutations) {
+  if (screen === SCREEN.DASHBOARD) return createElement(DashboardScreen, { onOpenInventoryAlerts: openInventoryAlerts, acceptedMutations });
+  if (screen === SCREEN.ONBOARDING) return createElement(OnboardingScreen, { acceptedMutations, onBack: () => onNavigate(NAVIGATION_ACTION.RETURN_TO_SALES) });
+  if (screen === SCREEN.INVENTORY) return createElement(InventoryScreen, { key: `${inventoryFilter}:${inventoryEntry}`, initialStockState: inventoryFilter, acceptedMutations });
   if (screen === SCREEN.BACKUP) return createElement(BackupScreen, { canRestore });
-  if (screen === SCREEN.CATALOG) return createElement(CatalogMaintenanceScreen);
-  if (screen === SCREEN.SALES_HISTORY) return createElement(SalesHistoryScreen);
-  if (screen === SCREEN.REPORTS) return createElement(MovementLedgerScreen);
-  return createElement(SaleScreen, { session: saleSession, onInventoryAlertsRefresh: refreshInventoryCount });
+  if (screen === SCREEN.CATALOG) return createElement(CatalogMaintenanceScreen, { acceptedMutations });
+  if (screen === SCREEN.SALES_HISTORY) return createElement(SalesHistoryScreen, { acceptedMutations });
+  if (screen === SCREEN.REPORTS) return createElement(MovementLedgerScreen, { acceptedMutations });
+  return createElement(SaleScreen, { session: saleSession, acceptedMutations });
 }
 export function App() {
   return createElement(ActionNotificationProvider, null, createElement(AppContent));
 }
 function AppContent() {
   const notifications = useActionNotifications();
+  const [acceptedMutations] = useState(createAcceptedMutations);
   const [saleSession] = useState(() => createSaleSession(() => crypto.randomUUID()));
   useEffect(() => saleSession.attachOwner(), [saleSession]);
   const [screen, setScreen] = useState<Screen>(SCREEN.DASHBOARD);
@@ -54,7 +56,7 @@ function AppContent() {
     mounted.current = true;
     return () => { mounted.current = false; alertAttempt.current += 1; };
   }, []);
-  const refreshInventoryCount = () => {
+  const refreshInventoryCount = useCallback(() => {
     const attempt = ++alertAttempt.current;
     setInventoryCount(null);
     void inventoryCommands.listAlerts().then((response) => {
@@ -63,7 +65,8 @@ function AppContent() {
     }).catch(() => {
       if (mounted.current && attempt === alertAttempt.current) setInventoryCount(null);
     });
-  };
+  }, []);
+  useEffect(() => acceptedMutations.subscribe("stock", refreshInventoryCount), [acceptedMutations, refreshInventoryCount]);
   useEffect(() => {
     let current = true;
     void licenseCommands.status().then((response) => {
@@ -98,6 +101,6 @@ function AppContent() {
           setAccessMode("active");
         },
       })
-      : createElement(AppShell, { screen, onNavigate: navigate, onInventoryAlerts: openInventoryAlerts, inventoryCue, recoveryMode: accessMode === "recovery" }, screenContent(screen, navigate, refreshInventoryCount, inventoryFilter, openInventoryAlerts, accessMode === "active", inventoryEntry, saleSession));
+      : createElement(AppShell, { screen, onNavigate: navigate, onInventoryAlerts: openInventoryAlerts, inventoryCue, recoveryMode: accessMode === "recovery" }, screenContent(screen, navigate, inventoryFilter, openInventoryAlerts, accessMode === "active", inventoryEntry, saleSession, acceptedMutations));
   return content;
 }
