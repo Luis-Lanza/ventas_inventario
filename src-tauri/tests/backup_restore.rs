@@ -2088,7 +2088,7 @@ fn backup_command_boundary_serializes_only_allowlisted_stable_and_safe_outcomes(
                 confirmed: true,
             }
         ),
-        BackupResponse::error("token_invalid")
+        BackupResponse::confirm_rejected(&state, "token_invalid")
     );
     fs::remove_dir_all(directory).unwrap();
 }

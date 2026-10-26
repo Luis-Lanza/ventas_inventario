@@ -9,7 +9,7 @@ pub mod domain;
 pub mod infrastructure;
 pub mod identity;
 
-use std::sync::Mutex;
+use std::sync::{Mutex, atomic::{AtomicU64, Ordering}};
 
 use infrastructure::{
     filesystem::BackupStore,
@@ -30,9 +30,31 @@ struct DatabaseStateInner {
     config: DatabaseConfig,
     connection: Option<rusqlite::Connection>,
     status: DatabaseStatus,
+    // Connection readiness does not establish database identity after a failed replacement.
+    writes_blocked: bool,
 }
 
-pub struct DatabaseState(Mutex<DatabaseStateInner>);
+pub struct DatabaseState(Mutex<DatabaseStateInner>, AtomicU64);
+
+/// Process-local admission captured before waiting or opening a native picker.
+#[derive(Clone, Copy)]
+pub struct WriteAdmission(u64);
+
+#[derive(Debug)]
+pub(crate) enum RestoreInstallOutcome {
+    Unchanged(&'static str),
+    Restored { cleanup_warning: bool, next_epoch: u64 },
+    Unknown(&'static str),
+}
+
+impl RestoreInstallOutcome {
+    fn compatibility_result(self) -> Result<(), String> {
+        match self {
+            Self::Restored { .. } => Ok(()),
+            Self::Unchanged(code) | Self::Unknown(code) => Err(code.into()),
+        }
+    }
+}
 
 impl DatabaseState {
     pub fn open(config: DatabaseConfig) -> Result<Self, Box<dyn std::error::Error>> {
@@ -45,7 +67,8 @@ impl DatabaseState {
             config,
             connection: Some(connection),
             status: DatabaseStatus::Ready,
-        }))
+            writes_blocked: false,
+        }), AtomicU64::new(0))
     }
 
     pub fn recover_on_startup(config: DatabaseConfig, store: &BackupStore) -> Self {
@@ -113,7 +136,8 @@ impl DatabaseState {
             config,
             connection: None,
             status: DatabaseStatus::Unavailable,
-        }))
+            writes_blocked: true,
+        }), AtomicU64::new(1))
     }
 
     pub fn with_read<T>(
@@ -127,12 +151,32 @@ impl DatabaseState {
         operation(state.connection.as_ref().ok_or("database_unavailable")?)
     }
 
+    pub fn admit_write(&self) -> Result<WriteAdmission, String> {
+        let epoch = self.1.load(Ordering::SeqCst);
+        if epoch % 2 != 0 { return Err("database_unavailable".into()); }
+        Ok(WriteAdmission(epoch))
+    }
+
     pub fn with_write<T>(
         &self,
         operation: impl FnOnce(&mut rusqlite::Connection) -> Result<T, String>,
     ) -> Result<T, String> {
+        let admission = self.admit_write()?;
+        self.with_admitted_write(admission, operation)
+    }
+
+    pub fn with_admitted_write<T>(
+        &self,
+        admission: WriteAdmission,
+        operation: impl FnOnce(&mut rusqlite::Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        #[cfg(test)]
+        WRITE_WAIT_HOOK.with(|hook| {
+            if let Some(hook) = hook.borrow_mut().take() { hook(); }
+        });
         let mut state = self.0.lock().map_err(|_| "persistence_failure")?;
-        if state.status != DatabaseStatus::Ready {
+        if state.status != DatabaseStatus::Ready || state.writes_blocked
+            || admission.0 != self.1.load(Ordering::SeqCst) {
             return Err("database_unavailable".into());
         }
         operation(state.connection.as_mut().ok_or("database_unavailable")?)
@@ -143,45 +187,95 @@ impl DatabaseState {
         stage: &std::path::Path,
         store: &BackupStore,
     ) -> Result<(), String> {
-        self.install_validated_stage_with_cleanup(stage, store, || {
+        self.install_stage_outcome_with_cleanup(stage, store, false, || {
+            store.complete_durable_restore().map_err(|_| ())
+        }).compatibility_result()
+    }
+
+    pub(crate) fn write_admission_allowed(&self) -> bool {
+        self.0.lock().is_ok_and(|state| {
+            state.status == DatabaseStatus::Ready && !state.writes_blocked
+                && self.1.load(Ordering::SeqCst) % 2 == 0
+        })
+    }
+
+    pub(crate) fn block_writes(&self) {
+        if let Ok(mut state) = self.0.lock() {
+            state.writes_blocked = true;
+            let epoch = self.1.load(Ordering::SeqCst);
+            // An even epoch always has a representable odd successor.
+            if epoch % 2 == 0 { self.1.store(epoch + 1, Ordering::SeqCst); }
+        }
+    }
+
+    pub(crate) fn install_validated_stage_outcome(
+        &self, stage: &std::path::Path, store: &BackupStore,
+    ) -> RestoreInstallOutcome {
+        self.install_stage_outcome_with_cleanup(stage, store, true, || {
             store.complete_durable_restore().map_err(|_| ())
         })
     }
 
+    #[cfg(test)]
     fn install_validated_stage_with_cleanup(
+        &self, stage: &std::path::Path, store: &BackupStore,
+        cleanup: impl FnOnce() -> Result<(), ()>,
+    ) -> Result<(), String> {
+        self.install_stage_outcome_with_cleanup(stage, store, false, cleanup).compatibility_result()
+    }
+
+    pub(crate) fn complete_restore_admission(&self, next_epoch: u64) {
+        if let Ok(mut state) = self.0.lock() {
+            if state.status == DatabaseStatus::Ready
+                && self.1.load(Ordering::SeqCst).checked_add(1) == Some(next_epoch)
+            {
+                state.writes_blocked = false;
+                self.1.store(next_epoch, Ordering::SeqCst);
+            }
+        }
+    }
+
+    fn install_stage_outcome_with_cleanup(
         &self,
         stage: &std::path::Path,
         store: &BackupStore,
+        defer_admission: bool,
         clear_restore_state: impl FnOnce() -> Result<(), ()>,
-    ) -> Result<(), String> {
-        let mut state = self.0.lock().map_err(|_| "persistence_failure")?;
-        if state.status != DatabaseStatus::Ready {
-            return Err("database_unavailable".into());
+    ) -> RestoreInstallOutcome {
+        let Ok(mut state) = self.0.lock() else {
+            return RestoreInstallOutcome::Unknown("database_unavailable");
+        };
+        if state.status != DatabaseStatus::Ready || state.writes_blocked {
+            return RestoreInstallOutcome::Unchanged("database_unavailable");
         }
-        if infrastructure::sqlite::has_foreign_family(stage)
-            || !retained_recovery_evidence_is_valid(state.config.path())
-        {
-            return Err("restore_failed".into());
-        }
-        let protective = state
-            .config
-            .path()
-            .parent()
-            .ok_or("restore_failed")?
-            .join("pre-restore.sqlite3");
-        create_snapshot(
-            state.connection.as_ref().ok_or("database_unavailable")?,
-            &protective,
-        )
-        .map_err(|_| "restore_failed")?;
-        {
-            let protective_connection =
-                rusqlite::Connection::open(&protective).map_err(|_| "restore_failed")?;
-            validate_restored_database(&protective_connection).map_err(|_| "restore_failed")?;
-        }
-        store
-            .prepare_durable_restore(stage, &protective)
-            .map_err(|_| "restore_failed")?;
+        // All fallible preparation is pre-replacement, and does not retire admissions.
+        let preparation = (|| -> Result<(), &'static str> {
+            if infrastructure::sqlite::has_foreign_family(stage)
+                || !retained_recovery_evidence_is_valid(state.config.path())
+            {
+                return Err("restore_failed");
+            }
+            let protective = state.config.path().parent().ok_or("restore_failed")?
+                .join("pre-restore.sqlite3");
+            create_snapshot(
+                state.connection.as_ref().ok_or("database_unavailable")?, &protective,
+            ).map_err(|_| "restore_failed")?;
+            {
+                let protective_connection =
+                    rusqlite::Connection::open(&protective).map_err(|_| "restore_failed")?;
+                validate_restored_database(&protective_connection).map_err(|_| "restore_failed")?;
+            }
+            store.prepare_durable_restore(stage, &protective).map_err(|_| "restore_failed")?;
+            Ok(())
+        })();
+        if let Err(code) = preparation { return RestoreInstallOutcome::Unchanged(code); }
+        let epoch = self.1.load(Ordering::SeqCst);
+        let Some(next_epoch) = epoch.checked_add(2) else {
+            state.writes_blocked = true;
+            self.1.store(u64::MAX, Ordering::SeqCst);
+            return RestoreInstallOutcome::Unchanged("database_unavailable");
+        };
+        self.1.store(epoch + 1, Ordering::SeqCst);
         state.status = DatabaseStatus::Restoring;
         drop(state.connection.take());
 
@@ -198,29 +292,45 @@ impl DatabaseState {
             Ok(connection) => {
                 state.connection = Some(connection);
                 state.status = DatabaseStatus::Ready;
-                clear_restore_state().map_err(|_| "restore_failed".to_string())
+                let cleanup_warning = clear_restore_state().is_err();
+                state.writes_blocked = cleanup_warning || defer_admission;
+                if !state.writes_blocked { self.1.store(next_epoch, Ordering::SeqCst); }
+                RestoreInstallOutcome::Restored { cleanup_warning, next_epoch }
             }
-            Err(()) => match store.read_restore_state() {
-                Ok(marker) => match open_validated_recovery_database(&state.config, store, marker) {
-                    Ok(connection) => {
-                        state.connection = Some(connection);
-                        state.status = DatabaseStatus::Ready;
-                        Err("restore_failed".into())
-                    }
-                    Err(()) => {
+            Err(()) => {
+                // Even a validated recovered canonical does not prove the candidate won.
+                // Only authoritative startup recovery may admit writes again.
+                state.writes_blocked = true;
+                match store.read_restore_state() {
+                    Ok(marker) => match open_validated_recovery_database(&state.config, store, marker) {
+                        Ok(connection) => {
+                            state.connection = Some(connection);
+                            state.status = DatabaseStatus::Ready;
+                            RestoreInstallOutcome::Unknown("restore_failed")
+                        }
+                        Err(()) => {
+                            state.connection = None;
+                            state.status = DatabaseStatus::Unavailable;
+                            RestoreInstallOutcome::Unknown("database_unavailable")
+                        }
+                    },
+                    Err(_) => {
                         state.connection = None;
                         state.status = DatabaseStatus::Unavailable;
-                        Err("database_unavailable".into())
+                        RestoreInstallOutcome::Unknown("database_unavailable")
                     }
-                },
-                Err(_) => {
-                    state.connection = None;
-                    state.status = DatabaseStatus::Unavailable;
-                    Err("database_unavailable".into())
                 }
             },
         }
     }
+}
+
+// Deterministic test rendezvous at the real shared write seam, before mutex waiting.
+// It does not alter admission or dispatch writes through a substitute implementation.
+#[cfg(test)]
+thread_local! {
+    static WRITE_WAIT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
 }
 
 fn open_validated_recovery_database(
@@ -1006,7 +1116,11 @@ mod database_state_tests {
         assert_eq!(bounded_backup_diagnostic_code("unsupported_destination"), "unsupported_destination");
         assert_eq!(bounded_backup_diagnostic_code("user-controlled-value"), "other");
 
-        assert_eq!(backup_response_diagnostic(&commands::backup::BackupResponse::Restored), ("restored", "none"));
+        assert_eq!(backup_response_diagnostic(&commands::backup::BackupResponse::Restored { restore: commands::backup::RestoreMetadata {
+            restore_certainty: commands::backup::RestoreCertainty::Restored,
+            write_admission: commands::backup::WritePermission::Allowed,
+            cleanup_warning: false,
+        }}), ("restored", "none"));
         assert_eq!(backup_response_diagnostic(&commands::backup::BackupResponse::error("destination_exists")), ("error", "destination_exists"));
         assert_eq!(backup_response_diagnostic(&commands::backup::BackupResponse::error("unlisted-code")), ("error", "other"));
     }
@@ -1144,6 +1258,225 @@ mod database_state_tests {
     }
 
     #[test]
+    fn ambiguous_recovery_preserves_validated_reads_but_refuses_public_writes() {
+        struct Fixture(std::path::PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let fixture = Fixture(std::env::temp_dir().join(format!(
+            "t3a-ambiguous-admission-{}", uuid::Uuid::new_v4()
+        )));
+        fs::create_dir_all(fixture.0.join("backup-restore/staging")).unwrap();
+        let state = DatabaseState::open(
+            infrastructure::sqlite::production_database_config(&fixture.0),
+        ).unwrap();
+        let stage = fixture.0.join("backup-restore/staging/candidate.sqlite3");
+        fs::write(&stage, b"invalid candidate after preparation").unwrap();
+        let store = BackupStore::new(&fixture.0);
+        assert_eq!(state.install_validated_stage(&stage, &store), Err("restore_failed".into()));
+
+        // A validated canonical connection proves readability, not which database won.
+        let read_count = || state.with_read(|connection| {
+            connection.query_row("SELECT COUNT(*) FROM categories", [], |row| row.get::<_, i64>(0))
+                .map_err(|_| "persistence_failure".into())
+        });
+        let before = read_count().unwrap();
+        let calls = Cell::new(0);
+        let result = state.with_write(|connection| {
+            calls.set(calls.get() + 1);
+            connection.execute("INSERT INTO categories (name) VALUES (?1)", ["must-not-write"])
+                .map(|_| ()).map_err(|_| "persistence_failure".into())
+        });
+        let after = read_count().unwrap();
+        let snapshot = fixture.0.join("readable-backup.sqlite3");
+        assert!(state.with_read(|connection| {
+            create_snapshot(connection, &snapshot).map(|_| ()).map_err(|_| "snapshot_failed".into())
+        }).is_ok());
+        assert_eq!(store.read_restore_state(), Ok(Some(RestoreState::CandidateInstalled)));
+        assert!(fixture.0.join("restore-rollback.sqlite3").exists());
+        assert_eq!((result, calls.get(), after), (Err("database_unavailable".into()), 0, before));
+    }
+
+    struct T3aFixture(std::path::PathBuf);
+
+    impl T3aFixture {
+        fn new() -> Self {
+            let fixture = Self(std::env::temp_dir().join(format!("t3a-{}", uuid::Uuid::new_v4())));
+            fs::create_dir_all(fixture.0.join("backup-restore/staging")).unwrap();
+            fixture
+        }
+
+        fn state(&self) -> DatabaseState {
+            DatabaseState::open(infrastructure::sqlite::production_database_config(&self.0)).unwrap()
+        }
+
+        fn stage(&self, state: &DatabaseState) -> std::path::PathBuf {
+            let stage = self.0.join("backup-restore/staging/candidate.sqlite3");
+            state.with_read(|connection| {
+                create_snapshot(connection, &stage).map(|_| ()).map_err(|_| "snapshot_failed".into())
+            }).unwrap();
+            stage
+        }
+    }
+
+    impl Drop for T3aFixture {
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+    }
+
+    fn t3a_category_count(state: &DatabaseState) -> i64 {
+        state.with_read(|connection| {
+            connection.query_row("SELECT COUNT(*) FROM categories", [], |row| row.get(0))
+                .map_err(|_| "persistence_failure".into())
+        }).unwrap()
+    }
+
+    #[test]
+    fn t3a_marker_cleanup_failure_is_known_success_but_blocks_writes() {
+        let fixture = T3aFixture::new();
+        let state = fixture.state();
+        let stage = fixture.stage(&state);
+        rusqlite::Connection::open(&stage).unwrap().execute(
+            "INSERT INTO categories (name) VALUES (?1)", ["candidate-only"],
+        ).unwrap();
+        let store = BackupStore::new(&fixture.0);
+        let result = state.install_validated_stage_with_cleanup(&stage, &store, || Err(()));
+        let calls = Cell::new(0);
+        let write = state.with_write(|_| { calls.set(calls.get() + 1); Ok(()) });
+        assert_eq!(t3a_category_count(&state), 1);
+        assert_eq!(store.read_restore_state(), Ok(Some(RestoreState::CandidateInstalled)));
+        // Compatibility entry point must no longer turn proven installation into failure.
+        assert_eq!((result, write, calls.get()), (Ok(()), Err("database_unavailable".into()), 0));
+    }
+
+    #[test]
+    fn t3a_pre_replacement_refusal_keeps_existing_write_admission_and_data() {
+        let fixture = T3aFixture::new();
+        let state = fixture.state();
+        let stage = fixture.stage(&state);
+        rusqlite::Connection::open(&stage).unwrap().pragma_update(None, "application_id", 1234).unwrap();
+        let before = t3a_category_count(&state);
+        let store = BackupStore::new(&fixture.0);
+        assert_eq!(state.install_validated_stage(&stage, &store), Err("restore_failed".into()));
+        assert_eq!(t3a_category_count(&state), before);
+        let calls = Cell::new(0);
+        assert_eq!(state.with_write(|_| { calls.set(calls.get() + 1); Ok(()) }), Ok(()));
+        assert_eq!(calls.get(), 1);
+        assert_eq!(t3a_category_count(&state), before);
+        assert_eq!(store.read_restore_state(), Ok(None));
+    }
+
+    #[test]
+    fn t3a_queued_write_admitted_before_replacement_cannot_target_new_database() {
+        use std::sync::{Arc, mpsc};
+        let fixture = T3aFixture::new();
+        let state = Arc::new(fixture.state());
+        let stage = fixture.stage(&state);
+        let (admitted, waiting) = mpsc::channel();
+        let (resume, resumed) = mpsc::channel();
+        let writer_state = Arc::clone(&state);
+        let writer = std::thread::spawn(move || {
+            WRITE_WAIT_HOOK.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || {
+                    admitted.send(()).unwrap();
+                    resumed.recv().unwrap();
+                }));
+            });
+            let mut calls = 0;
+            let result = writer_state.with_write(|connection| {
+                calls += 1;
+                connection.execute("INSERT INTO categories (name) VALUES (?1)", ["stale-write"])
+                    .map(|_| ()).map_err(|_| "persistence_failure".into())
+            });
+            (result, calls)
+        });
+        waiting.recv().unwrap();
+        let restore = state.install_validated_stage(&stage, &BackupStore::new(&fixture.0));
+        resume.send(()).unwrap();
+        let (write, calls) = writer.join().unwrap();
+        assert_eq!(restore, Ok(()));
+        assert_eq!((write, calls, t3a_category_count(&state)), (Err("database_unavailable".into()), 0, 0));
+        // A fresh post-restore admission still works after a clean installation.
+        assert_eq!(state.with_write(|_| Ok(())), Ok(()));
+    }
+
+    #[test]
+    fn t3a_delayed_selection_admission_cannot_be_reacquired_after_restore() {
+        let fixture = T3aFixture::new();
+        let state = fixture.state();
+        let stage = fixture.stage(&state);
+        // Same admission API used before the desktop picker awaits. The desktop dialog
+        // itself is not available in this default-feature test.
+        let selection_admission = state.admit_write().unwrap();
+        assert_eq!(state.install_validated_stage(&stage, &BackupStore::new(&fixture.0)), Ok(()));
+        let mut calls = 0;
+        assert_eq!(state.with_admitted_write(selection_admission, |connection| {
+            calls += 1;
+            connection.execute("INSERT INTO categories (name) VALUES (?1)", ["late-selection"])
+                .map(|_| ()).map_err(|_| "persistence_failure".into())
+        }), Err("database_unavailable".into()));
+        assert_eq!((calls, t3a_category_count(&state)), (0, 0));
+        assert_eq!(state.with_write(|_| Ok(())), Ok(()));
+    }
+
+    #[test]
+    fn t3a_replacement_blocks_new_admission_before_cleanup_completes() {
+        let fixture = T3aFixture::new();
+        let state = fixture.state();
+        let stage = fixture.stage(&state);
+        assert_eq!(state.install_validated_stage_with_cleanup(&stage, &BackupStore::new(&fixture.0), || {
+            assert!(matches!(state.admit_write(), Err(code) if code == "database_unavailable"));
+            Ok(())
+        }), Ok(()));
+        assert_eq!(state.with_write(|_| Ok(())), Ok(()));
+        assert_eq!(t3a_category_count(&state), 0);
+    }
+
+    #[test]
+    fn t3a_startup_retains_ambiguous_transition_evidence_and_refuses_admission() {
+        let fixture = T3aFixture::new();
+        let state = fixture.state();
+        let stage = fixture.0.join("backup-restore/staging/candidate.sqlite3");
+        fs::write(&stage, b"invalid candidate after preparation").unwrap();
+        let store = BackupStore::new(&fixture.0);
+        assert_eq!(state.install_validated_stage(&stage, &store), Err("restore_failed".into()));
+        assert_eq!(t3a_category_count(&state), 0);
+        assert_eq!(state.with_write(|_| Ok(())), Err("database_unavailable".into()));
+        drop(state);
+        let recovered = DatabaseState::recover_on_startup(
+            infrastructure::sqlite::production_database_config(&fixture.0), &store,
+        );
+        // Marker transitions leave historical sidecars. Existing startup policy rejects
+        // this ambiguity before opening a connection, even when canonical data validates.
+        assert!(!recovery_sidecar_entries(&fixture.0).unwrap().is_empty());
+        assert_eq!(recovered.with_read(|_| Ok(())), Err("database_unavailable".into()));
+        let mut calls = 0;
+        assert_eq!(recovered.with_write(|_| { calls += 1; Ok(()) }), Err("database_unavailable".into()));
+        assert_eq!(calls, 0);
+        assert_eq!(store.read_restore_state(), Ok(Some(RestoreState::CandidateInstalled)));
+    }
+
+    #[test]
+    fn t3a_successfully_classified_startup_after_clean_restore_admits_new_writes() {
+        let fixture = T3aFixture::new();
+        let state = fixture.state();
+        let stage = fixture.stage(&state);
+        let store = BackupStore::new(&fixture.0);
+        assert_eq!(state.install_validated_stage(&stage, &store), Ok(()));
+        drop(state);
+        let recovered = DatabaseState::recover_on_startup(
+            infrastructure::sqlite::production_database_config(&fixture.0), &store,
+        );
+        assert_eq!(t3a_category_count(&recovered), 0);
+        assert_eq!(recovered.with_write(|connection| {
+            connection.execute("INSERT INTO categories (name) VALUES (?1)", ["startup-admitted"])
+                .map(|_| ()).map_err(|_| "persistence_failure".into())
+        }), Ok(()));
+        assert_eq!(t3a_category_count(&recovered), 1);
+    }
+
+    #[test]
     fn validated_candidate_remains_ready_when_final_marker_cleanup_fails() {
         let directory = std::env::temp_dir().join(format!(
             "r-a-cleanup-failure-{}-{}",
@@ -1175,7 +1508,7 @@ mod database_state_tests {
                 cleanup_called.set(true);
                 Err(())
             }),
-            Err("restore_failed".into())
+            Ok(())
         );
         assert!(cleanup_called.get());
         assert_eq!(
@@ -1221,7 +1554,7 @@ fn backup_response_diagnostic(response: &commands::backup::BackupResponse) -> (&
     match response {
         commands::backup::BackupResponse::Created { .. } => ("created", "none"),
         commands::backup::BackupResponse::Prepared { .. } => ("prepared", "none"),
-        commands::backup::BackupResponse::Restored => ("restored", "none"),
+        commands::backup::BackupResponse::Restored { .. } => ("restored", "none"),
         commands::backup::BackupResponse::Error { code, .. } => {
             ("error", bounded_backup_diagnostic_code(code))
         }
@@ -1579,6 +1912,13 @@ async fn choose_product_image_command<R: Runtime>(
             code: "validation_error", message: "Review the catalog values and try again.",
         }));
     };
+    // Capture before the picker awaits; a later selection must not acquire a new epoch.
+    let admission = match state.admit_write() {
+        Ok(admission) => admission,
+        Err(_) => return Ok(commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
+            code: "persistence_failure", message: "The catalog could not be completed.",
+        })),
+    };
     let app_handle = window.app_handle().clone();
     drop(window);
     let selection = commands::backup::select_callback_path(|complete| {
@@ -1604,7 +1944,7 @@ async fn choose_product_image_command<R: Runtime>(
             code: "image_unavailable", message: "The selected image could not be used.",
         })),
     };
-    Ok(state.with_write(|connection| Ok(commands::catalog::persist_selected_product_image(
+    Ok(state.with_admitted_write(admission, |connection| Ok(commands::catalog::persist_selected_product_image(
         connection, request.product_id, request.expected_revision, mime, bytes,
     ))).unwrap_or_else(|_| commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
         code: "persistence_failure", message: "The catalog could not be completed.",
@@ -1714,9 +2054,9 @@ fn confirm_restore_command(
     commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
     request: commands::backup::ConfirmRestoreRequest,
 ) -> commands::backup::BackupResponse {
-    if license.authorize_business_operation().is_err() { return commands::backup::BackupResponse::error("license_required"); }
+    if license.authorize_business_operation().is_err() { return commands::backup::BackupResponse::confirm_rejected(&state, "license_required"); }
     let Ok(mut commands) = commands.lock() else {
-        return commands::backup::BackupResponse::error("storage_unavailable");
+        return commands::backup::BackupResponse::confirm_rejected(&state, "storage_unavailable");
     };
     commands::backup::confirm_restore(&state, &mut commands, request)
 }

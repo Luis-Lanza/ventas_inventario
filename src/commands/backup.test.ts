@@ -54,6 +54,50 @@ test("maps license-required restore denial to accurate safe feedback", async () 
   });
 });
 
+test("confirm decodes bounded certainty independently from write permission and redacts extras", async () => {
+  for (const write_admission of ["allowed", "blocked"]) {
+    const commands = createBackupCommands(async () => ({ kind: "restored", restore_certainty: "restored", write_admission, cleanup_warning: write_admission === "blocked", path: "/internal/private", message: "secret" }));
+    assert.deepEqual(await commands.confirmRestore("token"), {
+      kind: "restored", restore_certainty: "restored", write_admission, cleanup_warning: write_admission === "blocked",
+    });
+  }
+  const refused = createBackupCommands(async () => ({ kind: "error", code: "confirmation_required", message: "/internal/private", restore_certainty: "unchanged", write_admission: "allowed", cleanup_warning: false }));
+  assert.deepEqual(await refused.confirmRestore("token"), {
+    kind: "error", code: "confirmation_required", message: "Restore confirmation is required.", restore_certainty: "unchanged", write_admission: "allowed", cleanup_warning: false,
+  });
+});
+
+test("legacy explicit restored is confirmed success but never grants write permission", async () => {
+  assert.deepEqual(await createBackupCommands(async () => ({ kind: "restored" })).confirmRestore("token"), {
+    kind: "restored", restore_certainty: "restored", write_admission: "blocked", cleanup_warning: false,
+  });
+});
+
+test("unclassified confirm errors and malformed metadata are unknown and blocked", async () => {
+  const unknown = { kind: "error", code: "storage_unavailable", message: "Backup storage is unavailable.", restore_certainty: "unknown", write_admission: "blocked", cleanup_warning: false };
+  for (const value of [
+    null, { kind: "cancelled" }, { kind: "prepared", token: "token", size_bytes: 1, schema_version: 24 },
+    { kind: "error", code: "token_invalid", message: "native details" },
+    { kind: "restored", restore_certainty: "restored" },
+    { kind: "restored", restore_certainty: "unchanged", write_admission: "allowed", cleanup_warning: false },
+    { kind: "restored", restore_certainty: "restored", write_admission: "allowed", cleanup_warning: true },
+    { kind: "restored", restore_certainty: "restored", write_admission: "blocked", cleanup_warning: "yes" },
+    { kind: "error", code: "restore_failed", restore_certainty: "unknown", write_admission: "allowed", cleanup_warning: false },
+    { kind: "error", code: "future_code", restore_certainty: "unchanged", write_admission: "allowed", cleanup_warning: false },
+    { kind: "error", code: "restore_failed", restore_certainty: "restored", write_admission: "blocked", cleanup_warning: false },
+  ]) {
+    assert.deepEqual(await createBackupCommands(async () => value).confirmRestore("token"), unknown, JSON.stringify(value));
+  }
+  assert.deepEqual(await createBackupCommands(async () => { throw new Error("/internal/private"); }).confirmRestore("token"), unknown);
+});
+
+test("explicit unknown confirm outcome remains unknown even with a familiar error code", async () => {
+  const commands = createBackupCommands(async () => ({ kind: "error", code: "restore_failed", message: "/private", restore_certainty: "unknown", write_admission: "blocked", cleanup_warning: false }));
+  assert.deepEqual(await commands.confirmRestore("token"), {
+    kind: "error", code: "restore_failed", message: "The restore could not be completed.", restore_certainty: "unknown", write_admission: "blocked", cleanup_warning: false,
+  });
+});
+
 test("maps malformed and failed IPC responses to stable backup errors", async () => {
   const commands = createBackupCommands(async () => { throw new Error("sqlite path /internal"); });
   assert.deepEqual(await commands.createBackup("opaque-token"), { kind: "error", code: "storage_unavailable", message: "Backup storage is unavailable." });

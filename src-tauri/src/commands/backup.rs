@@ -13,7 +13,7 @@ use crate::{
         filesystem::{BackupStore, PublishedBackup, StorageError},
         sqlite::{create_snapshot, stage_and_validate},
     },
-    DatabaseState,
+    DatabaseState, RestoreInstallOutcome,
 };
 
 pub const ALLOWED_COMMANDS: [&str; 5] = [
@@ -88,11 +88,31 @@ pub enum BackupResponse {
         size_bytes: u64,
         schema_version: i64,
     },
-    Restored,
+    Restored {
+        #[serde(flatten)]
+        restore: RestoreMetadata,
+    },
     Error {
         code: &'static str,
         message: &'static str,
+        #[serde(flatten)]
+        restore: Option<RestoreMetadata>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoreCertainty { Unchanged, Restored, Unknown }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WritePermission { Allowed, Blocked }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct RestoreMetadata {
+    pub restore_certainty: RestoreCertainty,
+    pub write_admission: WritePermission,
+    pub cleanup_warning: bool,
 }
 
 impl BackupResponse {
@@ -114,7 +134,24 @@ impl BackupResponse {
             "restore_failed" => "The restore could not be completed.",
             _ => "Backup storage is unavailable.",
         };
-        Self::Error { code, message }
+        Self::Error { code, message, restore: None }
+    }
+
+    pub fn confirm_rejected(state: &DatabaseState, code: &'static str) -> Self {
+        Self::error(code).with_restore_metadata(state, RestoreCertainty::Unchanged, false)
+    }
+
+    fn with_restore_metadata(self, state: &DatabaseState, certainty: RestoreCertainty, cleanup_warning: bool) -> Self {
+        let metadata = RestoreMetadata {
+            restore_certainty: certainty,
+            write_admission: if state.write_admission_allowed() { WritePermission::Allowed } else { WritePermission::Blocked },
+            cleanup_warning,
+        };
+        match self {
+            Self::Error { code, message, .. } => Self::Error { code, message, restore: Some(metadata) },
+            Self::Restored { .. } => Self::Restored { restore: metadata },
+            other => other,
+        }
     }
 
     fn message(&self) -> &'static str {
@@ -488,6 +525,20 @@ fn confirm_restore_using(
     request: ConfirmRestoreRequest,
     cleanup: &mut impl StageCleanup,
 ) -> BackupResponse {
+    let response = confirm_restore_attempt(state, commands, request, cleanup);
+    // Only this pre-install helper returns errors without phase metadata.
+    match response {
+        BackupResponse::Error { restore: None, .. } => response.with_restore_metadata(state, RestoreCertainty::Unchanged, false),
+        other => other,
+    }
+}
+
+fn confirm_restore_attempt(
+    state: &DatabaseState,
+    commands: &mut BackupCommandState,
+    request: ConfirmRestoreRequest,
+    cleanup: &mut impl StageCleanup,
+) -> BackupResponse {
     let Some(pending) = commands.pending.remove(&request.token) else {
         if !commands.prune_expired_using(cleanup) { return BackupResponse::error("storage_unavailable"); }
         return BackupResponse::error("token_invalid");
@@ -505,20 +556,29 @@ fn confirm_restore_using(
     if !matches!(checksum(&pending.stage), Ok(checksum) if checksum == pending.sha256) {
         return if remove_stage_with_evidence_using(&pending.stage, cleanup) { BackupResponse::error("invalid_backup") } else { BackupResponse::error("storage_unavailable") };
     }
-    match state.install_validated_stage(&pending.stage, &BackupStore::new(&commands.root)) {
-        Ok(()) => {
-            if remove_stage_with_evidence_using(&pending.stage, cleanup) { BackupResponse::Restored } else { BackupResponse::error("storage_unavailable") }
+    let store = BackupStore::new(&commands.root);
+    match state.install_validated_stage_outcome(&pending.stage, &store) {
+        RestoreInstallOutcome::Restored { cleanup_warning, next_epoch } => {
+            // Marker cleanup failure retains ownership of all remaining recovery artifacts.
+            let warning = cleanup_warning || !remove_stage_with_evidence_using(&pending.stage, cleanup);
+            if warning { state.block_writes(); } else { state.complete_restore_admission(next_epoch); }
+            BackupResponse::Restored { restore: RestoreMetadata {
+                restore_certainty: RestoreCertainty::Restored,
+                write_admission: WritePermission::Blocked,
+                cleanup_warning: warning,
+            }}.with_restore_metadata(state, RestoreCertainty::Restored, warning)
         }
-        Err(code) => {
-            // Once a durable marker exists, the recovery protocol owns the stage/evidence.
-            if matches!(BackupStore::new(&commands.root).read_restore_state(), Ok(None)) {
-                if !remove_stage_with_evidence_using(&pending.stage, cleanup) { return BackupResponse::error("storage_unavailable"); }
-            }
-            if code == "database_unavailable" {
-                BackupResponse::error("database_unavailable")
-            } else {
-                BackupResponse::error("restore_failed")
-            }
+        RestoreInstallOutcome::Unchanged(code) => {
+            let warning = if matches!(store.read_restore_state(), Ok(None)) {
+                !remove_stage_with_evidence_using(&pending.stage, cleanup)
+            } else { false };
+            BackupResponse::error(if warning { "storage_unavailable" } else { code })
+                .with_restore_metadata(state, RestoreCertainty::Unchanged, warning)
+        }
+        RestoreInstallOutcome::Unknown(code) => {
+            state.block_writes();
+            // No cleanup here: recovery owns the stage, marker and protective sources.
+            BackupResponse::error(code).with_restore_metadata(state, RestoreCertainty::Unknown, false)
         }
     }
 }
@@ -1041,7 +1101,7 @@ mod destination_token_tests {
         let BackupResponse::Prepared { token, .. } = prepare_restore(&state, &mut commands, PrepareRestoreRequest { source_token }) else { panic!("valid source should be staged"); };
         let stage = commands.pending[&token].stage.clone();
 
-        assert_eq!(confirm_restore(&state, &mut commands, ConfirmRestoreRequest { token, confirmed: true }), BackupResponse::Restored);
+        assert!(matches!(confirm_restore(&state, &mut commands, ConfirmRestoreRequest { token, confirmed: true }), BackupResponse::Restored { .. }));
         assert!(!stage.exists());
         drop(state);
         fs::remove_dir_all(root).unwrap();
@@ -1189,7 +1249,11 @@ mod destination_token_tests {
             commands.pending.insert(token.clone(), PendingRestore { stage: stage.clone(), sha256, expires_at });
             let mut cleanup = RecordingCleanup { fail: Some("remove"), ..Default::default() };
             let response = confirm_restore_using(&state, &mut commands, ConfirmRestoreRequest { token, confirmed }, &mut cleanup);
-            assert!(matches!(response, BackupResponse::Error { code: "storage_unavailable", .. }), "{scenario}: {response:?}");
+            if scenario == "success" {
+                assert!(matches!(response, BackupResponse::Restored { restore: RestoreMetadata { cleanup_warning: true, .. } }), "{response:?}");
+            } else {
+                assert!(matches!(response, BackupResponse::Error { code: "storage_unavailable", .. }), "{scenario}: {response:?}");
+            }
             let evidence = stage.with_file_name(format!(".{}.cleanup-needed", stage.file_name().unwrap().to_string_lossy()));
             assert!(evidence.exists(), "{scenario}: cleanup evidence retained");
             if scenario == "success" {
@@ -1199,11 +1263,114 @@ mod destination_token_tests {
                 assert!(stage.exists(), "{scenario}: injected artifact-removal failure retains the stage");
             }
             assert!(BackupStore::new(&root).read_restore_state().unwrap().is_none(), "{scenario}: no active marker may be falsely claimed");
-            assert!(!matches!(response, BackupResponse::Restored));
+            assert_eq!(matches!(response, BackupResponse::Restored { .. }), scenario == "success");
             if token_expired || !confirmed { assert!(commands.pending.is_empty()); }
             drop(state);
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    struct T3aRoot(PathBuf);
+
+    impl Drop for T3aRoot {
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+    }
+
+    fn t3a_prepared_fixture() -> (T3aRoot, DatabaseState, BackupCommandState, String) {
+        let root = T3aRoot(test_directory());
+        let state = DatabaseState::open(crate::infrastructure::sqlite::production_database_config(&root.0)).unwrap();
+        let source = root.0.join("source.sqlite3");
+        state.with_read(|connection| {
+            crate::infrastructure::sqlite::create_snapshot(connection, &source)
+                .map(|_| ()).map_err(|_| "snapshot_failed".into())
+        }).unwrap();
+        let mut commands = BackupCommandState::new(&root.0);
+        let RestoreSourceSelection::Selected { token: source_token } = commands.select_restore_source(source) else {
+            panic!("source should be selected");
+        };
+        let BackupResponse::Prepared { token, .. } = prepare_restore(
+            &state, &mut commands, PrepareRestoreRequest { source_token },
+        ) else { panic!("source should be prepared"); };
+        state.with_write(|connection| {
+            connection.execute("INSERT INTO categories (name) VALUES (?1)", ["old-only"])
+                .map(|_| ()).map_err(|_| "persistence_failure".into())
+        }).unwrap();
+        (root, state, commands, token)
+    }
+
+    fn t3a_categories(state: &DatabaseState) -> i64 {
+        state.with_read(|connection| {
+            connection.query_row("SELECT COUNT(*) FROM categories", [], |row| row.get(0))
+                .map_err(|_| "persistence_failure".into())
+        }).unwrap()
+    }
+
+    #[test]
+    fn t3a_confirm_clean_success_serializes_explicit_certainty_and_admission() {
+        let (_root, state, mut commands, token) = t3a_prepared_fixture();
+        let response = confirm_restore(&state, &mut commands, ConfirmRestoreRequest { token, confirmed: true });
+        assert_eq!(t3a_categories(&state), 0);
+        assert_eq!(state.with_write(|_| Ok(())), Ok(()));
+        assert_eq!(serde_json::to_value(response).unwrap(), serde_json::json!({
+            "kind": "restored", "restore_certainty": "restored",
+            "write_admission": "allowed", "cleanup_warning": false,
+        }));
+    }
+
+    #[test]
+    fn t3a_confirm_stage_cleanup_failure_preserves_restored_certainty_and_evidence() {
+        let (root, state, mut commands, token) = t3a_prepared_fixture();
+        let stage = commands.pending[&token].stage.clone();
+        let mut cleanup = RecordingCleanup { fail: Some("remove"), ..Default::default() };
+        let response = confirm_restore_using(
+            &state, &mut commands, ConfirmRestoreRequest { token, confirmed: true }, &mut cleanup,
+        );
+        let evidence = stage.with_file_name(format!(".{}.cleanup-needed", stage.file_name().unwrap().to_string_lossy()));
+        assert!(evidence.is_file());
+        assert_eq!(fs::read(&evidence).unwrap(), b"restore-stage-cleanup-required\n");
+        assert_eq!(t3a_categories(&state), 0);
+        let mut calls = 0;
+        let write = state.with_write(|_| { calls += 1; Ok(()) });
+        assert_eq!(BackupStore::new(&root.0).read_restore_state(), Ok(None));
+        assert_eq!(serde_json::to_value(response).unwrap(), serde_json::json!({
+            "kind": "restored", "restore_certainty": "restored",
+            "write_admission": "blocked", "cleanup_warning": true,
+        }));
+        assert_eq!((write, calls, t3a_categories(&state)), (Err("database_unavailable".into()), 0, 0));
+    }
+
+    #[test]
+    fn t3a_confirm_refusal_is_unchanged_and_preserves_existing_admission() {
+        let (_root, state, mut commands, token) = t3a_prepared_fixture();
+        let before = t3a_categories(&state);
+        let response = confirm_restore(&state, &mut commands, ConfirmRestoreRequest { token, confirmed: false });
+        let mut calls = 0;
+        assert_eq!(state.with_write(|_| { calls += 1; Ok(()) }), Ok(()));
+        assert_eq!((calls, t3a_categories(&state)), (1, before));
+        assert_eq!(serde_json::to_value(response).unwrap(), serde_json::json!({
+            "kind": "error", "code": "confirmation_required", "message": "Restore confirmation is required.",
+            "restore_certainty": "unchanged", "write_admission": "allowed", "cleanup_warning": false,
+        }));
+    }
+
+    #[test]
+    fn t3a_confirm_ambiguous_recovery_serializes_unknown_and_blocks_writes() {
+        let (root, state, mut commands, token) = t3a_prepared_fixture();
+        // Simulate a candidate that becomes invalid after preparation but passes the
+        // command's checksum gate, exercising the install/recovery boundary deterministically.
+        let pending = commands.pending.get_mut(&token).unwrap();
+        fs::write(&pending.stage, b"invalid candidate after preparation").unwrap();
+        pending.sha256 = checksum(&pending.stage).unwrap();
+        let response = confirm_restore(&state, &mut commands, ConfirmRestoreRequest { token, confirmed: true });
+        assert_eq!(t3a_categories(&state), 1);
+        let mut calls = 0;
+        assert_eq!(state.with_write(|_| { calls += 1; Ok(()) }), Err("database_unavailable".into()));
+        assert_eq!(calls, 0);
+        assert_eq!(BackupStore::new(&root.0).read_restore_state(), Ok(Some(crate::RestoreState::CandidateInstalled)));
+        assert_eq!(serde_json::to_value(response).unwrap(), serde_json::json!({
+            "kind": "error", "code": "restore_failed", "message": "The restore could not be completed.",
+            "restore_certainty": "unknown", "write_admission": "blocked", "cleanup_warning": false,
+        }));
     }
 
     #[test]
