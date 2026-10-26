@@ -141,7 +141,7 @@ test("a late accepted sale refreshes an already mounted History list without cha
   assert.equal((screen.getByLabelText("Desde") as HTMLInputElement).value, "2020-01-01");
 });
 
-test("checkout captures the clicked button before session opening; navigation re-entry stays static", async (t) => {
+test("T4: checkout captures the clicked button before session opening; navigation re-entry stays static", async (t) => {
   mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
   const session = createSaleSession(() => UUID);
   const completions: Array<() => void> = [];
@@ -155,25 +155,30 @@ test("checkout captures the clicked button before session opening; navigation re
   trigger.style.borderColor = "rgb(40, 50, 60)";
   trigger.style.boxShadow = "rgb(70, 80, 90) 0px 2px 4px";
   const nativeComputedStyle = window.getComputedStyle.bind(window);
-  let surfacesCaptured = 0;
+  let phase: "opening" | "closing" | "retirement" | "reopening" = "opening";
+  const surfaces: Array<{ phase: string; checkoutOpen: boolean; opacity: string }> = [];
+  const measurements: Array<{ phase: string; checkoutOpen: boolean; opacity: string; rect: number[] }> = [];
   t.mock.method(window, "getComputedStyle", (element: Element, pseudo?: string | null) => {
-    if (element === trigger) {
-      assert.equal(session.getSnapshot().checkoutOpen, false, "surface capture precedes source hiding");
-      assert.notEqual(nativeComputedStyle(trigger).opacity, "0");
-      surfacesCaptured++;
-    }
-    return nativeComputedStyle(element, pseudo);
+    const computed = nativeComputedStyle(element, pseudo);
+    if (element === trigger) surfaces.push({ phase, checkoutOpen: session.getSnapshot().checkoutOpen, opacity: computed.opacity });
+    return computed;
   });
-  let captured = 0;
   trigger.getBoundingClientRect = () => {
-    assert.equal(session.getSnapshot().checkoutOpen, false);
-    captured++;
-    return { left: 1120, top: 710, width: 210, height: 48 } as DOMRect;
+    const rect = { left: 1120, top: 710, width: 210, height: 48 };
+    measurements.push({ phase, checkoutOpen: session.getSnapshot().checkoutOpen, opacity: nativeComputedStyle(trigger).opacity,
+      rect: [rect.left, rect.top, rect.width, rect.height] });
+    return rect as DOMRect;
   };
   fireEvent.click(trigger);
   const frame = screen.getByRole("dialog", { name: "Revisar y cobrar" });
-  assert.equal(captured, 1);
-  assert.equal(surfacesCaptured, 1);
+  assert.equal(measurements.length, 1);
+  assert.equal(surfaces.length, 1);
+  assert.deepEqual(measurements[0].rect, [1120, 710, 210, 48]);
+  for (const sample of [measurements[0], surfaces[0]]) {
+    assert.equal(sample.phase, "opening");
+    assert.equal(sample.checkoutOpen, false, "capture precedes opening the checkout");
+    assert.notEqual(sample.opacity, "0", "capture precedes source hiding");
+  }
   assert.equal(nativeComputedStyle(trigger).opacity, "0");
   assert.notEqual(nativeComputedStyle(trigger).display, "none");
   assert.notEqual(nativeComputedStyle(trigger).visibility, "hidden");
@@ -186,13 +191,33 @@ test("checkout captures the clicked button before session opening; navigation re
   assert.equal(document.activeElement, frame);
   act(() => completions[0]());
   assert.equal(nativeComputedStyle(trigger).opacity, "0", "source stays hidden after tween completion");
+  phase = "closing";
   fireEvent.keyDown(frame, { key: "Escape" });
-  assert.equal(screen.queryByRole("dialog"), null);
-  assert.equal(document.activeElement, trigger);
+  assert.equal(measurements.length, 2, "reverse samples the actual source once");
+  assert.equal(surfaces.length, 2);
+  assert.deepEqual(measurements[1], { phase: "closing", checkoutOpen: false, opacity: "0", rect: [1120, 710, 210, 48] });
+  assert.deepEqual(surfaces[1], { phase: "closing", checkoutOpen: false, opacity: "0" });
+  assert.equal(completions.length, 2, "opening and retained reverse each own one completion");
+  assert.equal(frame.isConnected, true, "ready Escape retains the actual frame");
+  assert.equal(frame.hasAttribute("data-ui-checkout-closing"), true);
+  assert.equal(nativeComputedStyle(trigger).opacity, "0");
+  phase = "retirement";
+  act(() => completions.at(-1)!());
+  assert.equal(!!screen.queryByRole("dialog"), false);
+  assert.ok(document.activeElement === trigger);
   assert.notEqual(nativeComputedStyle(trigger).opacity, "0");
+  phase = "reopening";
   fireEvent.click(trigger);
-  assert.equal(captured, 2);
-  act(() => completions[0]());
+  assert.equal(measurements.length, 3);
+  const reopeningSurfaces = surfaces.filter((sample) => sample.phase === "reopening");
+  assert.equal(reopeningSurfaces.length, 1, "reopening captures the source surface once, excluding retirement focus checks");
+  assert.deepEqual(measurements[2].rect, [1120, 710, 210, 48]);
+  for (const sample of [measurements[2], reopeningSurfaces[0]]) {
+    assert.equal(sample.phase, "reopening");
+    assert.equal(sample.checkoutOpen, false);
+    assert.notEqual(sample.opacity, "0");
+  }
+  act(() => completions[0]()); // The old opening completion must not reveal the new epoch.
   assert.equal(screen.getByRole("dialog").hasAttribute("data-ui-checkout-opening"), true);
   view.unmount();
   render(createElement(SaleScreen, { session }));
@@ -203,8 +228,14 @@ test("checkout captures the clicked button before session opening; navigation re
   assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Precio de venta (Bs)" }));
 });
 
-test("Volver cancels business immediately but retains one actual frame and focus until presentation retirement", async (t) => {
-  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
+for (const route of ["Volver", "Escape", "backdrop"] as const) {
+ test(`T4: ${route} preserves the real draft across retained close and reopen`, async (t) => {
+  const financialCommands: string[] = [];
+  mockIPC((command) => {
+    if (command === "browse_products_command") return browse([products[0]]);
+    financialCommands.push(command);
+    return undefined;
+  });
   const session = createSaleSession(() => UUID);
   const completions: Array<() => void> = [];
   t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
@@ -215,9 +246,21 @@ test("Volver cancels business immediately but retains one actual frame and focus
   trigger.focus(); fireEvent.click(trigger);
   act(() => completions[0]());
   const frame = screen.getByRole("dialog");
-  fireEvent.change(screen.getByRole("textbox", { name: "Efectivo recibido" }), { target: { value: "100" } });
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Cantidad de Filtro aceite" }), { target: { value: "2" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), { target: { value: "90" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Efectivo recibido" }), { target: { value: "200" } });
+  const draftValues = () => [
+    (screen.getByRole("spinbutton", { name: "Cantidad de Filtro aceite" }) as HTMLInputElement).value,
+    (screen.getByRole("textbox", { name: "Precio de venta (Bs)" }) as HTMLInputElement).value,
+    (screen.getByRole("textbox", { name: "Efectivo recibido" }) as HTMLInputElement).value,
+  ];
+  const valuesBefore = draftValues();
   const before = session.getSnapshot();
-  fireEvent.click(screen.getByRole("button", { name: "Volver" }));
+  fireEvent.mouseDown(screen.getByRole("textbox", { name: "Efectivo recibido" }));
+  assert.equal(session.getSnapshot().checkoutOpen, true, "content is not the backdrop");
+  if (route === "Volver") fireEvent.click(screen.getByRole("button", { name: "Volver" }));
+  else if (route === "Escape") fireEvent.keyDown(frame, { key: "Escape" });
+  else fireEvent.mouseDown(frame.parentElement!);
   assert.equal(session.getSnapshot().checkoutOpen, false);
   assert.deepEqual(session.getSnapshot().lines, before.lines);
   assert.deepEqual(session.getSnapshot().payment, before.payment);
@@ -227,6 +270,12 @@ test("Volver cancels business immediately but retains one actual frame and focus
   assert.equal((trigger as HTMLButtonElement).disabled, false, "closing preserves the real source's enabled surface");
   assert.equal(document.querySelector('[data-ui-sale-layout]')?.hasAttribute("inert"), true);
   assert.equal(getComputedStyle(trigger).opacity, "0");
+  assert.equal(trigger.isConnected, true);
+  assert.notEqual(getComputedStyle(trigger).display, "none");
+  assert.notEqual(getComputedStyle(trigger).visibility, "hidden");
+  assert.equal(getComputedStyle(trigger).pointerEvents, "none");
+  assert.notEqual(getComputedStyle(frame).display, "none");
+  assert.equal(completions.length, 2, "one opening and one reverse on the actual frame");
   assert.ok(document.activeElement === frame, "DialogFrame owns closing focus");
   assert.equal(frame.hasAttribute("data-ui-checkout-closing"), true);
   for (const shiftKey of [true, false]) { fireEvent.keyDown(frame, { key: "Tab", shiftKey }); assert.ok(document.activeElement === frame, "closing Tab stays on frame"); }
@@ -236,14 +285,22 @@ test("Volver cancels business immediately but retains one actual frame and focus
   assert.equal(session.getSnapshot().checkoutOpen, false);
   assert.equal(session.getSnapshot().confirmation, before.confirmation);
   act(() => completions.at(-1)!());
-  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(!!screen.queryByRole("dialog"), false);
   assert.equal(trigger.getAttribute("aria-expanded"), "false");
   assert.notEqual(getComputedStyle(trigger).opacity, "0");
   assert.ok(document.activeElement === trigger, "retirement restores invoker focus");
   assert.deepEqual(session.getSnapshot().payment, before.payment);
-});
+  assert.deepEqual(financialCommands, []);
+  fireEvent.click(trigger);
+  act(() => completions.at(-1)!());
+  assert.deepEqual(draftValues(), valuesBefore);
+  assert.deepEqual(session.getSnapshot().lines, before.lines);
+  assert.deepEqual(session.getSnapshot().payment, before.payment);
+  assert.deepEqual(financialCommands, []);
+ });
+}
 
-test("discard empties the session synchronously but contracts the pre-reset live frame to the disabled real trigger", async (t) => {
+test("T4: discard empties the session synchronously but contracts the pre-reset live frame to the disabled real trigger", async (t) => {
   mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
   const session = createSaleSession(() => UUID);
   const tweens: gsap.TweenVars[] = [];
@@ -292,7 +349,7 @@ test("discard empties the session synchronously but contracts the pre-reset live
   assert.deepEqual([restored, triggerFocus], [1, 0]);
 });
 
-test("nested checkout detail refuses Volver without cancelling or starting reverse presentation", async (t) => {
+test("T4: nested checkout detail refuses Volver without cancelling or starting reverse presentation", async (t) => {
   mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
   const session = createSaleSession(() => UUID);
   const completions: Array<() => void> = [];
@@ -305,6 +362,14 @@ test("nested checkout detail refuses Volver without cancelling or starting rever
   const checkout = screen.getByRole("dialog");
   fireEvent.click(within(checkout).getByRole("button", { name: "Ver detalles" }));
   const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
+  const beforeBackdrop = session.getSnapshot();
+  fireEvent.mouseDown(checkout.parentElement!);
+  assert.equal(session.getSnapshot().checkoutOpen, true, "nested owner blocks the checkout backdrop");
+  assert.deepEqual(session.getSnapshot().lines, beforeBackdrop.lines);
+  assert.deepEqual(session.getSnapshot().payment, beforeBackdrop.payment);
+  assert.equal(checkout.hasAttribute("data-ui-checkout-closing"), false);
+  assert.equal(completions.length, 1);
+  assert.ok(detail.contains(document.activeElement));
   fireEvent.click(within(checkout).getByRole("button", { name: "Volver" }));
   assert.equal(session.getSnapshot().checkoutOpen, true);
   assert.equal(checkout.hasAttribute("data-ui-checkout-closing"), false);
@@ -467,7 +532,7 @@ test("operational sale rejection stays notification-only after Sales remount", a
   assert.equal(session.getSnapshot().lines[0].quantity, 1);
 });
 
-test("deferred persistence replaces checkout with one non-dismissible receipt over Sales", async () => {
+test("T4: deferred persistence replaces checkout with one non-dismissible receipt over Sales", async () => {
   installUuid(UUID);
   const response = deferred<unknown>();
   let calls = 0;
@@ -1355,7 +1420,7 @@ test("browse zoom loads on demand and ignores closed generations, failures and u
   assert.equal(screen.queryByRole("dialog"), null);
 });
 
-test("preserves Sales checkout dismissal, focus return, and backdrop no-op", async () => {
+test("preserves Sales checkout dismissal and focus return for backdrop, Escape and Volver", async () => {
   mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : Promise.reject(new Error("unexpected command")));
   render(createElement(SaleScreen));
   const u = await addFirst();
@@ -1364,14 +1429,18 @@ test("preserves Sales checkout dismissal, focus return, and backdrop no-op", asy
   assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Precio de venta (Bs)" }));
 
   await u.click(dialog.parentElement!);
-  assert.ok(screen.getByRole("dialog", { name: "Revisar y cobrar" }));
+  assert.equal(!!screen.queryByRole("dialog", { name: "Revisar y cobrar" }), false);
+  assert.ok(document.activeElement === trigger);
+
+  await u.click(trigger);
   await u.keyboard("{Escape}");
-  assert.equal(screen.queryByRole("dialog", { name: "Revisar y cobrar" }), null);
-  assert.equal(document.activeElement, trigger);
+  assert.equal(!!screen.queryByRole("dialog", { name: "Revisar y cobrar" }), false);
+  assert.ok(document.activeElement === trigger);
 
   await u.click(trigger);
   await u.click(screen.getByRole("button", { name: "Volver" }));
-  assert.equal(document.activeElement, trigger);
+  assert.equal(!!screen.queryByRole("dialog", { name: "Revisar y cobrar" }), false);
+  assert.ok(document.activeElement === trigger);
 });
 
 test("disables empty-cart confirmation without invoking the native contract", async () => {

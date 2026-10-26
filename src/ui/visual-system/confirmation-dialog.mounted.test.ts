@@ -374,7 +374,7 @@ test("content seam rejects blank titles and absent or blank descriptions", () =>
   }
 });
 
-test("omitting the History seam preserves both default families' focus, markers and backdrop policy", () => {
+test("T4: omitting the History seam preserves both default families' focus, markers and backdrop policy", () => {
   for (const family of [dialog, formDialog]) {
     let cancels = 0;
     const view = render(family({ historyPresentation: undefined, onCancel: () => { cancels++; } }));

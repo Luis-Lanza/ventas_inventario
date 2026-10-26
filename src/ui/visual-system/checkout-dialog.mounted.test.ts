@@ -107,8 +107,8 @@ for (const mode of ["initial", "changed", "invalid", "exception"] as const) {
   });
 }
 
-for (const reason of ["complete", "denied", "pending", "Escape", "initial-reduce", "mid-reduce", "replacement", "reopen", "unmount"] as const) {
-  test(`Volver presentation ${reason} respects cancellation, ownership and epoch isolation`, (t) => {
+for (const reason of ["complete", "denied", "pending", "Escape", "backdrop", "initial-reduce", "mid-reduce", "replacement", "reopen", "unmount"] as const) {
+  test(`T4: Volver presentation ${reason} respects cancellation, ownership and epoch isolation`, (t) => {
     const trigger = opener();
     t.after(() => trigger.remove());
     let matches = reason === "initial-reduce";
@@ -143,10 +143,23 @@ for (const reason of ["complete", "denied", "pending", "Escape", "initial-reduce
     if (!matches) act(() => completions.at(-1)!());
     const frame = screen.getByRole("dialog");
     const price = screen.getByRole("textbox", { name: "Precio" });
-    fireEvent.click(frame.parentElement!); // Backdrop is inert in every phase.
-    assert.equal(cancels, 0);
+    fireEvent.mouseDown(price); // Bubbling from content is never backdrop dismissal.
+    assert.deepEqual([cancels, confirms], [0, 0]);
+    if (reason === "pending") {
+      fireEvent.keyDown(frame, { key: "Escape" });
+      fireEvent.mouseDown(frame.parentElement!);
+    }
     if (reason === "Escape") fireEvent.keyDown(frame, { key: "Escape" });
-    else fireEvent.click(screen.getByRole("button", { name: "Volver" }));
+    else if (reason === "backdrop") fireEvent.mouseDown(frame.parentElement!);
+    else if (reason === "complete") {
+      const confirm = screen.getByRole("button", { name: "Confirmar venta" });
+      const back = screen.getByRole("button", { name: "Volver" });
+      act(() => {
+        fireEvent.click(back);
+        fireEvent.click(confirm); // Same batch: accepted close must lock before a render commits.
+      });
+      assert.deepEqual([cancels, confirms], [1, 0], "accepted close synchronously blocks confirmation");
+    } else fireEvent.click(screen.getByRole("button", { name: "Volver" }));
     if (reason === "denied" || reason === "pending") {
       assert.equal(cancels, reason === "denied" ? 1 : 0);
       assert.ok(screen.getByRole("dialog") === frame);
@@ -156,13 +169,17 @@ for (const reason of ["complete", "denied", "pending", "Escape", "initial-reduce
       return;
     }
     assert.equal(cancels, 1);
-    if (reason === "initial-reduce" || reason === "Escape") {
-      assert.equal(screen.queryByRole("dialog"), null);
-      assert.equal(completions.length, reason === "Escape" ? 1 : 0);
+    if (reason === "initial-reduce") {
+      assert.equal(!!screen.queryByRole("dialog"), false);
+      assert.equal(completions.length, 0);
       assert.equal(restored, 1);
       return;
     }
+    assert.equal(frame.isConnected, true, "accepted dismissal retains the live frame until reverse completion");
     assert.ok(screen.getByRole("dialog") === frame);
+    assert.equal(frame.hasAttribute("data-ui-checkout-closing"), true);
+    assert.equal(completions.length, 2);
+    assert.deepEqual(reports, [true]);
     assert.equal(getComputedStyle(price).visibility, "hidden");
     assert.notEqual(getComputedStyle(price).display, "none");
     assert.equal(price.style.transform, "");
@@ -198,7 +215,7 @@ for (const reason of ["complete", "denied", "pending", "Escape", "initial-reduce
     } else if (reason === "unmount") rendered.unmount();
     else if (reason === "mid-reduce") act(() => { matches = true; media.dispatchEvent(new Event("change")); });
     else act(() => oldCompletion());
-    assert.equal(screen.queryByRole("dialog"), null);
+    assert.equal(!!screen.queryByRole("dialog"), false);
     const focusAtRetirement = document.activeElement;
     act(() => { oldCompletion(); matches = false; media.dispatchEvent(new Event("change")); });
     assert.equal(cancels, 1);
@@ -209,7 +226,7 @@ for (const reason of ["complete", "denied", "pending", "Escape", "initial-reduce
 }
 
 for (const reason of ["accepted", "rejected", "pending", "initial-reduce", "mid-reduce", "source-gone", "unmount", "replacement", "inert-fallback", "disabled-fallback", "hidden-fallback", "detached-fallback"] as const) {
-  test(`inner discard ${reason} uses the retained lifecycle without delaying the action`, (t) => {
+  test(`T4: inner discard ${reason} uses the retained lifecycle without delaying the action`, (t) => {
     const trigger = opener(), search = document.createElement("input");
     document.body.append(search);
     t.after(() => { trigger.remove(); search.remove(); Reflect.deleteProperty(window, "matchMedia"); });
