@@ -4,20 +4,27 @@ import { captureCheckoutOpening, startCheckoutMotion, type CheckoutOpening } fro
 
 export type DialogDismissReason = "back" | "escape" | "backdrop";
 export type CloseAccepted = (action: () => boolean | void) => void;
+export type DialogMotion = (
+  frame: HTMLElement, opening: CheckoutOpening, complete: () => void,
+  direction: "open" | "close", closingFrame?: CheckoutOpening,
+) => ReturnType<typeof startCheckoutMotion>;
 type DialogLifecycleOptions = {
   open: boolean;
   opening?: CheckoutOpening | null;
   pending?: boolean;
   retire?: boolean;
+  motion?: DialogMotion;
   onDismiss: (reason: DialogDismissReason) => boolean | void;
   onClosingChange?: (closing: boolean) => void;
 };
 
 /** Owns retained presentation, never the action's business state or focus policy. */
-export function useDialogLifecycle({ open, opening, pending = false, retire = false, onDismiss, onClosingChange }: DialogLifecycleOptions) {
+export function useDialogLifecycle({ open, opening, pending = false, retire = false, onDismiss, onClosingChange, motion: startMotion = startCheckoutMotion }: DialogLifecycleOptions) {
   const frame = useRef<HTMLDivElement | null>(null);
   const frameRef = useCallback((node: HTMLDivElement | null) => { frame.current = node; }, []);
   const motion = useRef<ReturnType<typeof startCheckoutMotion> | null>(null);
+  const motionFactory = useRef(startMotion);
+  motionFactory.current = startMotion;
   const retainedOpening = useRef<CheckoutOpening | null>(null);
   if (open) retainedOpening.current = opening ?? null;
   const [exit, setExit] = useState<{ source: CheckoutOpening; frame?: CheckoutOpening } | null>(null);
@@ -52,7 +59,7 @@ export function useDialogLifecycle({ open, opening, pending = false, retire = fa
     const node = frame.current;
     const source = closing ? exit?.source : opening;
     if (retire || !node || !source || (!closing && (!open || finished === source.id))) return;
-    const controller = startCheckoutMotion(node, source, () => {
+    const controller = motionFactory.current(node, source, () => {
       if (frame.current !== node) return;
       if (closing) {
         reportClosing(false);

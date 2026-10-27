@@ -5,11 +5,12 @@ import type { DialogDismissReason } from "./dialog-lifecycle.ts";
 
 export type DialogPurpose = "restore" | "cancellation" | "routine";
 export type DialogLayout = "default" | "checkout" | "inventory";
-export type InventoryPresentation = { restoreFocusFallback: () => HTMLElement | null; frameRef?: RefCallback<HTMLDivElement>; ready?: boolean; closing?: boolean };
+export type InventoryPresentation = { restoreFocusFallback: () => HTMLElement | null; frameRef?: RefCallback<HTMLDivElement>; ready?: boolean; closing?: boolean; onDismiss?: (reason: DialogDismissReason) => void };
 export type HistoryPresentation = {
   frameRef?: RefCallback<HTMLDivElement>; ready?: boolean; closing?: boolean;
   restoreFocusFallback: () => HTMLElement | null;
   focusFirstControl?: boolean; stage: string;
+  onDismiss?: (reason: DialogDismissReason) => void;
 };
 export type DestructivePurpose = Exclude<DialogPurpose, "routine">;
 export type CheckoutPresentation = { frameRef: RefCallback<HTMLDivElement>; ready: boolean; closing?: boolean; onBack?: () => void; onDismiss?: (reason: DialogDismissReason) => void; restoreFocusFallback?: () => HTMLElement | null };
@@ -93,7 +94,7 @@ type DialogFrameProps = {
   catalogLocationPresentation?: InventoryPresentation & { isSourceCurrent: () => boolean };
   onCancel: () => void;
   children?: ReactNode;
-  actions: ReactNode | ((requestBack: () => void) => ReactNode);
+  actions: ReactNode | ((requestBack?: () => void) => ReactNode);
 };
 
 function DialogFrame({
@@ -113,8 +114,8 @@ function DialogFrame({
   const restoration = purpose === "restore" ? restorePresentation : undefined;
   const onboarding = kind === "form" ? onboardingPresentation : undefined;
   const presentation = onboarding ?? restoration ?? history ?? location ?? archive ?? product ?? category ?? (purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog" ? checkoutPresentation : inventory);
-  // Only an actually selected Checkout presentation opts into unified dismissal.
-  const dismissal = presentation === checkoutPresentation ? checkoutPresentation?.onDismiss : undefined;
+  // Only the selected presentation can opt into unified dismissal.
+  const dismissal = presentation?.onDismiss;
   const dismissRef = useRef(dismissal);
   dismissRef.current = dismissal;
   const ready = presentation?.ready ?? true;
@@ -290,12 +291,12 @@ function DialogFrame({
       title),
     createElement("p", { id: descriptionId }, description),
     onboarding ? createElement("div", { "data-ui-onboarding-category-body": true }, children) : restoration ? createElement("div", { "data-ui-restore-body": true }, restoration.closing ? null : children) : history ? createElement("div", { "data-ui-history-correction-body": true }, children) : product ? createElement("div", { "data-ui-catalog-product-body": true }, children) : category ? createElement("div", { "data-ui-catalog-category-body": true }, children) : inventory ? createElement("div", { "data-ui-inventory-dialog-body": true }, children) : children,
-    typeof actions === "function" ? actions(() => {
+    typeof actions === "function" ? actions(dismissal ? () => {
       const container = dialogRef.current;
       if (!pendingRef.current && container && currentDialog(container.ownerDocument) === container) {
         dismissRef.current?.("back");
       }
-    }) : actions));
+    } : undefined) : actions));
 }
 
 export function ConfirmationDialog({
@@ -309,14 +310,13 @@ export function ConfirmationDialog({
   const onBack = purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog"
     ? checkoutPresentation?.onBack ?? onCancel : onCancel;
   const inventoryClosing = purpose === "routine" && layout === "inventory" && dialogDataAttribute !== "catalog-edit-dialog" && inventoryPresentation?.closing;
-  const actions = (back: () => void) => createElement("div", { "data-ui-dialog-actions": true },
+  const actions = (back: () => void = onBack) => createElement("div", { "data-ui-dialog-actions": true },
     createElement(Action, { variant: "secondary", disabled: pending || inventoryClosing, onClick: () => { if (!pending && !inventoryClosing) back(); } }, cancelLabel),
     createElement(Action, { variant: purpose === "routine" ? "primary" : "destructive", pending, pendingLabel, disabled: confirmDisabled, onClick: () => { if (!pending && !confirmDisabled) onConfirm(); } }, confirmLabel));
-  const unifiedDismissal = purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog" && checkoutPresentation?.onDismiss;
   return createElement(DialogFrame, {
     open, purpose, layout, title, description, pending, initialFocusRef, invokerRef, restorePresentation, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, historyPresentation, dialogId, dialogDataAttribute,
     kind: "confirmation", onCancel, children,
-    actions: unifiedDismissal ? actions : actions(onBack),
+    actions,
   });
 }
 
@@ -354,7 +354,7 @@ export function FormDialog({
   }
   return createElement(DialogFrame, {
     open, title, description, pending, initialFocusRef, invokerRef, historyPresentation, onboardingPresentation, kind: "form", focusFirstControl: true, onCancel, children,
-    actions: createElement("div", { "data-ui-dialog-actions": true },
-      createElement(Action, { variant: "secondary", disabled: pending, onClick: () => { if (!pending) onCancel(); } }, closeLabel)),
+    actions: (requestBack = onCancel) => createElement("div", { "data-ui-dialog-actions": true },
+      createElement(Action, { variant: "secondary", disabled: pending, onClick: () => { if (!pending) requestBack(); } }, closeLabel)),
   });
 }

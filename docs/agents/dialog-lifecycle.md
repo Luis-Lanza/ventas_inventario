@@ -1,6 +1,6 @@
-# Checkout retained dismissal
+# Shared retained dismissal
 
-Checkout uses `useDialogLifecycle` to keep its actual frame alive while an accepted, ready dismissal reverses to the source button. This T4 pilot supplies a shared presentation seam; other dialog families and S7 migrations remain pending in T5.
+`useDialogLifecycle` keeps the actual frame alive while an accepted, ready dismissal reverses to the source button. Checkout remains the production pilot; T5a adds optional adapters for later families, without migrating those families or completing S7.
 
 ## Dismissal routes
 
@@ -23,7 +23,13 @@ Opening Escape preserves the existing compatibility behavior. The controlled cal
 
 `checkout-motion.ts` remains the only animation driver. Its physical frame/source measurements, style-priority restoration, cancellation, reduced-motion handling and deadline fallback are reused unchanged.
 
-`DialogFrame` remains the sole focus, Tab, Escape and top-dialog authority. Only Checkout opts into the typed dismissal adapter; backdrop dismissal requires the backdrop itself as the event target, no pending operation, and current top-dialog ownership. Volver also checks that ownership. The existing `onBack` seam remains available to callers without the adapter. Non-opted confirmation backdrop policies and receipt Nueva venta-only dismissal are unchanged.
+`DialogFrame` remains the sole focus, Tab, Escape and top-dialog authority. An optional typed `onDismiss(reason)` on the **actually selected** confirmation/form presentation opts into unified dismissal. Selection priority, markers, bodies and focus policies are unchanged; merely supplying an unselected presentation does not opt in. Backdrop dismissal requires the backdrop itself as the event target, no pending operation, and current top-dialog ownership before preventing default. Footer dismissal also checks pending/top ownership. Without the adapter, existing `onCancel`/Checkout `onBack` and family backdrop policies remain unchanged; receipts still allow only Nueva venta.
+
+## Optional family motion adapter
+
+Pass `motion(frame, opening, complete, direction, closingFrame)` to `useDialogLifecycle` to adapt a family's existing motion wrapper. It returns the existing controller's `finish()` and `dispose()` methods; omitting it uses `startCheckoutMotion` unchanged. An adapter may delegate to that driver with its sixth structure argument for family body/actions selectors and preserve family eligibility or stage rules.
+
+The latest adapter is used when a lifecycle epoch starts. Changing only its callback identity does not restart an active epoch; its original controller still owns disposal and stale-completion invalidation. The fifth argument is the synchronous pre-action frame snapshot for reverse motion. Adapters must not acquire focus, dismissal, business or asynchronous completion ownership. Callers still use the live `isDismissLocked()` gate before confirming, rather than relying on a rendered closing flag.
 
 CSS still owns scroll locking and source hiding. The real source stays connected, transparent and non-interactive without removing its geometry through the retained close. Focus restoration belongs to `DialogFrame`, not animation completion callbacks.
 
