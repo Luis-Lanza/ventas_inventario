@@ -1,6 +1,6 @@
 # Shared retained dismissal
 
-`useDialogLifecycle` keeps the actual frame alive while an accepted, ready dismissal reverses to the source button. Checkout remains the production pilot; T5a adds optional adapters for later families, without migrating those families or completing S7.
+`useDialogLifecycle` keeps the actual frame alive while an accepted, ready dismissal reverses to the source button. Checkout and Inventory use the shared lifecycle. Optional adapters preserve family-specific motion and caller policies; the remaining families still need migration, so S7 is not complete.
 
 ## Dismissal routes
 
@@ -31,10 +31,14 @@ Pass `motion(frame, opening, complete, direction, closingFrame)` to `useDialogLi
 
 The latest adapter is used when a lifecycle epoch starts. Changing only its callback identity does not restart an active epoch; its original controller still owns disposal and stale-completion invalidation. The fifth argument is the synchronous pre-action frame snapshot for reverse motion. Adapters must not acquire focus, dismissal, business or asynchronous completion ownership. Callers still use the live `isDismissLocked()` gate before confirming, rather than relying on a rendered closing flag.
 
-CSS still owns scroll locking and source hiding. The real source stays connected, transparent and non-interactive without removing its geometry through the retained close. Focus restoration belongs to `DialogFrame`, not animation completion callbacks.
+CSS owns scroll locking. Checkout hides its source through CSS; Inventory owns a scoped inline opacity/pointer-events lease and restores the original values and priorities. The real source stays connected and measurable through retained close. Focus restoration belongs to `DialogFrame`, not animation completion callbacks.
+
+## Inventory adapter
+
+Inventory preserves its live-origin eligibility and mode-height driver. Its existing void cancellation callback is adapted locally to accept retention; other families' void defaults are unchanged. The screen still clears credentials and business drafts synchronously, retaining only its sanitized presentation. The background inert lease follows `presented`, not the wrapper's mount lifetime, so it is released before Frame restores focus, including immediate opening Escape and invalid-origin fallback.
 
 ## Retirement and verification
 
 Disposal uses the existing driver's invalidation-before-style-cleanup ordering, so stale completions cannot replay actions. Reopening/replacement/unmount invalidate the prior presentation. Forced retirement bypasses retention; confirmed App restore and receipt replacement must never wait for motion or dispatch dismissal as a side effect.
 
-Mounted tests use isolated command fixtures and controlled GSAP completions. Their CSS/connected-node assertions and fixed metrics are JSDOM evidence, not browser-pixel, Windows or native-runtime approval. Review Checkout first, then the optional frame adapter and its default-policy/nested-owner preservation cases before expanding this seam to T5.
+Mounted tests use isolated command fixtures and controlled GSAP completions. Their CSS/connected-node assertions and fixed metrics are JSDOM evidence, not browser-pixel, Windows or native-runtime approval. Review Checkout and the optional adapter first, then Inventory's source ownership, immediate opening Escape, retained ready routes, mode-height preservation and pending-save/focus fallback cases. This does not approve browser pixels or complete the remaining T5 families.

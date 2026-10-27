@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
 import { captureInventoryOpening, startInventoryModeMotion, startInventoryMotion } from "./inventory-operation-motion.ts";
+import { useDialogLifecycle, type DialogDismissReason } from "../visual-system/dialog-lifecycle.ts";
 import type { CheckoutOpening } from "../visual-system/checkout-motion.ts";
 import { projectedBalance, stockEntryPrices, type InventoryAction, type InventoryState } from "./inventory-flow.ts";
 
@@ -41,24 +42,57 @@ export type InventoryOperationDialogProps = {
   onRetired?: () => void;
 };
 
+const sourceOwners = new WeakMap<HTMLElement, symbol>();
+
 /** Business draft stays screen-owned; retiring presentation must never replay a reset/save. */
 export function InventoryOperationDialog({ state, dispatch, password, onPasswordChange, onClose, onConfirm, invokerRef, restoreFocusFallback, ordinaryFailure, opening, closing = false, onRetired }: InventoryOperationDialogProps) {
   const first = useRef<HTMLInputElement>(null);
   const [frame, setFrame] = useState<HTMLDivElement | null>(null);
   const frameRef = useCallback((node: HTMLDivElement | null) => setFrame(node), []);
-  const [ready, setReady] = useState(!opening);
   const [modeBusy, setModeBusy] = useState(false);
   const modeBefore = useRef<CheckoutOpening | null>(null);
-  const closingBefore = useRef<CheckoutOpening | null>(null);
   const retire = useRef(onRetired); retire.current = onRetired;
-  const motion = useRef<ReturnType<typeof startInventoryMotion> | null>(null);
+  const motion = useRef<ReturnType<typeof startInventoryModeMotion> | null>(null);
+  const lifecycle = useDialogLifecycle({
+    open: !closing, opening, pending: state.confirmation === "pending", motion: startInventoryMotion,
+    onDismiss: () => {
+      if (state.confirmation === "pending" || closing) return false;
+      onClose();
+      // Inventory's existing void callback accepts retirement. Keep that policy
+      // local rather than changing the common lifecycle's void fallback.
+      return true;
+    },
+  });
+  const attachFrame = useCallback((node: HTMLDivElement | null) => {
+    lifecycle.frameRef(node); frameRef(node);
+  }, [lifecycle.frameRef, frameRef]);
+  const retired = useRef(false);
   useLayoutEffect(() => {
-    if (!frame || !opening) { if (closing) retire.current?.(); return; }
-    setReady(false);
-    const driver = startInventoryMotion(frame, opening, () => { if (closing) retire.current?.(); else setReady(true); }, closing ? "close" : "open", closingBefore.current ?? undefined);
-    motion.current = driver;
-    return () => { driver.dispose(); if (motion.current === driver) motion.current = null; };
-  }, [frame, opening, closing]);
+    if (!closing) retired.current = false;
+    else if (!lifecycle.presented && !retired.current) {
+      retired.current = true;
+      retire.current?.();
+    }
+  }, [closing, lifecycle.presented]);
+  useLayoutEffect(() => {
+    const source = opening?.trigger;
+    if (!lifecycle.presented || !source) return;
+    const epoch = Symbol();
+    const previous = ["opacity", "pointer-events"].map(property =>
+      [property, source.style.getPropertyValue(property), source.style.getPropertyPriority(property)] as const);
+    sourceOwners.set(source, epoch);
+    source.style.setProperty("opacity", "0", "important");
+    source.style.setProperty("pointer-events", "none", "important");
+    return () => {
+      if (sourceOwners.get(source) !== epoch) return;
+      sourceOwners.delete(source);
+      for (const [property, value, priority] of previous) {
+        if (value) source.style.setProperty(property, value, priority);
+        else source.style.removeProperty(property);
+      }
+    };
+  }, [opening?.trigger, opening?.id, lifecycle.presented]);
+  const ready = lifecycle.ready;
   useLayoutEffect(() => {
     const before = modeBefore.current; modeBefore.current = null;
     if (!frame || !before || closing || state.confirmation === "pending") return;
@@ -70,22 +104,24 @@ export function InventoryOperationDialog({ state, dispatch, password, onPassword
   useLayoutEffect(() => {
     if (state.confirmation === "pending") motion.current?.finish();
   }, [frame, state.confirmation]);
-  const close = () => {
-    if (state.confirmation === "pending" || closing) return;
+  const close = (reason: DialogDismissReason = "back") => {
+    if (state.confirmation === "pending" || closing || lifecycle.isDismissLocked()) return;
     motion.current?.finish();
-    if (frame) closingBefore.current = captureInventoryOpening(frame, opening?.id ?? 0);
-    onClose();
+    lifecycle.requestDismiss(reason);
   };
-  const confirm = () => { if (ready && !modeBusy && !closing) onConfirm(); };
+  const confirm = () => { if (ready && !modeBusy && !closing && !lifecycle.isDismissLocked()) onConfirm(); };
   useLayoutEffect(() => {
+    // Release the presentation's lock before the removed Frame restores focus,
+    // even when this wrapper remains mounted or onRetired is absent.
+    if (!lifecycle.presented) return;
     const backdrop = document.querySelector("[data-ui-inventory-dialog]")?.parentElement;
     const background = [...document.body.children].filter((node): node is HTMLElement => node instanceof HTMLElement && node !== backdrop && !node.hasAttribute("data-ui-action-notification-portal"));
     const previous = background.map((node) => [node, node.getAttribute("inert")] as const);
     background.forEach((node) => { if (!node.hasAttribute("inert")) node.setAttribute("data-ui-inventory-background-lock", ""); node.setAttribute("inert", ""); });
     return () => previous.forEach(([node, value]) => { node.removeAttribute("data-ui-inventory-background-lock"); if (value === null) node.removeAttribute("inert"); else node.setAttribute("inert", value); });
-  }, []);
+  }, [lifecycle.presented]);
   const product = state.product;
-  if (!product) return null;
+  if (!product || !lifecycle.presented) return null;
   const pending = state.confirmation === "pending" || closing || !ready;
   const blocked = pending || modeBusy;
   const entry = state.operation === "stock_entry";
@@ -99,7 +135,7 @@ export function InventoryOperationDialog({ state, dispatch, password, onPassword
     title: "Operación de inventario", description: "Operaciones de entrada de stock y conteo físico.",
     confirmLabel: "Confirmar operación", cancelLabel: "Nueva operación", pendingLabel: "Guardando…",
     pending: state.confirmation === "pending", confirmDisabled: blocked || !inventoryOperationValid(state, password), initialFocusRef: first, invokerRef,
-    inventoryPresentation: { restoreFocusFallback, frameRef, ready: ready && !closing, closing }, onCancel: close, onConfirm: confirm,
+    inventoryPresentation: { restoreFocusFallback, frameRef: attachFrame, ready: ready && !closing, closing, onDismiss: close }, onCancel: close, onConfirm: confirm,
     children: createElement("div", { "data-ui-inventory-operation": true, "data-operation": state.operation },
       createElement("div", { "data-ui-inventory-selection": true },
         createElement("div", { "data-ui-inventory-identity": true }, createElement("strong", null, product.name), product.sku !== undefined ? createElement("span", { "data-ui-kind": "sku" }, `SKU: ${product.sku}`) : null),
