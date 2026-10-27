@@ -120,3 +120,35 @@ test("T5f2a: selected specialized family wins even without its own dismissal cal
     view.unmount();
   }
 });
+
+
+test("T5f2a2: retiring a generic child restores its connected parent invoker", () => {
+  const parent = h(ConfirmationDialog, { ...base, title: "Parent editor", children: h("button", null, "Archive source") });
+  const content = (child: boolean) => h(Fragment, null, parent,
+    child ? tree({ ready: true, restoreFocusFallback: fallback }, { title: "Nested action" }) : null);
+  const view = render(content(false)), frame = screen.getByRole("dialog", { name: "Parent editor" });
+  const source = within(frame).getByRole("button", { name: "Archive source" }); source.focus();
+  view.rerender(content(true));
+  assert.equal(document.activeElement === within(screen.getByRole("dialog", { name: "Nested action" })).getByRole("button", { name: "Volver" }), true);
+  view.rerender(content(false));
+  assert.equal(screen.getByRole("dialog", { name: "Parent editor" }) === frame, true);
+  assert.equal(source.isConnected, true);
+  assert.equal(document.activeElement === source, true);
+});
+
+test("T5f2a2: changed-operation cached source yields to the generic fallback", () => {
+  const presentation = { ready: true,
+    restoreFocusFallback: () => screen.getByRole("heading", { name: "Catalog actions" }),
+    isSourceCurrent: () => source.textContent === "Archivar" };
+  const content = (child: boolean, operation = "Archivar") => h(Fragment, null,
+    h("h2", { tabIndex: -1 }, "Catalog actions"), h("button", null, operation),
+    child ? tree(presentation) : null);
+  const view = render(content(false)), source = screen.getByRole("button", { name: "Archivar" }); source.focus();
+  view.rerender(content(true));
+  view.rerender(content(true, "Reactivar"));
+  assert.equal(source.isConnected, true); assert.equal((source as HTMLButtonElement).disabled, false);
+  assert.equal(source.textContent, "Reactivar");
+  view.rerender(content(false, "Reactivar"));
+  assert.equal(document.activeElement === screen.getByRole("heading", { name: "Catalog actions" }), true);
+  assert.equal(document.activeElement === source, false);
+});

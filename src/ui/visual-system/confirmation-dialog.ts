@@ -32,7 +32,7 @@ export type ConfirmationDialogProps = {
   catalogCategoryPresentation?: InventoryPresentation;
   catalogCategoryArchivePresentation?: InventoryPresentation;
   catalogLocationPresentation?: InventoryPresentation & { isSourceCurrent: () => boolean };
-  confirmationPresentation?: InventoryPresentation;
+  confirmationPresentation?: InventoryPresentation & { isSourceCurrent?: () => boolean };
   restorePresentation?: InventoryPresentation;
   historyPresentation?: HistoryPresentation;
   cancelLabel?: ReactNode;
@@ -85,7 +85,7 @@ type DialogFrameProps = {
   restorePresentation?: InventoryPresentation;
   historyPresentation?: HistoryPresentation;
   onboardingPresentation?: InventoryPresentation;
-  confirmationPresentation?: InventoryPresentation;
+  confirmationPresentation?: InventoryPresentation & { isSourceCurrent?: () => boolean };
   kind: "confirmation" | "form" | "persisted-sale";
   focusFirstControl?: boolean;
   checkoutPresentation?: CheckoutPresentation;
@@ -209,7 +209,7 @@ function DialogFrame({
       // A checkout replacement can be connected before its passive effect registers
       // ownership. Do not restore Cobrar in that gap (both current/previous may be
       // null). Ordinary checkout retirement and all default callers keep their policy.
-      const checkoutReplacement = !!presentation && !archive && !location && replacement;
+      const checkoutReplacement = !!presentation && !confirmation && !archive && !location && replacement;
       if (kind !== "persisted-sale" && !checkoutReplacement
         && (current === previousDialogRef.current || (current !== container && !replacement))) {
         const invoker = invokerRef.current;
@@ -228,7 +228,7 @@ function DialogFrame({
         else {
           // Checkout may discard its cart: a disabled source remains geometry, not focus.
           const root = owner.documentElement;
-          const fallback = isEligible(invoker, root) ? invoker : presentation.restoreFocusFallback();
+          const fallback = (confirmation?.isSourceCurrent?.() ?? true) && isEligible(invoker, root) ? invoker : presentation.restoreFocusFallback();
           if (isEligible(fallback, root, !!history || !!confirmation)) restore(fallback);
         }
       }

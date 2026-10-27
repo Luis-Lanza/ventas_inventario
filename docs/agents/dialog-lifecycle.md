@@ -35,6 +35,8 @@ CSS owns scroll locking. Checkout hides its source through CSS; Inventory and On
 
 ## Generic confirmation opt-in
 
+A retiring generic child may restore focus into its still-connected parent dialog; it is not a Checkout replacement. The optional `confirmationPresentation.isSourceCurrent` callback gates the cached invoker before ordinary eligibility checks. Return `false` when the source now represents another record or operation (for example, Archivar became Reactivar); Frame then uses `restoreFocusFallback`, including an eligible `tabIndex=-1` heading. Omitting the callback preserves ordinary current-source restoration. Specialized/default presentation policies remain unchanged.
+
 `ConfirmationDialog.confirmationPresentation` provides the existing frame/readiness/dismissal/focus-fallback shape for unmarked, default-layout confirmations. An actually selected specialized presentation always wins, even without `onDismiss`; forms, receipts and callers omitting the option keep their existing markup and policies.
 
 Only the selected generic presentation adds `data-ui-confirmation-presentation`, its opening/closing markers and the `data-ui-confirmation-body` wrapper. It never borrows Checkout or category-archive markers. Scoped opacity/pointer-event styles preserve measurement. Consumers adapt the existing motion driver's body selector and retain their own synchronous business action, live confirmation gate and forced-retirement policy; Frame still owns focus, top-dialog, Escape and pending/target-checked dismissal. This seam alone does not migrate archive or field-confirmation consumers.
