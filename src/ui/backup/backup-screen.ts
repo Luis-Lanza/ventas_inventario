@@ -23,7 +23,11 @@ export function BackupScreen({ canRestore = true }: BackupScreenProps) {
   const recoveryGuidance = restoreRecoveryGuidance(operationState);
   const managedConfirmation = useRef(false);
   const [state, dispatch] = useReducer(createBackupFlow, initialBackupState);
-  const dialog = useRestoreDialogMotion();
+  const pending = state.backup_status === "pending" || state.restore_status === "pending" || !!operationState?.restorePending;
+  const dialog = useRestoreDialogMotion({ pending, onDismiss: () => {
+    dispatch({ type: "restore_confirmation_changed", confirmed: false });
+    dispatch({ type: "restore_cancelled" });
+  } });
   const notifications = useActionNotifications();
   const [sharedOutcome, setSharedOutcome] = useState(false);
   // The interaction dispatches completions only after its mounted/generation guards.
@@ -53,10 +57,9 @@ export function BackupScreen({ canRestore = true }: BackupScreenProps) {
   useEffect(() => () => interactionRef.current?.dispose(), []);
   useEffect(() => { if (state.restore_status === "success" || state.restore_status === "failure" || state.restore_status === "recovery") dialog.retire(); }, [state.restore_status]);
   const interaction = interactionRef.current;
-  const pending = state.backup_status === "pending" || state.restore_status === "pending" || !!operationState?.restorePending;
   const backupMessage = backupState(state.backup_status) ? state.feedback : null;
   const restoreMessage = restoreState(state.restore_status) ? state.feedback : null;
-  const cancelDialog = () => { if (!pending && !dialog.closing) { dispatch({ type: "restore_confirmation_changed", confirmed: false }); dispatch({ type: "restore_cancelled" }); dialog.close(); } };
+  const cancelDialog = () => dialog.close();
   return h("main", { "aria-labelledby": "backup-heading", "data-ui-backup": true },
     h("h1", { id: "backup-heading" }, "Copia y restauración"),
     h("p", null, "Creá una copia local o restaurá un respaldo validado."),
@@ -82,7 +85,7 @@ export function BackupScreen({ canRestore = true }: BackupScreenProps) {
           h("p", null, "Revisá el respaldo antes de confirmar la restauración."),
           h(Action, { variant: "secondary", disabled: state.restore_status !== "prepared", onClick: (event) => dialog.show(event.currentTarget) }, "Revisar restauración")) : null),
     ),
-    canRestore ? h(ConfirmationDialog, { open: dialog.open && state.summary !== null, restorePresentation: dialog, purpose: "restore", title: "Restaurar datos locales", description: "Esta acción reemplazará los datos locales actuales", pending: state.restore_status === "pending", confirmLabel: "Restaurar datos", onCancel: cancelDialog, onConfirm: () => { if (!dialog.closing && canConfirmRestore(state) && operationState?.writeAdmission !== "blocked") { managedConfirmation.current = true; void interaction.restore(state.summary!.token); } } },
+    canRestore ? h(ConfirmationDialog, { open: dialog.open && state.summary !== null, restorePresentation: dialog, purpose: "restore", title: "Restaurar datos locales", description: "Esta acción reemplazará los datos locales actuales", pending: state.restore_status === "pending", confirmLabel: "Restaurar datos", onCancel: cancelDialog, onConfirm: () => { if (!dialog.isDismissLocked() && !dialog.closing && canConfirmRestore(state) && operationState?.writeAdmission !== "blocked") { managedConfirmation.current = true; void interaction.restore(state.summary!.token); } } },
       h("p", null, "El borrador de venta y el comprobante se descartarán solo si la restauración tiene éxito."),
       h(Field, { kind: "checkbox", label: "Entiendo que la restauración reemplaza los datos locales.", control: h("input", { id: "restore-acknowledgement", type: "checkbox", checked: state.confirmed, disabled: state.restore_status === "pending", onChange: (event) => dispatch({ type: "restore_confirmation_changed", confirmed: event.target.checked }) }) } as never)) : null,
   );
