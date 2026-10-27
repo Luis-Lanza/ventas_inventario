@@ -1,6 +1,6 @@
 # Shared retained dismissal
 
-`useDialogLifecycle` keeps the actual frame alive while an accepted, ready dismissal reverses to the source button. Checkout, Inventory, Onboarding category creation, History corrections and Backup restore confirmation use the shared lifecycle. Optional adapters preserve family-specific motion and caller policies; the remaining families still need migration, so S7 is not complete.
+`useDialogLifecycle` keeps the actual frame alive while an accepted, ready dismissal reverses to the source button. Checkout, Inventory, Onboarding category creation, History corrections, Backup restore confirmation and Catalog editors use the shared lifecycle. Optional adapters preserve family-specific motion and caller policies; the remaining families still need migration, so S7 is not complete.
 
 ## Dismissal routes
 
@@ -52,6 +52,12 @@ History keeps its origin eligibility adapter and owned source marker, replacing 
 Configured screen dismissal sets an imperative lock before synchronously clearing acknowledgement. The existing restore interaction checks that live lock before invocation, so a stale rendered confirmation cannot race an accepted close. Ready cancellation captures the actual frame before acknowledgement/content reset; opening Escape closes immediately without reverse. Legacy callers without configured dismissal keep their existing void-callback retention and focus fallback.
 
 Outcome-driven retirement bypasses cancellation and reverse motion. App remains authoritative for restore certainty, write admission, session/cart retirement and settlement after Backup unmount: confirmed restore alone discards evidence; unchanged/unknown outcomes preserve it, and unknown retains durable recovery guidance. Source style ownership and animation completion never invoke restore or replay business cleanup.
+
+## Catalog editors
+
+Product/category editors retain the same measured frame after synchronous draft discard, keeping only persisted list identity for the presentation host. Both confirmation and native form submission cross live dismissal and image-ownership guards before the existing edit owner is invoked. The original unassociated footer and product Enter behavior remain unchanged; static void callers still control their own dismissal.
+
+Opening uses the existing enabled-at-capture policy; reverse uses the existing live-origin eligibility checks. Source opacity/pointer-event ownership restores exact inline priorities and preserves geometry. Pending detail, schema, image and save work still excludes unsafe actions; nested field confirmation remains the top owner. Payloads, revisions, validation, retry, accepted refresh and notifications stay outside animation completion. Archive/field-confirmation and location presentation migrations remain separate work units.
 
 ## Retirement and verification
 

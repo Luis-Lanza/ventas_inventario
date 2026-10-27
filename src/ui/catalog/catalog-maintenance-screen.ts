@@ -10,7 +10,7 @@ import { Action, Feedback } from "../visual-system/controls.ts";
 import { captureCatalogProductOpening, type CatalogProductOpening } from "../visual-system/catalog-product-motion.ts";
 import { captureCatalogEditorOpening } from "../visual-system/catalog-editor-motion.ts";
 import { attachCatalogPasswordMotion } from "../visual-system/catalog-password-motion.ts";
-import { CatalogEditDialog, CatalogMetadataEditor, CatalogProductRetirement } from "../visual-system/catalog-edit-dialog.ts";
+import { CatalogEditDialog, CatalogMetadataEditor } from "../visual-system/catalog-edit-dialog.ts";
 import { CatalogCategoryArchiveDialog, CatalogCategoryArchiveRetirement, categoryArchiveFocusFallback } from "../visual-system/catalog-category-archive-dialog.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
 import { createCatalogEditRequest, createCategorySchemaEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState, type CatalogEditFieldErrors, type CatalogEditForm, type CatalogMaintenanceAction } from "./catalog-maintenance-flow.ts";
@@ -117,7 +117,9 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
   const [form, setForm] = useState<CatalogEditForm | null>(null);
   const renderArchive = (dialog: ReactElement) => archiveConfirmation?.context === "detail" ? createPortal(dialog, document.body) : dialog;
   const productOpening = useRef<CatalogProductOpening | null>(null);
-  const [retiringProduct, setRetiringProduct] = useState<{ opening: CatalogProductOpening; snapshot: CatalogProductOpening; target: "product" | "category" } | null>(null);
+  // Persisted list identity/layout only; selected detail and editable drafts are discarded synchronously.
+  const [editorHost, setEditorHost] = useState<CatalogMaintenanceRecord | null>(null);
+  const editorDismissed = useRef(false);
   const [productLocations, setProductLocations] = useState<ProductLocationRecord[]>([]);
   const [productLocationsStatus, setProductLocationsStatus] = useState<"loading" | "ready" | "error">("loading");
   const [imageThumbnail, setImageThumbnail] = useState<string | null>(null);
@@ -300,11 +302,8 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     if (ownerCurrent() && mounted.current && selected && attempt.current === selectionAttempt + 1) await loadDetail(selected);
   };
   const close = () => {
-    if (mutationLocked.current || imageMutationLocked.current) return;
-    const frame = document.getElementById("catalog-edit-dialog");
-    if (state.selected && frame && productOpening.current) {
-      setRetiringProduct({ target: state.selected.target, opening: productOpening.current, snapshot: captureCatalogEditorOpening(frame, productOpening.current.id) });
-    }
+    if (editorDismissed.current || mutationLocked.current || imageMutationLocked.current) return false;
+    editorDismissed.current = true;
     setPartialSaveGuidance(null);
     setRoutineFailure(false);
     attempt.current += 1;
@@ -312,6 +311,7 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     refreshDetailAfterRecovery.current = false;
     setForm(null);
     dispatch({ type: "selection_cleared" });
+    return true;
   };
   const retryRefresh = async () => {
     if (!state.selected) return;
@@ -405,7 +405,7 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
   };
   const edit = async () => {
     const detail = state.detail;
-    if (!detail || !form || mutationLocked.current || state.recovery_required) return;
+    if (!detail || !form || editorDismissed.current || imageMutationLocked.current || mutationLocked.current || state.recovery_required) return;
     const request = createCatalogEditRequest(detail, form);
     if (!request) { setRoutineFailure(false); dispatch({ type: "edit_validation_failed", field_errors: fieldErrorsForCatalogEdit(detail, form) }); return; }
     mutationLocked.current = true;
@@ -507,7 +507,7 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
   };
   const saveCategorySchema = async () => {
     const detail = state.detail;
-    if (!detail || detail.target !== "category" || !form || mutationLocked.current || state.recovery_required) return;
+    if (!detail || detail.target !== "category" || !form || editorDismissed.current || imageMutationLocked.current || mutationLocked.current || state.recovery_required) return;
     const request = createCategorySchemaEditRequest(detail, form);
     if (!request) { setRoutineFailure(false); dispatch({ type: "edit_validation_failed", field_errors: { category_fields: "Completá el nombre y al menos una opción para cada campo de opciones." } }); return; }
     mutationLocked.current = true;
@@ -600,7 +600,8 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
           createElement("div", { "data-ui-category-cell": "actions", "data-label": "Acciones" },
             createElement("div", { "data-ui-category-actions": true },
               createElement(Action, { variant: "secondary", disabled: interactionLocked || categoryActionPending !== null, onClick: (event) => {
-                setRetiringProduct(null);
+                editorDismissed.current = false;
+                setEditorHost(record);
                 productOpening.current = captureCatalogEditorOpening(event.currentTarget, attempt.current + 1);
                 void loadDetail(record);
               }, "aria-label": `Editar ${record.label}` }, "Editar"),
@@ -632,9 +633,11 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
             onSubmit: submitBrowse,
             onPageChange: (page) => void browseCatalogProducts(browserSnapshot(), page),
             onCatalogSelect: (product, opener) => {
-              setRetiringProduct(null);
+              editorDismissed.current = false;
+              const record: CatalogMaintenanceRecord = { target: "product", entity_id: product.product_id, label: `${product.sku} — ${product.name}`, activity: "active", revision: product.revision };
+              setEditorHost(record);
               productOpening.current = captureCatalogProductOpening(opener, attempt.current + 1);
-              void loadDetail({ target: "product", entity_id: product.product_id, label: `${product.sku} — ${product.name}`, activity: "active", revision: product.revision });
+              void loadDetail(record);
             },
             allowUnavailableSelection: true,
             actionLabel: "Editar",
@@ -644,8 +647,7 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
         ),
       ),
     ),
-    state.selected ? createElement(CatalogEditDialog, { record: state.selected, opening: productOpening.current, restoreFocusFallback: () => state.selected?.target === "category" ? categoryManagementHeading.current : catalogMainHeading.current, categoryName: browser.result?.categories.find((category) => category.category_id === (state.detail?.target === "product" ? state.detail.category_id : null))?.name,  detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: notifications && (routineFailure || Object.keys(state.field_errors).length > 0) && !state.recovery_required ? null : state.feedback, lifecycleFeedback: inlineLifecycleFeedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, locations: productLocations, locationsStatus: productLocationsStatus, imageThumbnail, imagePending, imageFeedback, imageFeedbackKind, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onRemoveCategoryFieldDraft: removeCategoryFieldDraft, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
-    retiringProduct ? createElement(CatalogProductRetirement, { ...retiringProduct, onRetired: () => setRetiringProduct(null) }) : null,
+    state.selected || editorHost ? createElement(CatalogEditDialog, { key: productOpening.current?.id, open: !!state.selected, record: state.selected ?? editorHost!, opening: productOpening.current, restoreFocusFallback: () => (state.selected ?? editorHost)?.target === "category" ? categoryManagementHeading.current : catalogMainHeading.current, categoryName: browser.result?.categories.find((category) => category.category_id === (state.detail?.target === "product" ? state.detail.category_id : null))?.name,  detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: notifications && (routineFailure || Object.keys(state.field_errors).length > 0) && !state.recovery_required ? null : state.feedback, lifecycleFeedback: inlineLifecycleFeedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, locations: productLocations, locationsStatus: productLocationsStatus, imageThumbnail, imagePending, imageFeedback, imageFeedbackKind, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onRemoveCategoryFieldDraft: removeCategoryFieldDraft, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
     retirementConfirmation ? createPortal(createElement(ConfirmationDialog, {
       open: true,
       purpose: "cancellation",

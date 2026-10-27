@@ -1,8 +1,9 @@
-import { createElement, Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type MouseEvent, type FormEvent, type RefObject, type ReactNode } from "react";
+import { createElement, Fragment, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type MouseEvent, type FormEvent, type RefObject, type ReactNode } from "react";
 
 import { createPortal } from "react-dom";
 import { startCatalogProductMotion, type CatalogProductOpening } from "./catalog-product-motion.ts";
 import { startCatalogEditorMotion } from "./catalog-editor-motion.ts";
+import { useDialogLifecycle } from "./dialog-lifecycle.ts";
 
 import { ATTRIBUTE_FIELD_TYPE, productLocationCommands, type CatalogMaintenanceRecord, type CatalogMetadataDetail, type ProductLocationRecord, type ProductLocationSegment } from "../../commands/catalog.ts";
 import { Action, Badge, Feedback, Field } from "./controls.ts";
@@ -12,6 +13,7 @@ import type { CatalogEditFieldErrors, CatalogEditForm } from "../catalog/catalog
 
 export interface CatalogEditDialogProps {
   record: CatalogMaintenanceRecord;
+  open?: boolean;
   opening?: CatalogProductOpening | null;
   restoreFocusFallback?: () => HTMLElement | null;
   categoryName?: string;
@@ -40,7 +42,7 @@ export interface CatalogEditDialogProps {
   onChooseImage?: () => void;
   onRemoveImage?: () => void;
   onReload: () => void;
-  onCancel: () => void;
+  onCancel: () => boolean | void;
 }
 
 interface CatalogMetadataEditorProps {
@@ -124,19 +126,40 @@ export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback
     feedback ? createElement(Feedback, { kind: "error" } as never, feedback) : null);
 }
 
-export function CatalogEditDialog({ record, opening, restoreFocusFallback = () => null, categoryName, detail, form, loading, pending, feedback, lifecycleFeedback, recoveryRequired, fieldErrors, locations = [], locationsStatus = "loading", imageThumbnail = null, imagePending = false, imageFeedback = null, imageFeedbackKind = "error", onChooseImage, onRemoveImage, onChange, onSubmit, onLifecycle, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft, onSaveCategorySchema, onReload, onCancel }: CatalogEditDialogProps) {
+export function CatalogEditDialog({ record, open = true, opening, restoreFocusFallback = () => null, categoryName, detail, form, loading, pending, feedback, lifecycleFeedback, recoveryRequired, fieldErrors, locations = [], locationsStatus = "loading", imageThumbnail = null, imagePending = false, imageFeedback = null, imageFeedbackKind = "error", onChooseImage, onRemoveImage, onChange, onSubmit, onLifecycle, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft, onSaveCategorySchema, onReload, onCancel }: CatalogEditDialogProps) {
   const nameRef = useRef<HTMLInputElement>(null);
   const hasFocusedDetail = useRef(false);
   const product = record.target === "product";
-  const [frame, setFrame] = useState<HTMLDivElement | null>(null);
-  const frameRef = useCallback((node: HTMLDivElement | null) => setFrame(node), []);
-  const [ready, setReady] = useState(!opening);
+  const dismissed = useRef(false);
+  const lifecycle = useDialogLifecycle({ open, opening, pending: loading || pending || imagePending,
+    motion: (frame, source, complete, direction, snapshot) =>
+      (product ? startCatalogProductMotion : startCatalogEditorMotion)(frame, source, complete, direction, snapshot),
+    onDismiss: () => {
+      if (dismissed.current) return false;
+      if (onCancel() !== true) return false; // Void/static callers keep controlled ownership.
+      dismissed.current = true;
+      return true;
+    } });
+  const { ready, frameRef } = lifecycle;
+  useLayoutEffect(() => { dismissed.current = false; }, [opening]);
   useLayoutEffect(() => {
-    if (!frame || !opening) return;
-    setReady(false);
-    const driver = (product ? startCatalogProductMotion : startCatalogEditorMotion)(frame, opening, () => setReady(true));
-    return () => driver.dispose();
-  }, [product, frame, opening]);
+    if (!opening || !lifecycle.presented) return;
+    const source = opening.trigger;
+    const original = ["opacity", "pointer-events"].map(property =>
+      [property, source.style.getPropertyValue(property), source.style.getPropertyPriority(property)] as const);
+    source.style.setProperty("opacity", "0", "important");
+    source.style.setProperty("pointer-events", "none", "important");
+    return () => {
+      for (const [property, value, priority] of original) {
+        if (value) source.style.setProperty(property, value, priority);
+        else source.style.removeProperty(property);
+      }
+    };
+  }, [opening, lifecycle.presented]);
+  const submit = (action: () => void) => {
+    if (lifecycle.isDismissLocked() || dismissed.current || !open || loading || pending || imagePending || recoveryRequired) return;
+    action();
+  };
   const invokerRef = useRef<HTMLElement | null>(opening?.trigger ?? null);
   const dialogPending = loading || pending;
   const title = `Editar ${detail?.name ?? record.label}`;
@@ -152,28 +175,28 @@ export function CatalogEditDialog({ record, opening, restoreFocusFallback = () =
   }, [detail, loading, ready, product]);
 
   const dialog = createElement(ConfirmationDialog, {
-    open: true,
+    open: lifecycle.presented,
     purpose: "routine",
-    catalogProductPresentation: product ? { frameRef, ready, restoreFocusFallback } : undefined,
-    catalogCategoryPresentation: !product ? { frameRef, ready, restoreFocusFallback } : undefined,
+    catalogProductPresentation: product ? { frameRef, ready, closing: lifecycle.closing, onDismiss: opening ? lifecycle.requestDismiss : undefined, restoreFocusFallback } : undefined,
+    catalogCategoryPresentation: !product ? { frameRef, ready, closing: lifecycle.closing, onDismiss: opening ? lifecycle.requestDismiss : undefined, restoreFocusFallback } : undefined,
     initialFocusRef: nameRef,
     invokerRef,
     title,
     description: detail ? "Editá los metadatos del registro seleccionado y guardá los cambios." : loading ? "Cargando el detalle autorizado del registro seleccionado…" : "No se pudo cargar el detalle del registro seleccionado.",
     confirmLabel: !product ? "Guardar cambios" : "Guardar metadatos",
-    pending: dialogPending || imagePending,
+    pending: dialogPending || imagePending || lifecycle.closing,
     pendingLabel: imagePending ? "Procesando imagen…" : loading ? "Cargando detalle…" : "Guardando metadatos…",
     confirmDisabled: !ready || !detail || !form || recoveryRequired || imagePending,
     dialogId: "catalog-edit-dialog",
     dialogDataAttribute: "catalog-edit-dialog",
-    onCancel,
-    onConfirm: detail?.target === "category" ? onSaveCategorySchema ?? onSubmit : onSubmit,
-    children: detail && form ? createElement("div", { "data-ui-catalog-edit-content": true },
+    onCancel: () => lifecycle.requestDismiss("escape"),
+    onConfirm: () => submit(detail?.target === "category" ? onSaveCategorySchema ?? onSubmit : onSubmit),
+    children: lifecycle.closing ? null : detail && form ? createElement("div", { "data-ui-catalog-edit-content": true },
       detail.target === "product" ? createElement("div", { "data-ui-catalog-identity": true },
         createElement("strong", null, detail.name),
         createElement(Badge, { kind: detail.activity, text: detail.activity === "active" ? "Activo" : "Archivado" }),
         createElement("span", null, `Producto · Categoría: ${categoryName ?? detail.category_id}`)) : null,
-      createElement(CatalogMetadataEditor, { detail, form, nameRef, pending: dialogPending || imagePending || recoveryRequired, feedback, fieldErrors, locations, locationsStatus, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft }),
+      createElement(CatalogMetadataEditor, { detail, form, nameRef, pending: dialogPending || imagePending || recoveryRequired, feedback, fieldErrors, locations, locationsStatus, onChange, onSubmit: () => submit(onSubmit), onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft }),
       renderRail(
         detail.target === "product" ? createElement("section", { "aria-label": "Imagen del producto", "data-ui-catalog-product-image": true, "aria-busy": imagePending || undefined },
           createElement("h3", null, "Imagen del producto"),

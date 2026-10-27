@@ -286,7 +286,7 @@ test("product opening animates once without waiting for authoritative detail or 
   assert.equal(tweens, 1);
 });
 
-test("product close immediately discards the draft while only an empty surface retires", async (t) => {
+test("product close immediately discards the draft while the same sanitized frame retires", async (t) => {
   let complete: (() => void) | undefined;
   let writes = 0;
   t.mock.method(HTMLElement.prototype, "getBoundingClientRect", function (this: HTMLElement) {
@@ -318,15 +318,14 @@ test("product close immediately discards the draft while only an empty surface r
   const name = within(dialog).getByRole("textbox", { name: "Nombre del producto" });
   await userEvent.clear(name); await userEvent.type(name, "Borrador descartado");
   await userEvent.click(within(dialog).getByRole("button", { name: "Volver" }));
-  assert.equal(screen.queryByRole("dialog"), null);
-  const surface = document.querySelector("[data-ui-catalog-product-retirement]");
-  assert.ok(surface);
-  assert.equal(surface.querySelector("input, button, form, [role=dialog]"), null);
-  assert.equal(surface.textContent, "");
-  assert.equal(document.activeElement, opener);
+  assert.equal(screen.getByRole("dialog") === dialog, true);
+  assert.equal(dialog.querySelector("input, form"), null);
+  assert.equal(document.querySelector("[data-ui-catalog-product-retirement]"), null, "no copied retirement modal");
+  assert.equal(opener.style.opacity, "0");
   assert.equal(writes, 0);
   act(() => complete?.());
-  assert.equal(document.querySelector("[data-ui-catalog-product-retirement]"), null);
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(document.activeElement, opener);
   await userEvent.click(opener);
   await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
   act(() => complete?.());
@@ -1114,7 +1113,7 @@ test("does not let delayed initial browse replace a newer submitted search", asy
   assert.ok(screen.getByText("Pastilla de freno"));
 });
 
-test("category opening survives the loading lock without replay on detail, error, or reload; close retires only an empty surface", async (t) => {
+test("category opening survives the loading lock without replay on detail, error, or reload; close retains the sanitized frame", async (t) => {
   let resolveDetail!: (value: unknown) => void;
   let details = 0, writes = 0, tweens = 0;
   let complete: (() => void) | undefined;
@@ -1157,17 +1156,15 @@ test("category opening survives the loading lock without replay on detail, error
   assert.equal(document.activeElement, archive);
   await userEvent.type(name, " discarded draft");
   await userEvent.click(within(frame).getByRole("button", { name: "Volver" }));
-  assert.equal(screen.queryByRole("dialog"), null);
-  const surface = document.querySelector("[data-ui-catalog-category-retirement]");
-  assert.ok(surface);
-  assert.ok(surface.hasAttribute("inert"));
-  assert.equal(surface.textContent, "");
-  assert.equal(surface.querySelector("input, button, form, [role=dialog]"), null);
+  assert.equal(screen.getByRole("dialog") === frame, true);
+  assert.equal(frame.querySelector("input, form"), null);
+  assert.equal(document.querySelector("[data-ui-catalog-category-retirement]"), null, "no copied retirement modal");
+  assert.equal(opener.style.opacity, "0");
   assert.equal(writes, 0);
-  assert.equal(document.activeElement, opener);
   assert.equal(tweens, 4, "editor and archive each open and retire once");
   act(() => complete?.());
-  assert.equal(document.querySelector("[data-ui-catalog-category-retirement]"), null);
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(document.activeElement, opener);
   await userEvent.click(opener);
   act(() => complete?.());
   assert.equal((await screen.findByRole("textbox", { name: "Nombre de la categoría" }) as HTMLInputElement).value, "Filtros");
