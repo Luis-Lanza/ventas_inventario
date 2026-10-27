@@ -59,7 +59,10 @@ function OnboardingForm({ onBack, acceptedMutations, onLock, onAccessRequired, l
   const notifications = useActionNotifications();
   const [routineOutcome, setRoutineOutcome] = useState(false);
   const [state, dispatch] = useReducer(createOnboardingFlow, initialOnboardingState);
-  const categoryDialog = useCategoryDialogMotion();
+  const categoryDialog = useCategoryDialogMotion(
+    lockPending || state.categoryStatus === "pending" || state.productStatus === "pending",
+    () => closeCategory(),
+  );
   const categoryActive = useRef(false);
   const [categoryName, setCategoryName] = useState("");
   const [categoryError, setCategoryError] = useState(false);
@@ -115,14 +118,14 @@ function OnboardingForm({ onBack, acceptedMutations, onLock, onAccessRequired, l
     setCategoryName(""); setCategoryFields([]); setPendingField(emptyField); setCategoryError(false);
   };
   const closeCategory = () => {
-    if (categoryLock.current || lockPending || categoryDialog.closing) return;
-    categoryDialog.close();
+    if (categoryLock.current || productLock.current || lockPending || categoryDialog.isDismissLocked()) return false;
     discardCategory();
     dispatch({ type: "category_dismissed" });
+    return true;
   };
   const submitCategory = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!categoryActive.current || categoryDialog.closing || lockPending || !canSubmitCategory(state) || categoryLock.current || productLock.current) return;
+    if (!categoryActive.current || categoryDialog.isDismissLocked() || lockPending || !canSubmitCategory(state) || categoryLock.current || productLock.current) return;
     if (!categoryName.trim()) { setCategoryError(true); focus("category-name"); return; }
     const id = ++mutation.current; categoryLock.current = true; setRoutineOutcome(false); setCategoryError(false); dispatch({ type: "category_started", requestId: id });
     try {
