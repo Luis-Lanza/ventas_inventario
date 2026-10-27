@@ -36,7 +36,7 @@ import {
 import { historyListError, historySummaryCells, projectCorrectionHistory, projectHistoryDetail } from "./history-presentation.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { AlignedData } from "../visual-system/structure.ts";
-import { HistoryCorrectionDialog, HistoryCorrectionRetirement, type HistoryRetirement } from "./history-correction-dialog.ts";
+import { HistoryCorrectionDialog } from "./history-correction-dialog.ts";
 import { captureHistoryCorrectionOpening, type HistoryCorrectionOpening } from "./history-correction-motion.ts";
 
 const originalItemColumns = [
@@ -104,8 +104,7 @@ const focusCorrectionTarget = (target: string | null, find: FocusFinder) => {
   if (target) find(target)?.focus();
 };
 
-function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, opening, onRetire, persisted = false }: {
-  onRetire?: (surface: HistoryRetirement) => void;
+function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, opening, persisted = false }: {
   opening?: HistoryCorrectionOpening | null;
   persisted?: boolean;
   state: HistoryState;
@@ -114,12 +113,17 @@ function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, ope
   onReloadDetail?: (saleId: number) => void;
   invokerRef?: RefObject<HTMLElement>;
 }) {
-  const intent = state.return_intent!;
+  const intent = state.return_intent;
+  if (!intent) return createElement(HistoryCorrectionDialog, {
+    key: opening?.id, open: false, opening, retainDismissal: true, stage: "return", purpose: "routine", invokerRef,
+    title: "Devolución de artículos", description: "Seleccioná los artículos originales y las cantidades que volverán al inventario.",
+    confirmLabel: "Registrar devolución", cancelLabel: "Cerrar", onCancel() {}, onConfirm() {},
+  });
   const locked = intent.status === "pending" || intent.status === "reload_requested";
   const errorTarget = intent.validation?.focus_target;
   const errorId = errorTarget ? `${errorTarget}-error` : undefined;
   return createElement(HistoryCorrectionDialog, {
-    opening, onRetire, stage: "return", purpose: "routine",
+    key: opening?.id, opening, retainDismissal: true, stage: "return", purpose: "routine",
     confirmLabel: "Registrar devolución", pendingLabel: "Registrando devolución…", cancelLabel: "Cerrar",
     confirmDisabled: persisted,
     onConfirm: () => document.getElementById("history-return-form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
@@ -171,8 +175,7 @@ function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, ope
     locked ? "Registrando devolución…" : "Registrar devolución")));
 }
 
-function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, opening, onRetire, persisted = false }: {
-  onRetire?: (surface: HistoryRetirement) => void;
+function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, opening, persisted = false }: {
   opening?: HistoryCorrectionOpening | null;
   persisted?: boolean;
   state: HistoryState;
@@ -181,7 +184,12 @@ function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRe
   onReloadDetail?: (saleId: number) => void;
   invokerRef?: RefObject<HTMLElement>;
 }) {
-  const intent = state.cancellation_intent!;
+  const intent = state.cancellation_intent;
+  if (!intent) return createElement(HistoryCorrectionDialog, {
+    key: opening?.id, open: false, opening, retainDismissal: true, stage: "preparation", purpose: "routine", invokerRef,
+    title: "Preparar cancelación de venta", description: "Ingresá el motivo y reconocé la corrección de inventario antes de revisar la cancelación.",
+    confirmLabel: "Continuar con la cancelación", cancelLabel: "Cerrar", onCancel() {}, onConfirm() {},
+  });
   const locked = intent.status === "pending" || intent.status === "reload_requested";
   const fieldError = intent.validation?.focus_target;
   const errorId = fieldError ? `${fieldError}-error` : undefined;
@@ -213,7 +221,7 @@ function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRe
   createElement("p", { "data-ui-history-correction-next": true }, "En el siguiente paso revisarás la confirmación final."),
   createElement("button", { type: "submit", hidden: true, "aria-hidden": true, disabled: locked || persisted, style: correctionControlStyle }, "Continuar con la cancelación"));
   return createElement(HistoryCorrectionDialog, {
-    open: true, opening, onRetire, stage: preparing ? "preparation" : "confirmation",
+    key: opening?.id, open: true, opening, retainDismissal: true, stage: preparing ? "preparation" : "confirmation",
     purpose: preparing ? "routine" : "cancellation",
     title: preparing ? "Preparar cancelación de venta" : `Cancelar venta #${intent.sale_id}`,
     description: preparing ? "Ingresá el motivo y reconocé la corrección de inventario antes de revisar la cancelación."
@@ -465,11 +473,11 @@ export function HistoryScreen({
   const correctionInvokerRef = useRef<HTMLButtonElement | null>(null);
   const correctionOpening = useRef<HistoryCorrectionOpening | null>(null);
   const correctionSession = useRef(0);
-  const [retiring, setRetiring] = useState<(HistoryRetirement & { saleId: number | null }) | null>(null);
-  const retire = (surface: HistoryRetirement) => setRetiring({ ...surface, saleId: state.selected_id });
+  // Retain only the kind/identity of the presentation host, never a discarded intent.
+  const [correctionHost, setCorrectionHost] = useState<{ kind: "return" | "cancellation"; saleId: number | null } | null>(null);
   useEffect(() => {
-    if (state.view !== "detail" || state.return_intent || state.cancellation_intent || (retiring && retiring.saleId !== state.selected_id)) setRetiring(null);
-  }, [state.view, state.selected_id, state.return_intent?.request_id, state.cancellation_intent?.request_id, retiring?.saleId]);
+    if (state.view !== "detail" || correctionHost?.saleId !== state.selected_id) setCorrectionHost(null);
+  }, [state.view, state.selected_id, correctionHost?.saleId]);
   const correctionRefreshRequired = Boolean(persistedRequest && !(state.detail?.returns.some(record => record.request_id === persistedRequest) || state.detail?.cancellation?.request_id === persistedRequest));
   const [from, setFrom] = useState(localToday);
   const [to, setTo] = useState(localToday);
@@ -489,7 +497,7 @@ export function HistoryScreen({
       createElement("div", { "data-ui-history-detail-header": true },
         createElement("h1", { id: "sales-history-detail-heading", tabIndex: -1 }, "Detalle de venta"),
         createElement("span", { "data-ui-history-detail-currency": true }, "Moneda: Bs"),
-        createElement(Action, { variant: "secondary", onClick: () => { setRetiring(null); onBack(); } }, "Volver al historial"),
+        createElement(Action, { variant: "secondary", onClick: () => { setCorrectionHost(null); onBack(); } }, "Volver al historial"),
       ),
       outcomeNotice ? createElement(Feedback, { kind: "success", children: outcomeNotice }) : null,
       state.status === "loading" ? createElement(Feedback, { kind: "loading" } as never, "Cargando detalle de venta…") : null,
@@ -525,7 +533,7 @@ export function HistoryScreen({
               { "data-ui-history-correction-actions": true },
               (canOpenReturn(state) || state.return_intent !== null)
                 ? createElement("button", { disabled: correctionRefreshRequired || state.return_intent !== null, type: "button", onClick: (event: MouseEvent<HTMLButtonElement>) => {
-                    setRetiring(null);
+                    setCorrectionHost({ kind: "return", saleId: state.selected_id });
                     correctionInvokerRef.current = event.currentTarget;
                     correctionOpening.current = captureHistoryCorrectionOpening(event.currentTarget, ++correctionSession.current);
                     onAction?.({ type: "return_intent_opened", request_id: crypto.randomUUID() });
@@ -539,7 +547,7 @@ export function HistoryScreen({
                       "data-ui-history-detail-action": "cancel",
                       type: "button",
                       onClick: (event: MouseEvent<HTMLButtonElement>) => {
-                        setRetiring(null);
+                        setCorrectionHost({ kind: "cancellation", saleId: state.selected_id });
                         correctionInvokerRef.current = event.currentTarget;
                         correctionOpening.current = captureHistoryCorrectionOpening(event.currentTarget, ++correctionSession.current);
                         onAction?.({
@@ -558,16 +566,12 @@ export function HistoryScreen({
       correctionRefreshRequired && !state.return_intent && !state.cancellation_intent ? createElement(Feedback, { kind: "advisory", children: createElement(Fragment, null,
         persistedRefreshGuidance,
         createElement(Action, { variant: "secondary", disabled: state.status === "loading", onClick: () => { if (state.selected_id !== null) onReloadDetail?.(state.selected_id); } }, "Recargar detalle de venta")) }) : null,
-      state.return_intent
-        ? createElement(ReturnForm, { onRetire: retire, opening: correctionOpening.current, state, onAction, onSubmit: onReturnSubmit, onReloadDetail, invokerRef: correctionInvokerRef, persisted: persistedRequest === state.return_intent.request_id })
+      state.return_intent || (correctionHost?.kind === "return" && correctionHost.saleId === state.selected_id)
+        ? createElement(ReturnForm, { opening: correctionOpening.current, state, onAction, onSubmit: onReturnSubmit, onReloadDetail, invokerRef: correctionInvokerRef, persisted: !!state.return_intent && persistedRequest === state.return_intent.request_id })
         : null,
-      state.cancellation_intent
-        ? createElement(CancellationForm, { onRetire: retire, opening: correctionOpening.current, state, onAction, onSubmit: onCancellationSubmit, onReloadDetail, invokerRef: correctionInvokerRef, persisted: persistedRequest === state.cancellation_intent.request_id })
+      state.cancellation_intent || (correctionHost?.kind === "cancellation" && correctionHost.saleId === state.selected_id)
+        ? createElement(CancellationForm, { opening: correctionOpening.current, state, onAction, onSubmit: onCancellationSubmit, onReloadDetail, invokerRef: correctionInvokerRef, persisted: !!state.cancellation_intent && persistedRequest === state.cancellation_intent.request_id })
         : null,
-      retiring && retiring.saleId === state.selected_id && !state.return_intent && !state.cancellation_intent ? createElement(HistoryCorrectionRetirement, {
-        ...retiring, key: retiring.opening.id,
-        onRetired: () => setRetiring(current => current?.opening.id === retiring.opening.id ? null : current),
-      }) : null,
     );
   }
   return createElement("main", {

@@ -1,6 +1,6 @@
 # Shared retained dismissal
 
-`useDialogLifecycle` keeps the actual frame alive while an accepted, ready dismissal reverses to the source button. Checkout, Inventory and Onboarding category creation use the shared lifecycle. Optional adapters preserve family-specific motion and caller policies; the remaining families still need migration, so S7 is not complete.
+`useDialogLifecycle` keeps the actual frame alive while an accepted, ready dismissal reverses to the source button. Checkout, Inventory, Onboarding category creation and History corrections use the shared lifecycle. Optional adapters preserve family-specific motion and caller policies; the remaining families still need migration, so S7 is not complete.
 
 ## Dismissal routes
 
@@ -40,6 +40,12 @@ Inventory preserves its live-origin eligibility and mode-height driver. Its exis
 ## Onboarding adapter
 
 Category creation preserves native footer/form association, Enter submission, inline validation and caller-owned accepted selection/notifications. Cancellation clears only the category draft synchronously, not the product draft. Accepted asynchronous creation captures the actual frame before that caller discards its draft; the epoch-scoped geometry is supplied to the existing reverse driver when pending/readiness settles. No business action waits for animation, and stale completions cannot affect a newer source. The pre-existing body overflow effect is unchanged; this adapter adds no scroll lock or focus authority.
+
+## History corrections
+
+Terminal dismissal retains the actual frame after the caller synchronously discards its intent and form. The host retains only correction kind and sale identity, never discarded financial data. A live acceptance lock gates both confirmation and captured native-form submission before React commits the discard. Confirmation-stage Volver, Escape and backdrop remain nonterminal: they preserve reason/acknowledgement and use the existing stage morph back to preparation. Static callers keep their original void-callback ownership.
+
+History keeps its origin eligibility adapter and owned source marker, replacing only that marker's visibility hiding with measurable opacity/pointer-event hiding. External visibility policies and original inline priorities are preserved. Financial interaction, retry identity, notifications and original payment evidence remain caller-owned.
 
 ## Retirement and verification
 

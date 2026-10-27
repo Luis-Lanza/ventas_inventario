@@ -60,6 +60,8 @@ test("actual clicked geometry opens once, stage replacement stays single, and st
   fireEvent.click(origin);
   assert.equal(starts[0], 900);
   assert.equal(origin.hasAttribute("data-ui-history-correction-origin"), true);
+  assert.equal(origin.style.opacity, "0");
+  assert.equal(origin.style.pointerEvents, "none");
   let dialog = screen.getByRole("dialog");
   assert.equal(document.activeElement, dialog);
   const reasonInput = screen.getByRole("textbox", { name: "Motivo de cancelación" });
@@ -116,7 +118,7 @@ test("a replacement session at the same stage defers focus until its own motion 
 });
 
 for (const kind of ["return", "cancellation"] as const) {
-  test(`${kind} ordinary close discards immediately and contracts only an empty inert surface`, (t) => {
+  test(`${kind} ordinary close discards immediately and contracts the same sanitized frame`, (t) => {
     const completions: Array<() => void> = [], endpoints: number[] = [];
     t.mock.method(HTMLElement.prototype, "getBoundingClientRect", function(this: HTMLElement) {
       return this.hasAttribute("data-ui-history-correction-dialog") ? rect(100, 800, 500) : rect(700, 180);
@@ -130,21 +132,19 @@ for (const kind of ["return", "cancellation"] as const) {
     act(() => completions[0]());
     if (kind === "return") fireEvent.click(screen.getByRole("checkbox"));
     else fireEvent.change(screen.getByRole("textbox"), { target: { value: "DRAFT MUST DISAPPEAR" } });
+    const actual = screen.getByRole("dialog");
     fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
-    assert.equal(screen.queryByRole("dialog"), null);
+    assert.equal(screen.getByRole("dialog") === actual, true);
     assert.equal((origin as HTMLButtonElement).disabled, false, "discard is not waiting for motion");
-    const retirement = document.querySelector("[data-ui-history-correction-retirement]");
-    assert.ok(retirement, "ordinary close must start contraction");
-    assert.equal(retirement.textContent, "");
-    assert.equal(retirement.querySelector("form, input, button, [role=dialog], [aria-modal]"), null);
-    assert.equal(retirement.getAttribute("aria-hidden"), "true");
-    assert.ok(retirement.hasAttribute("inert"));
+    assert.equal(actual.querySelector("form, input"), null, "no discarded business draft survives in the retained frame");
+    assert.equal(document.querySelector("[data-ui-history-correction-retirement]"), null, "no copied retirement frame");
     assert.equal(endpoints[1], 180, "close endpoint is the actual origin");
-    assert.equal(origin.style.visibility, "hidden");
+    assert.equal(origin.style.opacity, "0");
+    assert.equal(origin.style.pointerEvents, "none");
     let restored = 0;
-    origin.addEventListener("focus", () => { assert.notEqual(origin.style.visibility, "hidden"); restored++; });
+    origin.addEventListener("focus", () => { assert.notEqual(origin.style.opacity, "0"); restored++; });
     act(() => completions[1]());
-    assert.equal(document.querySelector("[data-ui-history-correction-retirement]"), null);
+    assert.equal(screen.queryByRole("dialog"), null);
     assert.ok(document.activeElement === origin);
     assert.equal(restored, 1);
     fireEvent.click(origin);
