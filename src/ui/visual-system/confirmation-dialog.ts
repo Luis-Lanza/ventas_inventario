@@ -32,6 +32,7 @@ export type ConfirmationDialogProps = {
   catalogCategoryPresentation?: InventoryPresentation;
   catalogCategoryArchivePresentation?: InventoryPresentation;
   catalogLocationPresentation?: InventoryPresentation & { isSourceCurrent: () => boolean };
+  confirmationPresentation?: InventoryPresentation;
   restorePresentation?: InventoryPresentation;
   historyPresentation?: HistoryPresentation;
   cancelLabel?: ReactNode;
@@ -84,6 +85,7 @@ type DialogFrameProps = {
   restorePresentation?: InventoryPresentation;
   historyPresentation?: HistoryPresentation;
   onboardingPresentation?: InventoryPresentation;
+  confirmationPresentation?: InventoryPresentation;
   kind: "confirmation" | "form" | "persisted-sale";
   focusFirstControl?: boolean;
   checkoutPresentation?: CheckoutPresentation;
@@ -99,7 +101,7 @@ type DialogFrameProps = {
 
 function DialogFrame({
   open, title, description, pending, initialFocusRef, invokerRef: externalInvokerRef, dialogId, dialogDataAttribute,
-  purpose, layout = "default", kind, focusFirstControl = false, restorePresentation, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, historyPresentation, onboardingPresentation, onCancel, children, actions,
+  purpose, layout = "default", kind, focusFirstControl = false, restorePresentation, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, historyPresentation, onboardingPresentation, confirmationPresentation, onCancel, children, actions,
 }: DialogFrameProps) {
   const generated = useId().replace(/:/g, "");
   const titleId = `${kind === "confirmation" ? "confirmation" : "form"}-title-${generated}`;
@@ -113,7 +115,11 @@ function DialogFrame({
   const history = historyPresentation;
   const restoration = purpose === "restore" ? restorePresentation : undefined;
   const onboarding = kind === "form" ? onboardingPresentation : undefined;
-  const presentation = onboarding ?? restoration ?? history ?? location ?? archive ?? product ?? category ?? (purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog" ? checkoutPresentation : inventory);
+  const specialized = onboarding ?? restoration ?? history ?? location ?? archive ?? product ?? category ?? (purpose === "routine" && layout === "checkout" && dialogDataAttribute !== "catalog-edit-dialog" ? checkoutPresentation : inventory);
+  // A family wins even without onDismiss. Only unmarked default confirmations
+  // may select the additive generic presentation; forms and receipts never do.
+  const confirmation = !specialized && kind === "confirmation" && layout === "default" && !dialogDataAttribute ? confirmationPresentation : undefined;
+  const presentation = specialized ?? confirmation;
   // Only the selected presentation can opt into unified dismissal.
   const dismissal = presentation?.onDismiss;
   const dismissRef = useRef(dismissal);
@@ -223,7 +229,7 @@ function DialogFrame({
           // Checkout may discard its cart: a disabled source remains geometry, not focus.
           const root = owner.documentElement;
           const fallback = isEligible(invoker, root) ? invoker : presentation.restoreFocusFallback();
-          if (isEligible(fallback, root, !!history)) restore(fallback);
+          if (isEligible(fallback, root, !!history || !!confirmation)) restore(fallback);
         }
       }
       dialogs.delete(container);
@@ -252,8 +258,11 @@ function DialogFrame({
     } : undefined,
   },
     createElement("div", {
-      id: dialogId ?? (purpose === "routine" && !history ? "checkout-dialog" : undefined),
+      id: dialogId ?? (purpose === "routine" && !history && !confirmation ? "checkout-dialog" : undefined),
       ref: attachFrame, role: "dialog", tabIndex: -1,
+      "data-ui-confirmation-presentation": !!confirmation || undefined,
+      "data-ui-confirmation-opening": !!confirmation && !ready || undefined,
+      "data-ui-confirmation-closing": confirmation?.closing || undefined,
       "data-ui-onboarding-category-dialog": !!onboarding || undefined,
       "data-ui-onboarding-category-opening": !!onboarding && !ready || undefined,
       "data-ui-onboarding-category-closing": onboarding?.closing || undefined,
@@ -263,7 +272,7 @@ function DialogFrame({
       "data-ui-history-correction-dialog": !!history || undefined,
       "data-ui-history-correction-stage": history?.stage,
       "data-ui-history-correction-opening": !!history && !ready || undefined,
-      "data-ui-checkout-opening": !onboarding && !restoration && !history && !inventory && !product && !category && !archive && !location && !ready || undefined,
+      "data-ui-checkout-opening": !confirmation && !onboarding && !restoration && !history && !inventory && !product && !category && !archive && !location && !ready || undefined,
       "data-ui-location-lifecycle-opening": !!location && !ready || undefined,
       "data-ui-location-lifecycle-dialog": kind === "confirmation" && purpose === "cancellation" && dialogDataAttribute === "location-lifecycle-dialog" || undefined,
       "data-ui-catalog-category-archive-opening": !!archive && !ready || undefined,
@@ -271,14 +280,14 @@ function DialogFrame({
       "data-ui-catalog-category-opening": !!category && !ready || undefined,
       "data-ui-catalog-product-dialog": !!product || undefined,
       "data-ui-catalog-product-opening": !!product && !ready || undefined,
-      "data-ui-checkout-closing": !onboarding && !restoration && !history && !inventory && presentation?.closing || undefined,
+      "data-ui-checkout-closing": !confirmation && !onboarding && !restoration && !history && !inventory && presentation?.closing || undefined,
       "data-ui-inventory-opening": !!inventory && !ready || undefined,
       "data-ui-inventory-closing": inventory?.closing || undefined,
       "aria-modal": "true", "aria-labelledby": titleId, "aria-describedby": descriptionId,
       "aria-busy": pending || undefined,
       "data-ui-confirmation-dialog": kind === "confirmation" && purpose !== "routine" || undefined,
       "data-ui-form-dialog": kind === "form" || undefined,
-      "data-ui-checkout-dialog": !history && purpose === "routine" && layout !== "inventory" && dialogDataAttribute !== "catalog-edit-dialog" || undefined,
+      "data-ui-checkout-dialog": !confirmation && !history && purpose === "routine" && layout !== "inventory" && dialogDataAttribute !== "catalog-edit-dialog" || undefined,
       "data-ui-inventory-dialog": !!inventory || undefined,
       "data-ui-catalog-edit-dialog": dialogDataAttribute === "catalog-edit-dialog" || undefined,
       "data-ui-catalog-category-archive-dialog": kind === "confirmation" && purpose === "cancellation" && dialogDataAttribute === "catalog-category-archive-dialog" || undefined,
@@ -290,7 +299,7 @@ function DialogFrame({
       kind === "persisted-sale" ? createElement("span", { className: "sale-summary-success-icon", "aria-hidden": true, "data-ui-summary-success-icon": true }, "✓") : null,
       title),
     createElement("p", { id: descriptionId }, description),
-    onboarding ? createElement("div", { "data-ui-onboarding-category-body": true }, children) : restoration ? createElement("div", { "data-ui-restore-body": true }, restoration.closing ? null : children) : history ? createElement("div", { "data-ui-history-correction-body": true }, children) : product ? createElement("div", { "data-ui-catalog-product-body": true }, children) : category ? createElement("div", { "data-ui-catalog-category-body": true }, children) : inventory ? createElement("div", { "data-ui-inventory-dialog-body": true }, children) : children,
+    confirmation ? createElement("div", { "data-ui-confirmation-body": true }, children) : onboarding ? createElement("div", { "data-ui-onboarding-category-body": true }, children) : restoration ? createElement("div", { "data-ui-restore-body": true }, restoration.closing ? null : children) : history ? createElement("div", { "data-ui-history-correction-body": true }, children) : product ? createElement("div", { "data-ui-catalog-product-body": true }, children) : category ? createElement("div", { "data-ui-catalog-category-body": true }, children) : inventory ? createElement("div", { "data-ui-inventory-dialog-body": true }, children) : children,
     typeof actions === "function" ? actions(dismissal ? () => {
       const container = dialogRef.current;
       if (!pendingRef.current && container && currentDialog(container.ownerDocument) === container) {
@@ -301,7 +310,7 @@ function DialogFrame({
 
 export function ConfirmationDialog({
   open, purpose, layout = "default", title, description, confirmLabel, confirmDisabled = false, pending = false,
-  pendingLabel = "Procesando…", initialFocusRef, invokerRef, restorePresentation, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, historyPresentation, cancelLabel = "Volver", dialogId, dialogDataAttribute, onCancel, onConfirm, children,
+  pendingLabel = "Procesando…", initialFocusRef, invokerRef, restorePresentation, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, historyPresentation, confirmationPresentation, cancelLabel = "Volver", dialogId, dialogDataAttribute, onCancel, onConfirm, children,
 }: ConfirmationDialogProps) {
   if (typeof title !== "string" || !title.trim()) throw new TypeError("ConfirmationDialog requires a nonblank title");
   if (!(typeof description === "string" && description.trim()) && !isValidElement(description)) {
@@ -314,7 +323,7 @@ export function ConfirmationDialog({
     createElement(Action, { variant: "secondary", disabled: pending || inventoryClosing, onClick: () => { if (!pending && !inventoryClosing) back(); } }, cancelLabel),
     createElement(Action, { variant: purpose === "routine" ? "primary" : "destructive", pending, pendingLabel, disabled: confirmDisabled, onClick: () => { if (!pending && !confirmDisabled) onConfirm(); } }, confirmLabel));
   return createElement(DialogFrame, {
-    open, purpose, layout, title, description, pending, initialFocusRef, invokerRef, restorePresentation, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, historyPresentation, dialogId, dialogDataAttribute,
+    open, purpose, layout, title, description, pending, initialFocusRef, invokerRef, restorePresentation, checkoutPresentation, inventoryPresentation, catalogProductPresentation, catalogCategoryPresentation, catalogCategoryArchivePresentation, catalogLocationPresentation, historyPresentation, confirmationPresentation, dialogId, dialogDataAttribute,
     kind: "confirmation", onCancel, children,
     actions,
   });

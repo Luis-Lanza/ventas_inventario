@@ -33,6 +33,12 @@ The latest adapter is used when a lifecycle epoch starts. Changing only its call
 
 CSS owns scroll locking. Checkout hides its source through CSS; Inventory and Onboarding own scoped inline opacity/pointer-events leases and restore the original values and priorities. The real source stays connected and measurable through retained close. Focus restoration belongs to `DialogFrame`, not animation completion callbacks.
 
+## Generic confirmation opt-in
+
+`ConfirmationDialog.confirmationPresentation` provides the existing frame/readiness/dismissal/focus-fallback shape for unmarked, default-layout confirmations. An actually selected specialized presentation always wins, even without `onDismiss`; forms, receipts and callers omitting the option keep their existing markup and policies.
+
+Only the selected generic presentation adds `data-ui-confirmation-presentation`, its opening/closing markers and the `data-ui-confirmation-body` wrapper. It never borrows Checkout or category-archive markers. Scoped opacity/pointer-event styles preserve measurement. Consumers adapt the existing motion driver's body selector and retain their own synchronous business action, live confirmation gate and forced-retirement policy; Frame still owns focus, top-dialog, Escape and pending/target-checked dismissal. This seam alone does not migrate archive or field-confirmation consumers.
+
 ## Inventory adapter
 
 Inventory preserves its live-origin eligibility and mode-height driver. Its existing void cancellation callback is adapted locally to accept retention; other families' void defaults are unchanged. The screen still clears credentials and business drafts synchronously, retaining only its sanitized presentation. The background inert lease follows `presented`, not the wrapper's mount lifetime, so it is released before Frame restores focus, including immediate opening Escape and invalid-origin fallback.

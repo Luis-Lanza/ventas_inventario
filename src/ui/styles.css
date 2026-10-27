@@ -223,8 +223,8 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
 [data-ui-kind="numeric"], [data-ui-kind="money"] { font-variant-numeric: tabular-nums; }
 
 [data-ui-dialog-backdrop] { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: var(--space-6); background: rgb(41 37 43 / 55%); }
-[data-ui-confirmation-dialog], [data-ui-form-dialog], [data-ui-checkout-dialog], [data-ui-catalog-edit-dialog] { inline-size: min(520px, 100%); max-block-size: 100%; overflow: auto; padding: var(--space-6); border: 1px solid var(--color-border-strong); border-radius: var(--radius-modal); background: var(--color-surface-elevated); box-shadow: var(--elevation-modal); }
-[data-ui-confirmation-dialog] > p, [data-ui-form-dialog] > p, [data-ui-checkout-dialog] > p, [data-ui-catalog-edit-dialog] > p { color: var(--color-text-muted); }
+[data-ui-confirmation-dialog], [data-ui-form-dialog], [data-ui-checkout-dialog], [data-ui-catalog-edit-dialog], [data-ui-confirmation-presentation] { inline-size: min(520px, 100%); max-block-size: 100%; overflow: auto; padding: var(--space-6); border: 1px solid var(--color-border-strong); border-radius: var(--radius-modal); background: var(--color-surface-elevated); box-shadow: var(--elevation-modal); }
+[data-ui-confirmation-dialog] > p, [data-ui-form-dialog] > p, [data-ui-checkout-dialog] > p, [data-ui-catalog-edit-dialog] > p, [data-ui-confirmation-presentation] > p { color: var(--color-text-muted); }
 [data-ui-form-dialog] > form { display: grid; gap: var(--space-4); min-inline-size: 0; }
 [data-ui-form-dialog] [data-ui-history-return], [data-ui-form-dialog] [data-ui-history-cancellation] { padding: 0; border: 0; background: transparent; }
 [data-ui-dialog-actions] { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); margin-block-start: var(--space-6); }
@@ -251,6 +251,9 @@ html:has([data-ui-catalog-category-archive-dialog]), body:has([data-ui-catalog-c
 /* State owns source paint, not the tween. Opacity preserves layout and the dialog owner's
    invoker focus/restoration ordering; never transition it or leave a duplicate painted source. */
 [data-ui-sale] button[aria-controls="checkout-dialog"][aria-expanded="true"] { opacity: 0; pointer-events: none; }
+
+/* Selected generic confirmations keep content measurable while only the frame paints. */
+[data-ui-confirmation-presentation]:is([data-ui-confirmation-opening], [data-ui-confirmation-closing]) > * { opacity: 0; pointer-events: none; }
 
 /* Keep normal layout measurable while the actual checkout frame expands. Includes late portals. */
 [data-ui-checkout-dialog][data-ui-checkout-opening] > * { visibility: hidden; pointer-events: none; }
@@ -1658,7 +1661,7 @@ html:has([data-ui-onboarding-category-dialog]), body:has([data-ui-onboarding-cat
 @media (forced-colors: active) {
   [data-ui-sales-checkout] [data-ui-field-control="money"] { border-color: CanvasText; }
   [data-ui-sales-checkout] [data-ui-field-control="money"]:has(> input:focus-visible) { outline-color: Highlight; }
-  button, input, select, textarea, [role="button"], [data-ui-status], [data-ui-panel], [data-ui-confirmation-dialog], [data-ui-form-dialog], [data-ui-checkout-dialog], [data-ui-catalog-edit-dialog], [data-ui-aligned-data] :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
+  button, input, select, textarea, [role="button"], [data-ui-status], [data-ui-panel], [data-ui-confirmation-dialog], [data-ui-form-dialog], [data-ui-checkout-dialog], [data-ui-catalog-edit-dialog], [data-ui-confirmation-presentation], [data-ui-aligned-data] :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
   [data-ui-sales-checkout-item], [data-ui-sales-checkout-settlement], [data-ui-sales-checkout] [data-ui-checkout-total] { border-color: CanvasText; forced-color-adjust: auto; }
   [data-ui-persisted-summary], [data-ui-summary-identity], [data-ui-summary-rail], .sale-summary-items, .sale-summary-items :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
   .sale-summary-receipt:focus-visible { outline-color: Highlight; }
