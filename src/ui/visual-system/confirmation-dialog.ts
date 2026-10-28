@@ -141,6 +141,10 @@ function DialogFrame({
   const onCancelRef = useRef(onCancel);
   pendingRef.current = pending;
   onCancelRef.current = onCancel;
+  // Registration belongs to the open epoch, not inline presentation identities.
+  // Retirement still uses the latest selected family and destination policy.
+  const focusPolicyRef = useRef({ kind, presentation, confirmation, inventory, product, category, archive, location, history });
+  focusPolicyRef.current = { kind, presentation, confirmation, inventory, product, category, archive, location, history };
 
   const repairFocus = (container: HTMLElement) => {
     const active = container.ownerDocument.activeElement as HTMLElement | null;
@@ -203,6 +207,7 @@ function DialogFrame({
     wasOpen.current = true;
     return () => {
       owner.removeEventListener("keydown", contain, true);
+      const { kind, presentation, confirmation, inventory, product, category, archive, location, history } = focusPolicyRef.current;
       const current = currentDialog(owner);
       const replacement = [...owner.querySelectorAll<HTMLElement>('[role="dialog"]')]
         .some((node) => node !== container && node.isConnected);
@@ -233,12 +238,19 @@ function DialogFrame({
         }
       }
       dialogs.delete(container);
-      if (!container.isConnected) {
-        invokerRef.current = null;
-        previousDialogRef.current = null;
-        wasOpen.current = false;
-      }
+      invokerRef.current = null;
+      previousDialogRef.current = null;
+      wasOpen.current = false;
     };
+    // Live event inputs use refs; presentation/ref callback identity changes must
+    // not promote a connected parent above its child or repeat initial focus.
+  }, [open]);
+
+  // Repair live controls without changing the open epoch's ownership order.
+  // This also replaces temporary frame focus once an action becomes eligible.
+  useEffect(() => {
+    const container = dialogRef.current;
+    if (open && container && currentDialog(container.ownerDocument) === container) repairFocus(container);
   });
 
   if (!open) return null;

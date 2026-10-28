@@ -25,6 +25,12 @@ Opening Escape preserves the existing compatibility behavior. The controlled cal
 
 `DialogFrame` remains the sole focus, Tab, Escape and top-dialog authority. An optional typed `onDismiss(reason)` on the **actually selected** confirmation/form presentation opts into unified dismissal. Selection priority, markers, bodies and focus policies are unchanged; merely supplying an unselected presentation does not opt in. Backdrop dismissal requires the backdrop itself as the event target, no pending operation, and current top-dialog ownership before preventing default. Footer dismissal also checks pending/top ownership. Without the adapter, existing `onCancel`/Checkout `onBack` and family backdrop policies remain unchanged; receipts still allow only Nueva venta.
 
+## Shared focus ownership
+
+Frame registration follows each open epoch, not parent renders or inline presentation identities. Event handlers and retirement read current pending, dismissal and selected-family policies through refs. A parent render cannot promote its dialog above an open child or repeat initial focus.
+
+Live focus repair runs separately and only for the registered top dialog. It replaces temporary frame focus when actions become enabled and repairs focus when a focused control disappears, without stealing a child's valid focus. Default and specialized dialogs keep their existing initial-focus and restoration policies.
+
 ## Optional family motion adapter
 
 Pass `motion(frame, opening, complete, direction, closingFrame)` to `useDialogLifecycle` to adapt a family's existing motion wrapper. It returns the existing controller's `finish()` and `dispose()` methods; omitting it uses `startCheckoutMotion` unchanged. An adapter may delegate to that driver with its sixth structure argument for family body/actions selectors and preserve family eligibility or stage rules.
