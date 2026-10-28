@@ -1163,6 +1163,35 @@ html:has([data-ui-location-lifecycle-dialog]), body:has([data-ui-location-lifecy
 [data-ui-sales-product-detail-facts] dt, [data-ui-sales-product-detail-attributes] dt { color: var(--color-text-muted); font-weight: var(--weight-semibold); }
 [data-ui-sales-product-detail-facts] dd, [data-ui-sales-product-detail-attributes] dd { min-inline-size: 0; margin: 0; overflow-wrap: anywhere; }
 [data-ui-sales-product-detail-attributes] > div { display: contents; }
+/* Approved A: one read-only sheet, with the existing Frame's close action in its header row. */
+[data-ui-sales-product-detail], [data-ui-sales-image-viewer] {
+  grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto;
+  inline-size: min(680px, 100%); padding: 24px; border-radius: 32px; gap: 20px;
+}
+[data-ui-sales-product-detail] > h2, [data-ui-sales-image-viewer] > h2 { grid-column: 1; grid-row: 1; align-self: center; }
+[data-ui-sales-product-detail] > p, [data-ui-sales-image-viewer] > p { display: none; }
+[data-ui-sales-product-detail] > [data-ui-dialog-actions], [data-ui-sales-image-viewer] > [data-ui-dialog-actions] { grid-column: 2; grid-row: 1; margin: 0; padding: 0; border: 0; }
+[data-ui-sales-product-detail] > [data-ui-dialog-actions] > button, [data-ui-sales-image-viewer] > [data-ui-dialog-actions] > button { min-block-size: 44px; padding: 10px 18px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-text); }
+[data-ui-sales-product-detail] > [data-ui-confirmation-body], [data-ui-sales-image-viewer] > [data-ui-confirmation-body] { grid-column: 1 / -1; grid-row: 2; min-inline-size: 0; min-block-size: 0; }
+[data-ui-sales-detail-content] { grid-template-columns: minmax(130px, .95fr) minmax(160px, 1.25fr); gap: 20px; }
+[data-ui-sales-detail-image-trigger], [data-ui-sales-detail-placeholder] { inline-size: 100%; min-block-size: 240px; border-radius: 24px; padding: 16px; }
+[data-ui-sales-detail-image] { block-size: 210px; border-radius: 24px; }
+[data-ui-sales-product-detail-facts] { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+[data-ui-sales-detail-fact] { grid-column: 1 / -1; min-inline-size: 0; }
+[data-ui-sales-detail-fact] dt { font-size: 12px; }
+[data-ui-sales-detail-fact] dd { font-weight: var(--weight-semibold); }
+[data-ui-sales-detail-fact="Stock"] dd { display: inline-block; padding: 5px 10px; border-radius: 999px; background: var(--color-surface-subtle); }
+[data-ui-sales-detail-fact="Precio de venta"] { border-block-start: 1px solid var(--color-border); padding-block-start: 12px; }
+[data-ui-sales-detail-fact="Precio de venta"] dd { font-size: 28px; font-variant-numeric: tabular-nums; }
+[data-ui-sales-detail-fact="Precio de compra"], [data-ui-sales-detail-fact="Precio mínimo de venta"] { grid-column: auto; }
+[data-ui-sales-product-detail-attributes] { margin-block-start: 20px; padding-block-start: 16px; border-block-start: 1px solid var(--color-border); }
+[data-ui-sales-image-viewer] { inline-size: min(900px, 100%); }
+[data-ui-sales-image-viewer] > [data-ui-confirmation-body] { padding: 16px; border-radius: 24px; background: var(--color-surface-subtle); }
+@media (max-width: 520px) {
+  [data-ui-sales-detail-content] { grid-template-columns: minmax(0, 1fr); }
+  [data-ui-sales-detail-image-trigger] { max-inline-size: none; }
+  [data-ui-sales-detail-image-trigger], [data-ui-sales-detail-placeholder] { min-block-size: 160px; }
+}
 @media (min-width: 961px) {
   [data-ui-sale-layout] { min-block-size: 0; grid-template-rows: minmax(0, 1fr); }
   [data-ui-sale-layout] > [data-ui-panel]:first-child { min-block-size: 0; display: flex; flex-direction: column; }

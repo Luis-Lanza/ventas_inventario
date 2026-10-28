@@ -341,6 +341,20 @@ export function ConfirmationDialog({
   });
 }
 
+/** Additive read-only surface; the existing Frame remains the sole focus owner. */
+export function ReadOnlyDialog({ title, closeLabel, invokerRef, presentation, pending = false, onClose, children }: {
+  title: string; closeLabel: string; invokerRef: RefObject<HTMLElement>;
+  presentation: InventoryPresentation; pending?: boolean; onClose: () => void; children?: ReactNode;
+}) {
+  return createElement(DialogFrame, {
+    open: true, kind: "confirmation", purpose: "cancellation", title,
+    description: createElement("span", { hidden: true }, title),
+    pending, invokerRef, confirmationPresentation: presentation, onCancel: onClose, children,
+    actions: createElement("div", { "data-ui-dialog-actions": true },
+      createElement("button", { type: "button", "aria-label": closeLabel, disabled: pending, onClick: onClose }, "Cerrar")),
+  });
+}
+
 /** Accepted persisted receipts can only transition through the explicit new-sale action. */
 export function PersistedSaleDialog({ children, onNewSale }: { children?: ReactNode; onNewSale: () => void }) {
   return createElement(DialogFrame, {

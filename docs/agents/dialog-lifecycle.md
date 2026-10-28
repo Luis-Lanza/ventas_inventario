@@ -1,6 +1,6 @@
 # Shared retained dismissal
 
-`useDialogLifecycle` keeps the actual frame alive while an accepted, ready dismissal reverses to the source button. Checkout, Inventory, Onboarding category creation, History corrections, Backup restore confirmation, Catalog editors and nested confirmations, and location confirmations use the shared lifecycle. Optional adapters preserve family-specific motion and caller policies. The separately planned product-detail redesign still requires mockup approval.
+`useDialogLifecycle` keeps the actual frame alive while an accepted, ready dismissal reverses to the source button. Checkout, Inventory, Onboarding category creation, History corrections, Backup restore confirmation, Catalog editors and nested confirmations, and location confirmations use the shared lifecycle. Optional adapters preserve family-specific motion and caller policies. The product-detail sheet and nested image viewer use the approved balanced design A and the same retained lifecycle.
 
 ## Dismissal routes
 
@@ -87,8 +87,16 @@ Location management opts into the specialized wrapper's shared-lifecycle path; c
 
 Ready dismissal retains the actual frame and pre-withdrawal measurements; opening Escape remains immediate. Assigned-location refusals preserve the row and publish the full explanation once, then reverse toward an unchanged eligible source. Success changing the operation or removing the row retires without reversing toward a stale destination. Committed source eligibility is rechecked after pending clears; geometry only governs motion, never native admission. Source leases restore exact inline values and priorities, and shared Frame remains the sole focus authority.
 
+## Read-only Sales detail and image viewer
+
+`ReadOnlyDialog` adds a close-only surface over the existing Frame without changing other dialog policies. List and checkout detail use the approved balanced sheet: image left, identity/prices right, attributes below, with responsive stacking. List detail keeps its browse facts; checkout detail keeps the added-line snapshot rather than the edited final sale price. Neither surface edits or submits a sale.
+
+Both detail and image viewer capture their actual clicked source before hiding it, preserve source geometry and inline priorities, reverse the same frame on ready dismissal, and cancel opening Escape immediately. The parent detail remains connected and hidden while the viewer is presented. Child ref detachment releases its source styles and the owned parent visibility before Frame restores focus. Read-only host retirement is epoch-guarded; it unlocks the existing checkout cancellation policy without discarding the sale draft.
+
+Original images load only on viewer opening. Closing invalidates delivery immediately; a resolved image may remain during reverse presentation, but late or mismatched responses cannot revive a closed viewer. Loading, unavailable, error and no-thumbnail states retain their existing copy. Presentation completion owns no sale, session, payment, discard or native mutation callback.
+
 ## Retirement and verification
 
 Disposal uses the existing driver's invalidation-before-style-cleanup ordering, so stale completions cannot replay actions. Reopening/replacement/unmount invalidate the prior presentation. Forced retirement bypasses retention; confirmed App restore and receipt replacement must never wait for motion or dispatch dismissal as a side effect.
 
-Mounted tests use isolated command fixtures and controlled GSAP completions. Their CSS/connected-node assertions and fixed metrics are JSDOM evidence, not browser-pixel, Windows or native-runtime approval. Review Checkout and the optional adapter first, then Inventory's source ownership, immediate opening Escape, retained ready routes, mode-height preservation and pending-save/focus fallback cases. For Onboarding, also inspect native form association and the dynamic 600px-to-400px fixture: the reverse must begin at the pre-reset height while the business result is already applied. This does not approve browser pixels, Windows behavior or the separately planned product-detail redesign.
+Mounted tests use isolated command fixtures and controlled GSAP completions. Their CSS/connected-node assertions and fixed metrics are JSDOM evidence, not browser-pixel, Windows or native-runtime approval. Review Checkout and the optional adapter first, then Inventory's source ownership, immediate opening Escape, retained ready routes, mode-height preservation and pending-save/focus fallback cases. For Onboarding, also inspect native form association and the dynamic 600px-to-400px fixture: the reverse must begin at the pre-reset height while the business result is already applied. This does not approve browser pixels or Windows behavior.

@@ -618,7 +618,10 @@ test("Sales product identity opens an accessible read-only detail with every ord
     const closeButton = within(detail).getByRole("button", { name: "Cerrar detalle del producto" });
     assert.equal(detail.getAttribute("data-ui-density"), "compact");
     const detailContent = detail.querySelector('[data-ui-sales-detail-content="true"]')!;
-    assert.deepEqual(Array.from(detailContent.children, (child) => child.hasAttribute("data-ui-sales-detail-image-trigger") ? "image" : child.hasAttribute("data-ui-sales-product-detail-facts") ? "facts" : child.hasAttribute("data-ui-sales-product-detail-attributes") ? "attributes" : "unexpected"), ["image", "facts", "attributes"]);
+    assert.deepEqual(Array.from(detailContent.children, (child) => child.hasAttribute("data-ui-sales-detail-image-trigger") ? "image" : child.hasAttribute("data-ui-sales-product-detail-facts") ? "facts" : "unexpected"), ["image", "facts"]);
+    const attributes = within(detail).getByLabelText("Atributos del producto");
+    assert.equal(detailContent.contains(attributes), false, "approved A keeps attributes outside the image/facts grid");
+    assert.equal(detailContent.nextElementSibling === attributes, true, "all attributes follow below at full width");
     assert.equal(document.activeElement, closeButton);
     const zoomTrigger = within(detail).getByRole("button", { name: "Ampliar imagen del producto Filter" });
     await userEvent.keyboard("{Tab}");

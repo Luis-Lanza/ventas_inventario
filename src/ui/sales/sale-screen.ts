@@ -65,6 +65,9 @@ export function SaleScreen(props: SaleScreenProps) {
   const thumbnailCache = useRef(new Map<string, string>());
   const [checkoutDetail, setCheckoutDetail] = useState<SalesBrowseProduct | null>(null);
   const checkoutDetailTriggerRef = useRef<HTMLElement | null>(null);
+  const [checkoutDetailOpen, setCheckoutDetailOpen] = useState(false);
+  const [checkoutDetailOpening, setCheckoutDetailOpening] = useState<CheckoutOpening | null>(null);
+  const checkoutDetailSequence = useRef(0);
   const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null), checkoutInitialFocusRef = useRef<HTMLInputElement>(null), checkoutTriggerRef = useRef<HTMLButtonElement>(null);
   const searchSequence = useRef(0), browseThumbnailAttempt = useRef(0), browserRef = useRef(browser), mounted = useRef(true), focusSearchOnDraftMount = useRef(false);
   const locked = () => closingRef.current || session.getSnapshot().confirmation === "pending";
@@ -192,7 +195,13 @@ export function SaleScreen(props: SaleScreenProps) {
           createElement("span", { className: "sale-price-fact-accessible" }, `Precio mínimo de venta: ${formatBs(line.minimum_price_centavos)}`))),
       createElement("span", { "data-ui-sales-purchase-price-reference": true }, `Precio de compra (referencia): ${line.product_snapshot.purchase_price_centavos === null ? "No registrado" : formatBs(line.product_snapshot.purchase_price_centavos)}`),
       createElement("div", { "data-ui-sales-cart-actions": true },
-        createElement(Action, { variant: "tertiary", disabled: pending, onClick: (event: { currentTarget: HTMLElement }) => { checkoutDetailTriggerRef.current = event.currentTarget; setCheckoutDetail({ ...line.product_snapshot, attribute_values: line.product_snapshot.attribute_values.map((attribute) => ({ ...attribute })) }); } }, "Ver detalles"),
+        createElement(Action, { variant: "tertiary", disabled: pending, onClick: (event: { currentTarget: HTMLElement }) => {
+          if (locked()) return;
+          checkoutDetailTriggerRef.current = event.currentTarget;
+          setCheckoutDetailOpening(captureCheckoutOpening(event.currentTarget, ++checkoutDetailSequence.current));
+          setCheckoutDetail({ ...line.product_snapshot, attribute_values: line.product_snapshot.attribute_values.map((attribute) => ({ ...attribute })) });
+          setCheckoutDetailOpen(true);
+        } }, "Ver detalles"),
         createElement(Action, { variant: "tertiary", "aria-label": `Quitar ${line.product_name}`, disabled: pending, onClick: () => draftDispatch({ type: "remove_product", product_id: line.product_id }) }, "Quitar"))),
     createElement("div", { "data-ui-sale-cart-controls": true },
       createElement(Field, { kind: "quantity", label: `Cantidad de ${line.product_name}`, error: state.feedback === "Ingresá una cantidad entera mayor que cero." ? state.feedback : undefined, control: createElement("input", { min: 1, value: line.quantity, disabled: pending, onChange: (event) => draftDispatch({ type: "line_quantity_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
@@ -218,7 +227,12 @@ export function SaleScreen(props: SaleScreenProps) {
       state.feedback && !(notifications && (routineOutcome || sharedRejection)) && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
       createElement("div", { "data-ui-sale-actions": true },
         createElement(Action, { variant: "tertiary", disabled: pending, onClick: onDiscard }, "Descartar borrador")),
-    checkoutDetail ? createElement(SalesProductDetail, { key: checkoutDetail.product_id, product: checkoutDetail, thumbnails: checkoutDetailThumbnails, loadOriginal: catalogProductImageCommands.salesOriginal, triggerRef: checkoutDetailTriggerRef, onClose: () => setCheckoutDetail(null) }) : null));
+    checkoutDetail ? createElement(SalesProductDetail, { key: checkoutDetailOpening?.id ?? checkoutDetail.product_id, open: checkoutDetailOpen, opening: checkoutDetailOpening, product: checkoutDetail, thumbnails: checkoutDetailThumbnails, loadOriginal: catalogProductImageCommands.salesOriginal, triggerRef: checkoutDetailTriggerRef, onClose: () => setCheckoutDetailOpen(false),
+      onRetired: () => {
+        if (checkoutDetailSequence.current !== checkoutDetailOpening?.id) return;
+        // The checkout guard stays locked through reverse, not after retirement.
+        setCheckoutDetail(null); setCheckoutDetailOpening(null);
+      } }) : null));
   const summaryLines = state.lines.map((line) => createElement("li", { key: line.product_id, "data-ui-sale-summary-line": true },
     createElement("strong", null, line.product_name),
     createElement("span", { "data-ui-sku": true }, line.sku),

@@ -352,8 +352,19 @@ test("T4: discard empties the session synchronously but contracts the pre-reset 
 test("T4: nested checkout detail refuses Volver without cancelling or starting reverse presentation", async (t) => {
   mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : undefined);
   const session = createSaleSession(() => UUID);
-  const completions: Array<() => void> = [];
-  t.mock.method(gsap, "to", (_target: unknown, vars: gsap.TweenVars) => { completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
+  const completions: Array<() => void> = [], targets: unknown[] = [];
+  // Both openings use controlled GSAP completion; keep only their fallback deadlines controlled too.
+  const schedule = window.setTimeout.bind(window), cancel = window.clearTimeout.bind(window);
+  const deadlines = new Set<number>(); let nextDeadline = -1;
+  t.mock.method(window, "setTimeout", (...args: Parameters<typeof window.setTimeout>) => {
+    if (args[1] === 350 && typeof args[0] === "function" && args[0].name === "finish") {
+      const id = nextDeadline--; deadlines.add(id); return id;
+    }
+    return schedule(...args);
+  });
+  t.mock.method(window, "clearTimeout", (id?: number) => { if (!deadlines.delete(id ?? 0)) cancel(id); });
+  t.after(() => deadlines.clear());
+  t.mock.method(gsap, "to", (target: unknown, vars: gsap.TweenVars) => { targets.push(target); completions.push(vars.onComplete as () => void); return {} as gsap.core.Tween; });
   t.mock.method(HTMLElement.prototype, "getBoundingClientRect", () => ({ left: 100, top: 40, width: 900, height: 600 } as DOMRect));
   render(createElement(SaleScreen, { session }));
   fireEvent.click(await screen.findByRole("button", { name: "Agregar" }));
@@ -368,12 +379,14 @@ test("T4: nested checkout detail refuses Volver without cancelling or starting r
   assert.deepEqual(session.getSnapshot().lines, beforeBackdrop.lines);
   assert.deepEqual(session.getSnapshot().payment, beforeBackdrop.payment);
   assert.equal(checkout.hasAttribute("data-ui-checkout-closing"), false);
-  assert.equal(completions.length, 1);
+  assert.equal(completions.length, 2, "checkout and its detail each open once");
+  assert.deepEqual(targets.map(target => target === checkout ? "checkout" : target === detail ? "detail" : "other"), ["checkout", "detail"]);
   assert.ok(detail.contains(document.activeElement));
   fireEvent.click(within(checkout).getByRole("button", { name: "Volver" }));
   assert.equal(session.getSnapshot().checkoutOpen, true);
   assert.equal(checkout.hasAttribute("data-ui-checkout-closing"), false);
-  assert.equal(completions.length, 1);
+  assert.equal(completions.length, 2, "the blocked parent action starts no reverse");
+  assert.equal(targets.filter(target => target === checkout).length, 1);
   assert.ok(detail.contains(document.activeElement));
   fireEvent.keyDown(detail, { key: "Escape" });
   assert.equal(session.getSnapshot().checkoutOpen, true);
