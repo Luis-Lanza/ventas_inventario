@@ -5,7 +5,7 @@ import { productLocationCommands, type ProductLocationRecord } from "../../comma
 import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { captureCatalogEditorOpening, type CatalogEditorOpening } from "../visual-system/catalog-editor-motion.ts";
-import { CatalogLocationLifecycleDialog, CatalogLocationLifecycleRetirement, type LocationOperation } from "../visual-system/catalog-location-lifecycle-dialog.ts";
+import { CatalogLocationLifecycleDialog, type LocationOperation } from "../visual-system/catalog-location-lifecycle-dialog.ts";
 import { createLocationManagementFlow, generateLocationCode, initialLocationManagementState, LOCATION_TEMPLATES, validateLocationSchema, validateLocationValues } from "./location-management-flow.ts";
 
 const locationError = (code: string) => code === "validation_error" ? "Revisá los nombres de segmentos y valores; no pueden estar vacíos ni repetirse." : code === "location_schema_in_use" ? "Ya existen ubicaciones físicas. El esquema y su orden no se pueden cambiar." : code === "duplicate_location_code" ? "Ya existe una ubicación con ese código. Elegí otros valores." : code === "location_in_use" ? "Esta ubicación está asignada a un producto. Para desactivarla o eliminarla, quitá la asignación desde la edición del producto y después volvé a intentarlo." : code === "stale_location" ? "La ubicación cambió. Recargá los datos antes de volver a intentar." : code === "location_unavailable" ? "La ubicación ya no está disponible. Recargá los datos." : "No se pudo completar el cambio de ubicación.";
@@ -25,19 +25,21 @@ export function LocationManagementScreen() {
   const [confirm, setConfirm] = useState<{ location: ProductLocationRecord; operation: "deactivate" | "delete" } | null>(null);
   const [pending, setPending] = useState(false);
   const epoch = useRef(0);
-  const opening = useRef<CatalogEditorOpening | null>(null);
-  const [retiring, setRetiring] = useState<{ opening: CatalogEditorOpening; snapshot: CatalogEditorOpening; locationId: number; operation: LocationOperation; sourceLabel: string } | null>(null);
+  // Presentation survives consent withdrawal without retaining a business record.
+  const [presentation, setPresentation] = useState<{ opening: CatalogEditorOpening; locationId: number; operation: LocationOperation; code: string; settled: boolean } | null>(null);
+  const withdrawn = useRef(true);
   const openConfirmation = (location: ProductLocationRecord, operation: LocationOperation, source: HTMLElement) => {
     if (locked.current) return;
-    setRetiring(null);
-    opening.current = captureCatalogEditorOpening(source, ++epoch.current);
+    const opening = captureCatalogEditorOpening(source, ++epoch.current);
+    withdrawn.current = false;
+    setPresentation({ opening, locationId: location.location_id, operation, code: location.code, settled: false });
     setConfirm({ location, operation });
   };
-  const closeConfirmation = () => {
-    const frame = document.getElementById("location-lifecycle-confirmation");
-    if (opening.current && confirm && frame) setRetiring({ opening: opening.current, snapshot: captureCatalogEditorOpening(frame, opening.current.id), locationId: confirm.location.location_id, operation: confirm.operation, sourceLabel: `${confirm.operation === "delete" ? "Eliminar" : "Desactivar"} ${confirm.location.code}` });
-    opening.current = null;
+  const closeConfirmation = (settled = false) => {
+    withdrawn.current = true;
     setConfirm(null);
+    if (settled) setPresentation((current) => current ? { ...current, settled: true } : current);
+    return true;
   };
   const mounted = useRef(true);
   const locked = useRef(false);
@@ -104,19 +106,19 @@ export function LocationManagementScreen() {
     const current = request.current;
     const response = active ? await (operations?.mutations.locations.activate ?? productLocationCommands.activate)({ location_id: location.location_id, expected_revision: location.revision }) : await (operations?.mutations.locations.deactivate ?? productLocationCommands.deactivate)({ location_id: location.location_id, expected_revision: location.revision });
     if (!ownerCurrent() || !mounted.current || current !== request.current) return;
-    locked.current = false; setPending(false); closeConfirmation();
+    locked.current = false; setPending(false); closeConfirmation(true);
     if (response.kind === "error") fail(response.code);
     else if (response.kind === "location_success") succeed({ type: "succeeded", notice: `Ubicación ${response.location.code} ${active ? "activada" : "desactivada"}.`, location: response.location });
     else fail("persistence_failure", "No se pudo confirmar el estado actualizado.");
   };
   const deleteLocation = async () => {
     const location = confirm?.location;
-    if (!location || locked.current) return;
+    if (!location || locked.current || withdrawn.current) return;
     locked.current = true; setPending(true); dispatch({ type: "started" });
     const current = request.current;
     const response = await (operations?.mutations.locations.delete ?? productLocationCommands.delete)({ location_id: location.location_id, expected_revision: location.revision });
     if (!ownerCurrent() || !mounted.current || current !== request.current) return;
-    locked.current = false; setPending(false); closeConfirmation();
+    locked.current = false; setPending(false); closeConfirmation(true);
     if (response.kind === "error") fail(response.code);
     else if (response.kind === "deleted") succeed({ type: "succeeded", notice: `Ubicación ${location.code} eliminada.`, location_id: location.location_id });
     else fail("persistence_failure", "No se pudo confirmar la eliminación.");
@@ -175,6 +177,15 @@ export function LocationManagementScreen() {
           createElement("p", { "data-ui-location-generated-code": true, "aria-live": "polite" }, "Código generado: ", createElement("code", null, generateLocationCode(values.slice(0, state.schema.segments.length)) || "Completá los valores")),
           createElement(Action, { variant: "primary", type: "submit", disabled: pending }, "Crear ubicación"))),
       physicalLocationList) : null,
-    retiring ? createElement(CatalogLocationLifecycleRetirement, { ...retiring, key: retiring.opening.id, onRetired: () => setRetiring((current) => current?.opening.id === retiring.opening.id ? null : current) }) : null,
-    confirm && opening.current ? createElement(CatalogLocationLifecycleDialog, { key: opening.current.id, opening: opening.current, code: confirm.location.code, locationId: confirm.location.location_id, operation: confirm.operation, pending, restoreFocusFallback: () => locationHeading.current, onCancel: () => { if (!pending && !locked.current) closeConfirmation(); }, onConfirm: () => confirm.operation === "delete" ? void deleteLocation() : void updateActivity(confirm.location, false) }) : null);
+    presentation ? createElement(CatalogLocationLifecycleDialog, {
+      key: presentation.opening.id, ...presentation, pending,
+      lifecycle: { open: !!confirm, settled: presentation.settled },
+      restoreFocusFallback: () => locationHeading.current,
+      onCancel: () => { if (locked.current || withdrawn.current) return false; return closeConfirmation(); },
+      onConfirm: () => {
+        if (withdrawn.current || !confirm || locked.current) return;
+        if (confirm.operation === "delete") void deleteLocation();
+        else void updateActivity(confirm.location, false);
+      },
+    }) : null);
 }

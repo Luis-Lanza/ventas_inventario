@@ -1,6 +1,6 @@
 # Shared retained dismissal
 
-`useDialogLifecycle` keeps the actual frame alive while an accepted, ready dismissal reverses to the source button. Checkout, Inventory, Onboarding category creation, History corrections, Backup restore confirmation and Catalog editors use the shared lifecycle. Optional adapters preserve family-specific motion and caller policies; the remaining families still need migration, so S7 is not complete.
+`useDialogLifecycle` keeps the actual frame alive while an accepted, ready dismissal reverses to the source button. Checkout, Inventory, Onboarding category creation, History corrections, Backup restore confirmation, Catalog editors and nested confirmations, and location confirmations use the shared lifecycle. Optional adapters preserve family-specific motion and caller policies. The separately planned product-detail redesign still requires mockup approval.
 
 ## Dismissal routes
 
@@ -81,8 +81,14 @@ Operation identity and committed layout visibility control consent; absent measu
 
 Retiring a category field changes only its editor draft; explicit schema save owns persistence. The connected parent editor and draft remain intact through nested dismissal. Legacy category-wrapper void callbacks keep caller-controlled ownership.
 
+## Location confirmations
+
+Location management opts into the specialized wrapper's shared-lifecycle path; callers omitting the option retain the legacy opening and retirement exports. The source must still match location ID, operation and accessible label before confirmation. Cancellation withdraws consent synchronously, while valid deactivate/delete calls retain their immediate native-owned payloads and exact `Actualizando…` pending copy.
+
+Ready dismissal retains the actual frame and pre-withdrawal measurements; opening Escape remains immediate. Assigned-location refusals preserve the row and publish the full explanation once, then reverse toward an unchanged eligible source. Success changing the operation or removing the row retires without reversing toward a stale destination. Committed source eligibility is rechecked after pending clears; geometry only governs motion, never native admission. Source leases restore exact inline values and priorities, and shared Frame remains the sole focus authority.
+
 ## Retirement and verification
 
 Disposal uses the existing driver's invalidation-before-style-cleanup ordering, so stale completions cannot replay actions. Reopening/replacement/unmount invalidate the prior presentation. Forced retirement bypasses retention; confirmed App restore and receipt replacement must never wait for motion or dispatch dismissal as a side effect.
 
-Mounted tests use isolated command fixtures and controlled GSAP completions. Their CSS/connected-node assertions and fixed metrics are JSDOM evidence, not browser-pixel, Windows or native-runtime approval. Review Checkout and the optional adapter first, then Inventory's source ownership, immediate opening Escape, retained ready routes, mode-height preservation and pending-save/focus fallback cases. For Onboarding, also inspect native form association and the dynamic 600px-to-400px fixture: the reverse must begin at the pre-reset height while the business result is already applied. This does not approve browser pixels or complete the remaining T5 families.
+Mounted tests use isolated command fixtures and controlled GSAP completions. Their CSS/connected-node assertions and fixed metrics are JSDOM evidence, not browser-pixel, Windows or native-runtime approval. Review Checkout and the optional adapter first, then Inventory's source ownership, immediate opening Escape, retained ready routes, mode-height preservation and pending-save/focus fallback cases. For Onboarding, also inspect native form association and the dynamic 600px-to-400px fixture: the reverse must begin at the pre-reset height while the business result is already applied. This does not approve browser pixels, Windows behavior or the separately planned product-detail redesign.
