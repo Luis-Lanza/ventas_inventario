@@ -869,7 +869,7 @@ test("shows authoritative category count, state, searchable rows, archive confir
   const archive = within(activeRow).getByRole("button", { name: "Archivar Filtros" });
   await userEvent.click(archive);
   const confirmation = await screen.findByRole("dialog", { name: "Archivar Filtros" });
-  assert.equal(confirmation.getAttribute("data-ui-catalog-category-archive-dialog"), "true");
+  assert.equal(confirmation.getAttribute("data-ui-confirmation-presentation"), "true");
   assert.equal(requests.length, 1);
   await userEvent.click(within(confirmation).getByRole("button", { name: "Volver" }));
   assert.equal(requests.length, 1);
@@ -937,7 +937,7 @@ for (const activity of ["active", "archived"] as const) {
       await userEvent.click(within(dialog).getByRole("button", { name: "Confirmar archivo" }));
       const pendingConfirm = within(dialog).getByRole("button", { name: "Archivando…" });
       assert.equal(pendingConfirm.hasAttribute("disabled"), true);
-      await userEvent.click(pendingConfirm);
+      fireEvent.click(pendingConfirm);
       await userEvent.keyboard("{Escape}");
       assert.ok(screen.getByRole("dialog", { name: "Archivar Filtros" }));
     } else {
@@ -946,7 +946,9 @@ for (const activity of ["active", "archived"] as const) {
     assert.ok(within(row).getByText("Actualizando categoría…"));
     for (const button of management.querySelectorAll("[data-ui-category-actions] button")) {
       assert.equal(button.hasAttribute("disabled"), true);
-      await userEvent.click(button);
+      // Exercise imperative reentry too: the captured source is deliberately
+      // pointer-hidden, independently of the disabled business guard.
+      fireEvent.click(button);
     }
     assert.deepEqual(requests, [{ target: "category", entity_id: 4, intent: activity === "active" ? "archive" : "reactivate", expected_revision: 2 }]);
     record = { ...record, activity: activity === "active" ? "archived" : "active", revision: 3 };
@@ -1150,7 +1152,7 @@ test("category opening survives the loading lock without replay on detail, error
   const archive = within(frame).getByRole("button", { name: "Archivar" });
   await userEvent.click(archive);
   const confirmation = screen.getByRole("dialog", { name: "Archivar Filtros" });
-  assert.equal(confirmation.getAttribute("data-ui-catalog-category-archive-dialog"), "true");
+  assert.equal(confirmation.getAttribute("data-ui-confirmation-presentation"), "true");
   assert.equal(confirmation.parentElement?.parentElement, document.body);
   await userEvent.keyboard("{Escape}");
   assert.equal(document.activeElement, archive);
@@ -1161,7 +1163,7 @@ test("category opening survives the loading lock without replay on detail, error
   assert.equal(document.querySelector("[data-ui-catalog-category-retirement]"), null, "no copied retirement modal");
   assert.equal(opener.style.opacity, "0");
   assert.equal(writes, 0);
-  assert.equal(tweens, 4, "editor and archive each open and retire once");
+  assert.equal(tweens, 3, "editor opens and retires; opening Escape cancels archive without reverse");
   act(() => complete?.());
   assert.equal(screen.queryByRole("dialog"), null);
   assert.equal(document.activeElement, opener);
@@ -1200,8 +1202,7 @@ for (const outcome of ["cancel", "success", "blocked", "failure"] as const) test
     await userEvent.keyboard("{Escape}");
     assert.equal(screen.queryByRole("dialog", { name: "Archivar Filtros" }), null);
     assert.equal(writes, 0);
-    const surface = document.querySelector("[data-ui-catalog-category-archive-retirement]")!;
-    assert.equal(surface.textContent, ""); assert.equal(surface.querySelector("button,[role=dialog]"), null);
+    assert.equal(document.querySelector("[data-ui-catalog-category-archive-retirement]"), null, "opening Escape leaves no copied retirement surface");
     assert.equal(document.activeElement, source);
     // Reopen before retirement completes: the old completion must not touch the new dialog.
     const old = completions.at(-1)!;
@@ -1226,6 +1227,11 @@ for (const outcome of ["cancel", "success", "blocked", "failure"] as const) test
   } else {
     await act(async () => resolveMutation({ kind: "error", code: outcome === "blocked" ? "lifecycle_blocked" : "persistence_failure" }));
     assert.equal(completions.length, before + 2, "failed archive still closes with presentation-only retirement");
+    assert.equal(targets.at(-1), confirmation, "settlement reverses the same actual frame");
+    assert.equal(screen.getByRole("dialog", { name: "Archivar Filtros" }), confirmation);
+    assert.equal(confirmation.getAttribute("data-ui-confirmation-closing"), "true");
+    assert.equal(writes, 1, "settlement starts no second mutation");
+    act(() => completions.at(-1)!());
   }
   assert.equal(screen.queryByRole("dialog", { name: "Archivar Filtros" }), null);
   assert.equal(writes, 1);

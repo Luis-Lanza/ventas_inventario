@@ -45,7 +45,7 @@ A retiring generic child may restore focus into its still-connected parent dialo
 
 `ConfirmationDialog.confirmationPresentation` provides the existing frame/readiness/dismissal/focus-fallback shape for unmarked, default-layout confirmations. An actually selected specialized presentation always wins, even without `onDismiss`; forms, receipts and callers omitting the option keep their existing markup and policies.
 
-Only the selected generic presentation adds `data-ui-confirmation-presentation`, its opening/closing markers and the `data-ui-confirmation-body` wrapper. It never borrows Checkout or category-archive markers. Scoped opacity/pointer-event styles preserve measurement. Consumers adapt the existing motion driver's body selector and retain their own synchronous business action, live confirmation gate and forced-retirement policy; Frame still owns focus, top-dialog, Escape and pending/target-checked dismissal. This seam alone does not migrate archive or field-confirmation consumers.
+Only the selected generic presentation adds `data-ui-confirmation-presentation`, its opening/closing markers and the `data-ui-confirmation-body` wrapper. It never borrows Checkout or category-archive markers. Scoped opacity/pointer-event styles preserve measurement. Consumers adapt the existing motion driver's body selector and retain their own synchronous business action, live confirmation gate and forced-retirement policy; Frame still owns focus, top-dialog, Escape and pending/target-checked dismissal. Catalog archive and nested field confirmations now select this generic seam; location migration remains a separate unit.
 
 ## Inventory adapter
 
@@ -71,7 +71,15 @@ Outcome-driven retirement bypasses cancellation and reverse motion. App remains 
 
 Product/category editors retain the same measured frame after synchronous draft discard, keeping only persisted list identity for the presentation host. Both confirmation and native form submission cross live dismissal and image-ownership guards before the existing edit owner is invoked. The original unassociated footer and product Enter behavior remain unchanged; static void callers still control their own dismissal.
 
-Opening uses the existing enabled-at-capture policy; reverse uses the existing live-origin eligibility checks. Source opacity/pointer-event ownership restores exact inline priorities and preserves geometry. Pending detail, schema, image and save work still excludes unsafe actions; nested field confirmation remains the top owner. Payloads, revisions, validation, retry, accepted refresh and notifications stay outside animation completion. Archive/field-confirmation and location presentation migrations remain separate work units.
+Opening uses the existing enabled-at-capture policy; reverse uses the existing live-origin eligibility checks. Source opacity/pointer-event ownership restores exact inline priorities and preserves geometry. Pending detail, schema, image and save work still excludes unsafe actions; nested field confirmation remains the top owner. Payloads, revisions, validation, retry, accepted refresh and notifications stay outside animation completion. Archive/field-confirmation integration is described below; location presentation migration remains a separate work unit.
+
+## Catalog archive and field confirmations
+
+`CatalogConfirmationDialog` reuses the shared lifecycle and existing Catalog motion adapter. It captures the source before hiding it, restores exact inline style priorities, and retains the actual child frame during ready dismissal. Opening Escape remains immediate. A live withdrawn-consent guard blocks captured confirmation handlers after cancellation, while a valid confirmation starts persistence immediately without waiting for opening motion.
+
+Operation identity and committed layout visibility control consent; absent measurable geometry only disables motion. After native settlement, an unchanged eligible source receives a same-frame reverse. The presentation bridge checks source eligibility after the pending DOM lock clears; a changed operation, hidden source or disconnected field retires without reverse. Motion completion never invokes persistence or repeats cancellation.
+
+Retiring a category field changes only its editor draft; explicit schema save owns persistence. The connected parent editor and draft remain intact through nested dismissal. Legacy category-wrapper void callbacks keep caller-controlled ownership.
 
 ## Retirement and verification
 

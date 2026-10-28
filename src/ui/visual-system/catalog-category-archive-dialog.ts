@@ -7,7 +7,7 @@ const body = ":scope > p";
 
 /** Prefer a live parent control/frame, never a hidden or disabled fallback. */
 export function categoryArchiveFocusFallback(heading: HTMLElement | null) {
-  const parent = document.querySelector<HTMLElement>("[data-ui-catalog-category-dialog][role=dialog]");
+  const parent = document.querySelector<HTMLElement>("[data-ui-catalog-category-dialog][role=dialog], [data-ui-catalog-product-dialog][role=dialog]");
   const candidates = [...(parent?.querySelectorAll<HTMLElement>("[data-ui-dialog-actions] button") ?? []), parent, heading];
   return candidates.find((candidate) => {
     if (!candidate?.isConnected || candidate.matches(":disabled, [aria-disabled=true]")) return false;

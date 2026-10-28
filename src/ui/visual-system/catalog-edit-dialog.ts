@@ -32,7 +32,7 @@ export interface CatalogEditDialogProps {
   onLifecycle: (event: MouseEvent<HTMLButtonElement>) => void;
   onAddCategoryField?: () => void;
   onChangeCategoryField?: (index: number, field: string, value: string | boolean) => void;
-  onRetireCategoryField?: (index: number) => void;
+  onRetireCategoryField?: (index: number, event?: MouseEvent<HTMLButtonElement>) => void;
   onRemoveCategoryFieldDraft?: (index: number) => void;
   onSaveCategorySchema?: () => void;
   imageThumbnail?: string | null;
@@ -99,7 +99,7 @@ export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback
             createElement("strong", null, field.label),
             createElement("span", null, `Tipo: ${field.field_type === "text" ? "Texto" : field.field_type === "number" ? "Número" : "Opciones"}`),
             createElement("span", null, field.required ? "Obligatorio" : "Opcional"),
-            createElement(Action, { variant: "destructive", disabled: pending, onClick: () => onRetireCategoryField?.(index), "aria-label": `Retirar ${field.label}` }, "Retirar"))
+            createElement(Action, { variant: "destructive", disabled: pending, onClick: (event) => onRetireCategoryField?.(index, event), "aria-label": `Retirar ${field.label}` }, "Retirar"))
           : createElement("div", { key: `new-${index}`, role: "group", "aria-label": `Campo nuevo ${(form.category_fields ?? []).slice(0, index).filter((item) => item.definition_id === null).length + 1}`, "data-ui-category-schema-field": true, "data-ui-category-schema-draft": true },
             createElement("div", { "data-ui-category-schema-draft-heading": true },
               createElement("strong", null, "Campo nuevo"),
