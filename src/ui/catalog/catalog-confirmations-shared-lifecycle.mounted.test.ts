@@ -21,7 +21,24 @@ const productDetail = { ...product, name: "Filtro Premium", category_id: 4, cate
 const browseProduct = { product_id: 1, category_id: 4, sku: "FIL-PRE-014", name: "Filtro Premium", category_name: "Filtros", available_quantity: 0,
   catalog_unit_price_centavos: 12550, list_price_centavos: 12550, minimum_sale_price_centavos: 10000, attribute_values: [], revision: 7 };
 const notices = () => document.querySelectorAll("[data-ui-action-notice]").length;
+let nextMotionDeadline = -1;
 function motion(t: TestContext) {
+  // Manual GSAP completion must also own the driver's opening/closing deadline;
+  // leave user-event, notifications and every other window timer on the real clock.
+  const setTimeout = window.setTimeout.bind(window), clearTimeout = window.clearTimeout.bind(window);
+  const deadlines = new Set<number>();
+  t.mock.method(window, "setTimeout", (...args: Parameters<typeof window.setTimeout>) => {
+    if (args[1] === 350 && typeof args[0] === "function" && args[0].name === "finish") {
+      const id = nextMotionDeadline--;
+      deadlines.add(id);
+      return id;
+    }
+    return setTimeout(...args);
+  });
+  t.mock.method(window, "clearTimeout", (id?: number) => {
+    if (!deadlines.delete(id ?? 0)) clearTimeout(id);
+  });
+  t.after(() => deadlines.clear());
   const style = document.createElement("style"); style.textContent = readFileSync(new URL("../styles.css", import.meta.url), "utf8"); document.head.append(style); t.after(() => style.remove());
   const box = (node: HTMLElement) => {
     const actionable = node.isConnected && [...node.querySelectorAll<HTMLButtonElement>("button")].some(button => button.textContent?.includes("Confirmar") && !button.disabled);

@@ -43,6 +43,24 @@ for (const mode of ["table", "gallery"] as const) test(`Catalog ${mode} editing 
   assert.equal(opener, button);
 });
 
+for (const mode of ["table", "gallery"] as const) test(`S4 Inventory ${mode} renders supplied safe images and preserves zero-stock selection and fallback`, () => {
+  const products = [page.products[0], { ...page.products[0], product_id: 2, sku: "ZERO", available_quantity: 0 }];
+  let selected: unknown, opener: HTMLButtonElement | undefined;
+  render(createElement(ProductBrowser, {
+    state: { ...initialProductBrowserState, status: "results", result: { ...page, products, total: 2 } },
+    presentation: "inventory", inventoryViewMode: mode, allowUnavailableSelection: true,
+    thumbnails: { 1: "data:image/jpeg;base64,/9j/2Q==", 2: "/private/image.jpg" },
+    onQueryChange() {}, onCategoryChange() {}, onSubmit() {}, onPageChange() {},
+    onInventorySelect(product, button) { selected = product; opener = button; },
+  }));
+  const rows = screen.getAllByRole("listitem");
+  assert.equal(within(rows[0]).getByRole("img", { name: "Filter" }).getAttribute("src"), "data:image/jpeg;base64,/9j/2Q==");
+  assert.equal(within(rows[1]).getByRole("img", { name: "Sin imagen" }).textContent, "Sin imagen");
+  const button = within(rows[1]).getByRole("button", { name: "Seleccionar Filter (SKU: ZERO)" });
+  fireEvent.click(button);
+  assert.equal(selected === products[1], true); assert.equal(opener === button, true);
+});
+
 function browserContractDiagnostics(source: string) {
   const config = ts.readConfigFile("tsconfig.json", ts.sys.readFile);
   assert.equal(config.error, undefined);

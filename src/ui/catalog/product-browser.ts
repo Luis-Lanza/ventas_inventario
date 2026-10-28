@@ -263,7 +263,7 @@ export function ProductBrowser<T extends ProductBrowserProduct>(props: ProductBr
       const salesAttributeSummary = createElement("div", { "data-ui-sales-product-attributes": true }, salesAttributes.map((attribute) => createElement("span", { key: attribute.definition_id }, `${attribute.label}: ${attribute.value}`)));
       const salesTableImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-sales-table-image-placeholder": true }, "Sin imagen");
       return inventoryPresentation ? createElement("li", { key: product.product_id, "data-ui-inventory-product-card": inventoryGalleryPresentation || undefined, "data-ui-inventory-table-row": !inventoryGalleryPresentation || undefined },
-        createElement("div", { "data-ui-inventory-image-area": true }, createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-inventory-image-placeholder": true }, "Sin imagen")),
+        createElement("div", { "data-ui-inventory-image-area": true }, safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-inventory-image-placeholder": true }, "Sin imagen")),
         createElement("div", { "data-ui-inventory-product-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), inventoryGalleryPresentation ? createElement("span", { "data-ui-inventory-product-category": true }, product.category_name) : null),
         createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product))),
         inventoryGalleryPresentation ? null : createElement("span", { "data-ui-inventory-product-category": true }, product.category_name),

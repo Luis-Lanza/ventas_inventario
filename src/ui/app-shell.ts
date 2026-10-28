@@ -39,7 +39,7 @@ function navigationIcon(destination: Screen) {
     strokeLinecap: "round", strokeLinejoin: "round" }, createElement("path", { d: iconPaths[destination] }));
 }
 
-export function AppShell({ screen, onNavigate, onInventoryAlerts, inventoryCue, children, recoveryMode = false }: AppShellProps) {
+export function AppShell({ screen, onNavigate, inventoryCue, children, recoveryMode = false }: AppShellProps) {
   return createElement("div", { "data-ui-app-shell": true },
     createElement("aside", { "data-ui-shell-sidebar": true },
       createElement("div", { "data-ui-shell-identity": true },
@@ -49,7 +49,7 @@ export function AppShell({ screen, onNavigate, onInventoryAlerts, inventoryCue, 
           key: destination,
           type: "button",
           "aria-current": screen === destination ? "page" : undefined,
-          onClick: () => destination === "inventory" && inventoryCue && onInventoryAlerts ? onInventoryAlerts() : onNavigate(action),
+          onClick: () => onNavigate(action),
           "aria-label": destination === "inventory" && inventoryCue ? `Inventario, ${inventoryCue}` : label,
         }, navigationIcon(destination), createElement("span", { "data-ui-shell-label": true }, label), destination === "inventory" && inventoryCue ? createElement("small", { "data-ui-inventory-cue": true, role: "status" }, `⚠ ${inventoryCue}`) : null)),
       ),

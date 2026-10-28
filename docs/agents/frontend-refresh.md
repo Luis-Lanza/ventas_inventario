@@ -29,6 +29,14 @@ Dashboard and report listeners attach before their initial reads. Events before 
 
 History uses an independent retained-list request identity, so list refresh cannot cancel detail reload or force navigation. New applied date ranges retire old list refreshes; unsent dates remain visible. Read failure clears stale retained rows and offers the existing list retry. Correction acceptance guards remain independent of detail refresh success.
 
+## Inventory entry and operational images (S4)
+
+The Inventory sidebar uses ordinary all-stock navigation even when its alert count is visible. Dashboard's explicit **Ver en Inventario** shortcut still enters the alerts filter. Existing entry/remount behavior is preserved; an already-active ordinary sidebar click does not introduce a new reset policy for local browse context.
+
+Inventory table and gallery load revision-free operational thumbnails with `salesThumbnail(product_id)`. They require neither Catalog access nor a backend revision. Each accepted browse attempt owns its image deliveries: page, search, stock refresh and unmount retire older responses, including responses for the same product ID. A stock refresh refetches images rather than retaining an indefinitely stale image.
+
+Only current, matching-product success responses reach the existing safe-image renderer. Unavailable, rejected or mismatched responses retain the accessible **Sin imagen** placeholder and zero-stock selection. Image arrival does not change the applied request, view, selected operation, draft or mutation payload. Scoped containment preserves the existing Inventory image slots; Windows/pixel acceptance remains separate.
+
 ## Review slices and exclusions
 
 Suggested work units: (1) Inventory/App seam and public regressions; (2) Sales/History and accepted late delivery; (3) Catalog/onboarding and shared refresh reducer extraction; (4) late Dashboard/report readers and page-preserving profit transition. Notifications in the same success handlers must be merged without changing their existing classification/messages or adding a second invalidation owner.

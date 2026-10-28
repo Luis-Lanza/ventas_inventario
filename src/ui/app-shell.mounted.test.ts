@@ -291,6 +291,35 @@ test("discard and Nueva venta reset checkout, payments, validation and receipt a
   assert.equal(ipc.requests.length, 1);
 });
 
+test("S4 cued sidebar opens all stock without losing the alert count or duplicating browse", async () => {
+  const calls: unknown[] = []; installNavigationIPC(calls);
+  render(createElement(App));
+  const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+  await userEvent.click(await within(nav).findByRole("button", { name: "Inventario, 1 alerta de stock" }));
+  await assertInitialBrowse(calls, 0, "all");
+  assert.equal(within(nav).getByRole("button", { name: "Inventario, 1 alerta de stock" }).getAttribute("aria-current"), "page");
+  assert.equal(calls.length, 1);
+});
+
+test("S4 explicit Dashboard alerts yield to sidebar all stock and reject the old entry read", async () => {
+  const calls: unknown[] = []; const old = saleDeferred();
+  mockIPC((command, payload) => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
+    if (command === "dashboard_command") return dashboardResponse;
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: stockAlerts };
+    if (command === "browse_inventory_products_command") { calls.push(payload); return calls.length === 1 ? old.promise : emptyInventoryPage; }
+    throw Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(App));
+  await userEvent.click(await screen.findByRole("button", { name: "Ver en Inventario" }));
+  await assertInitialBrowse(calls, 0, "alerts");
+  await userEvent.click(await screen.findByRole("button", { name: "Inventario, 1 alerta de stock" }));
+  await assertInitialBrowse(calls, 1, "all");
+  await act(async () => old.resolve({ ...emptyInventoryPage, total: 1, total_pages: 1, products: [{ product_id: 99, category_id: 1, sku: "OLD", name: "Stale entry", category_name: "Old", available_quantity: 0, sale_price_centavos: 100, minimum_sale_price_centavos: 100, primary_location_code: null }] }));
+  assert.equal(screen.queryByText("Stale entry") === null, true);
+  assert.equal(stockFilter().value, "all"); assert.equal(calls.length, 2);
+});
+
 const destinations = [
   ["Métricas", SCREEN.DASHBOARD, NAVIGATION_ACTION.OPEN_DASHBOARD],
   ["Ventas", SCREEN.SALES, NAVIGATION_ACTION.RETURN_TO_SALES],
@@ -372,7 +401,7 @@ async function assertInitialBrowse(calls: unknown[], index: number, state: "all"
   assert.equal(stockFilter().value, state);
 }
 
-test("cued sidebar retains the global alert count and opens actual alert-filtered Inventory", async () => {
+test("cued sidebar retains the global alert count and opens all-stock Inventory", async () => {
   const calls: unknown[] = [];
   installNavigationIPC(calls);
   const user = userEvent.setup({ document });
@@ -382,7 +411,7 @@ test("cued sidebar retains the global alert count and opens actual alert-filtere
   await user.click(within(navigation).getByRole("button", { name: "Ventas" }));
   await waitFor(() => assert.match(inventory.textContent ?? "", /⚠ 1 alerta de stock/));
   await user.click(inventory);
-  await assertInitialBrowse(calls, 0, "alerts");
+  await assertInitialBrowse(calls, 0, "all");
 });
 
 test("dashboard stock shortcut opens actual alert-filtered Inventory", async () => {
@@ -395,7 +424,7 @@ test("dashboard stock shortcut opens actual alert-filtered Inventory", async () 
 });
 
 for (const entry of ["dashboard", "sidebar"] as const) {
-  test(`${entry} alert entry resets locally selected All Stock on mounted Inventory re-entry`, async () => {
+  test(`${entry} entry preserves ordinary sidebar all-stock navigation and fresh re-entry`, async () => {
     const calls: unknown[] = [];
     installNavigationIPC(calls);
     const user = userEvent.setup({ document });
@@ -403,21 +432,23 @@ for (const entry of ["dashboard", "sidebar"] as const) {
     const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
     if (entry === "dashboard") await user.click(await screen.findByRole("button", { name: "Ver en Inventario" }));
     else await user.click(await within(navigation).findByRole("button", { name: "Inventario, 1 alerta de stock" }));
-    await assertInitialBrowse(calls, 0, "alerts");
+    await assertInitialBrowse(calls, 0, entry === "dashboard" ? "alerts" : "all");
     await user.selectOptions(stockFilter(), "all");
     await user.type(screen.getByRole("searchbox", { name: "Buscar producto" }), "local query");
     await user.click(screen.getByRole("button", { name: "Buscar" }));
     await waitFor(() => assert.equal(calls.length, 2));
     assert.equal(stockFilter().value, "all");
     assert.deepEqual(calls[1], { request: { ...initialBrowseRequest("all").request, query: "local query" } });
+    // Ordinary navigation does not invent an active-All sidebar reset policy.
+    if (entry === "sidebar") await user.click(within(navigation).getByRole("button", { name: "Métricas" }));
     await user.click(await within(navigation).findByRole("button", { name: "Inventario, 1 alerta de stock" }));
-    await assertInitialBrowse(calls, 2, "alerts");
+    await assertInitialBrowse(calls, 2, "all");
     assert.equal((screen.getByRole("searchbox", { name: "Buscar producto" }) as HTMLInputElement).value, "");
     assert.equal(screen.getByRole("navigation", { name: "Navegación principal" }), navigation);
   });
 }
 
-test("stock-alert re-entry ignores a browse completion from the unmounted Inventory", async () => {
+test("sidebar all-stock re-entry ignores a browse completion from the unmounted alert Inventory", async () => {
   const calls: unknown[] = [];
   let resolveOld!: (value: unknown) => void;
   mockIPC((command, payload) => {
@@ -439,10 +470,10 @@ test("stock-alert re-entry ignores a browse completion from the unmounted Invent
   await user.click(screen.getByRole("button", { name: "Buscar" }));
   await waitFor(() => assert.equal(calls.length, 2));
   await user.click(await screen.findByRole("button", { name: "Inventario, 1 alerta de stock" }));
-  await assertInitialBrowse(calls, 2, "alerts");
+  await assertInitialBrowse(calls, 2, "all");
   await act(async () => resolveOld({ ...emptyInventoryPage, total: 1, total_pages: 1, products: [{ product_id: 99, category_id: 1, sku: "OLD", name: "Stale product", category_name: "Old", available_quantity: 9, sale_price_centavos: 100, minimum_sale_price_centavos: 100, primary_location_code: null }] }));
   assert.equal(screen.queryByText("Stale product"), null);
-  assert.equal(stockFilter().value, "alerts");
+  assert.equal(stockFilter().value, "all");
   assert.equal(calls.length, 3);
 });
 

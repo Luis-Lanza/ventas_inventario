@@ -32,6 +32,7 @@ function mockIPC(handler: (command: string, payload?: { request?: unknown }) => 
     if (payload !== undefined && !isMockPayloadRecord(payload)) {
       throw new TypeError("Inventory mock payload must be a record or undefined.");
     }
+    if (command === "sales_product_image_thumbnail_command") return { kind: "unavailable" };
     return handler(command === "browse_inventory_products_command" ? "browse_products_command" : command, payload);
   };
   installIPC(adapter);
@@ -360,11 +361,12 @@ test("loads operational Inventory browse while the Catalog session is locked", a
     calls.push(command);
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
     if (command === "browse_inventory_products_command") return { products: [nativeProduct], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 };
+    if (command === "sales_product_image_thumbnail_command") return { kind: "unavailable" };
     throw new Error(`Unexpected command while Catalog is locked: ${command}`);
   });
   render(createElement(InventoryScreen));
   assert.ok(await screen.findByText("Filter"));
-  assert.deepEqual(calls.sort(), ["browse_inventory_products_command", "list_inventory_alerts_command"]);
+  assert.deepEqual(calls.sort(), ["browse_inventory_products_command", "list_inventory_alerts_command", "sales_product_image_thumbnail_command"]);
   assert.ok(screen.getByText("Bs 0,50"));
   await userEvent.click(screen.getByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
   assert.ok(screen.getByText("SKU: FLT"));
@@ -652,7 +654,7 @@ test("keeps browse first and read-only alerts second across desktop and compact 
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*--size-shell-sidebar: 176px/);
 });
 
-test("uses the alert stock filter for sidebar entry without a duplicate browse", async () => {
+test("uses explicit initialStockState alerts without a duplicate browse", async () => {
   const calls: unknown[] = [];
   mockIPC((command, payload) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
@@ -1092,7 +1094,7 @@ test("shows the assigned generated location in the selected product without chan
   assert.equal(screen.queryByText("Ubicación principal: A1-SHELF2"), null);
 });
 
-test("uses All Stock for normal Inventory entry and Alerts for stock-alert cue navigation", async () => {
+test("uses All Stock for both ordinary and cued sidebar Inventory navigation", async () => {
   const browseRequests: unknown[] = [];
   let cueVisible = false;
   mockIPC((command, payload) => {
@@ -1118,9 +1120,9 @@ test("uses All Stock for normal Inventory entry and Alerts for stock-alert cue n
   await waitFor(() => assert.match(inventory.textContent ?? "", /⚠ 1 alerta de stock/));
   await user.click(inventory);
   const returnedFilter = await screen.findByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement;
-  assert.equal(returnedFilter.value, "alerts");
+  assert.equal(returnedFilter.value, "all");
   assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
-  assert.deepEqual(browseRequests.at(-1), { request: { query: null, category_id: null, stock_state: "alerts", activity: "active", page: 1, page_size: 20 } });
+  assert.deepEqual(browseRequests.at(-1), { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });
 });
 
 test("notification dismissal preserves the failed draft and retry identity; persisted success closes once and retains its advisory", async () => {

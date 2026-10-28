@@ -24,7 +24,23 @@ const change = (node: HTMLElement, value: string) => fireEvent.change(node, { ta
 const nameLabel = (kind: Kind) => kind === "product" ? "Nombre del producto" : "Nombre de la categoría";
 const saveLabel = (kind: Kind) => kind === "product" ? "Guardar metadatos" : "Guardar cambios";
 const notices = () => document.querySelectorAll("[data-ui-action-notice]").length;
+let nextMotionDeadline = -1;
 function motion(t: TestContext) {
+  // Manual GSAP completion owns the driver's deadline as well; other timers stay real.
+  const setTimeout = window.setTimeout.bind(window), clearTimeout = window.clearTimeout.bind(window);
+  const deadlines = new Set<number>();
+  t.mock.method(window, "setTimeout", (...args: Parameters<typeof window.setTimeout>) => {
+    if (args[1] === 350 && typeof args[0] === "function" && args[0].name === "finish") {
+      const id = nextMotionDeadline--;
+      deadlines.add(id);
+      return id;
+    }
+    return setTimeout(...args);
+  });
+  t.mock.method(window, "clearTimeout", (id?: number) => {
+    if (!deadlines.delete(id ?? 0)) clearTimeout(id);
+  });
+  t.after(() => deadlines.clear());
   const style = document.createElement("style"); style.textContent = readFileSync(new URL("../styles.css", import.meta.url), "utf8"); document.head.append(style); t.after(() => style.remove());
   const box = (node: HTMLElement) => new window.DOMRect(10, 20, node.getAttribute("role") === "dialog" ? 900 : 180, node.getAttribute("role") === "dialog" ? 600 : 44);
   t.mock.method(HTMLElement.prototype, "getBoundingClientRect", function (this: HTMLElement) { return box(this); });

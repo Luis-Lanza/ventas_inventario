@@ -641,6 +641,7 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-product-browser="inventory"] [data-ui-money] { font-size: var(--type-h2-size); font-weight: var(--weight-emphasis); white-space: normal; overflow-wrap: anywhere; }
 [data-ui-inventory-image-area] { inline-size: 3rem; aspect-ratio: 1; border-radius: var(--radius-control); background: var(--color-surface-subtle); }
 [data-ui-inventory-table] [data-ui-inventory-image-area] { border-radius: 24px; overflow: hidden; }
+[data-ui-inventory-image-area] > img { display: block; inline-size: 100%; block-size: 100%; object-fit: contain; border-radius: inherit; }
 [data-ui-inventory-image-placeholder] { display: grid; block-size: 100%; place-items: center; color: var(--color-text-muted); font-size: var(--type-caption-size); line-height: 1.1; text-align: center; }
 [data-ui-product-browser="inventory"] [data-ui-inventory-table] > li > :is([data-ui-money], [data-ui-inventory-product-category], [data-ui-badge], [data-ui-action]) { grid-column: 2; }
 [data-ui-inventory-table] > li > [data-ui-inventory-product-category] { color: var(--color-text-muted); font-size: var(--type-caption-size); }

@@ -806,7 +806,7 @@ for (const presentation of ["sales", "inventory"] as const) {
         assert.equal(styleOf(area, "inline-size"), "48px");
         assert.equal(styleOf(area, "border-radius"), "24px");
         assert.equal(styleOf(area, "overflow"), "hidden");
-        if (presentation === "sales" && thumbnail?.startsWith("data:")) {
+        if (thumbnail?.startsWith("data:")) {
           const image = within(area as HTMLElement).getByRole("img", { name: "Filtro" });
           assert.equal(styleOf(image, "border-radius"), "24px");
           assert.equal(styleOf(image, "object-fit"), "contain");

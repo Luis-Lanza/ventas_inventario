@@ -1,7 +1,7 @@
 import { useAppOperations } from "../app-operation-context.ts";
 import { createElement, type FormEvent, useCallback, useEffect, useReducer, useRef, useState } from "react";
 
-import { browseInventoryProducts, type InventoryBrowseProduct, type ProductSearchResult, type ProductStockState } from "../../commands/catalog.ts";
+import { browseInventoryProducts, catalogProductImageCommands, type InventoryBrowseProduct, type ProductSearchResult, type ProductStockState } from "../../commands/catalog.ts";
 import { inventoryCommands, type InventoryResponse } from "../../commands/inventory.ts";
 import { createAcceptedMutations, type AcceptedMutations } from "../accepted-mutations.ts";
 import { Action, Badge, Feedback } from "../visual-system/controls.ts";
@@ -55,6 +55,8 @@ export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; 
   const operationId = useRef(0);
   const mounted = useRef(true);
   const searchAttempt = useRef(0);
+  const thumbnailAttempt = useRef(0);
+  const [thumbnails, setThumbnails] = useState<Record<number, string>>({});
   const appliedBrowse = useRef({ query: "", category_id: null as number | null, stock_state: props.initialStockState ?? "all", page: 1 });
   const browserRef = useRef(browser);
   browserRef.current = browser;
@@ -65,7 +67,7 @@ export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; 
   useEffect(() => {
     mounted.current = true;
     confirmLocked.current = false;
-    return () => { mounted.current = false; searchAttempt.current += 1; alertAttempt.current += 1; confirmAttempt.current += 1; confirmLocked.current = true; };
+    return () => { mounted.current = false; thumbnailAttempt.current += 1; searchAttempt.current += 1; alertAttempt.current += 1; confirmAttempt.current += 1; confirmLocked.current = true; };
   }, []);
   const refreshAlerts = useCallback(async () => {
     setAlertState("loading");
@@ -81,7 +83,33 @@ export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; 
     onAlertCueChange?.(cue);
   }, [alertState, state.alerts.length, onAlertCueChange]);
 
+  // Images belong only to the accepted page, never to a product's lifetime.
+  // A fresh browse (including stock refresh) retires even same-ID deliveries.
+  useEffect(() => {
+    if (!ownerCurrent() || browser.status !== "results" || !browser.result) return;
+    const attempt = ++thumbnailAttempt.current;
+    const requestId = browser.request_id;
+    const searchId = searchAttempt.current;
+    const current = () => ownerCurrent() && mounted.current && attempt === thumbnailAttempt.current
+      && searchId === searchAttempt.current && requestId === browserRef.current.request_id;
+    const products = [...new Map(browser.result.products.map(product => [product.product_id, product])).values()];
+    for (const product of products) {
+      void (async () => {
+        try {
+          if (!current()) return;
+          const response = await catalogProductImageCommands.salesThumbnail(product.product_id);
+          if (!current() || response.kind !== "success" || response.product_id !== product.product_id) return;
+          setThumbnails(images => ({ ...images, [product.product_id]: response.src }));
+        } catch { /* Read-only image failure retains the accessible placeholder. */ }
+      })();
+    }
+    return () => { thumbnailAttempt.current += 1; };
+  }, [browser.result, browser.status]);
+
   async function browsePage(query: string, category_id: number | null, stock_state: ProductStockState, page: number, refresh = false) {
+    if (!ownerCurrent() || !mounted.current) return;
+    thumbnailAttempt.current += 1;
+    setThumbnails({});
     const attempt = Math.max(++searchAttempt.current, browserRef.current.request_id + 1);
     searchAttempt.current = attempt;
     appliedBrowse.current = { query, category_id, stock_state, page };
@@ -163,7 +191,7 @@ export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; 
       savedOutcome.stale ? createElement(Feedback, { kind: "advisory" }, "Saldo proyectado desactualizado. Revisá el stock actual.") : null) : null,
     createElement("div", { "data-ui-inventory-layout": true },
       createElement("section", { "data-ui-panel": true, "aria-label": "Operación de inventario" },
-        createElement(ProductBrowser<InventoryBrowseProduct>, { state: browser, presentation: "inventory", inventoryViewMode: viewMode, onInventoryViewModeChange: setViewMode, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage,
+        createElement(ProductBrowser<InventoryBrowseProduct>, { state: browser, thumbnails, presentation: "inventory", inventoryViewMode: viewMode, onInventoryViewModeChange: setViewMode, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage,
           onInventorySelect: (product, button) => { if (confirmLocked.current || presentationLocked.current || state.product) return; opener.current = button; setOpening(captureInventoryOpening(button, ++operationId.current)); setSavedOutcome(null); setCatalogPassword(""); setOrdinaryFailure(false); dispatch({ type: "product_selected", product }); },
           actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending })),
       createElement("section", { "data-ui-panel": true, "data-ui-inventory-alert-panel": true, "aria-labelledby": "inventory-alert-heading" },
