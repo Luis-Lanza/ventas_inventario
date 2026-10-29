@@ -77,6 +77,43 @@ fn cost_transitions_preserve_historical_snapshots_and_invalid_costs_are_atomic()
 }
 
 #[test]
+fn metadata_and_lifecycle_refreshes_preserve_legacy_search_values() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let assert_legacy_match = |connection: &rusqlite::Connection| {
+        let products = repuestos_autos::catalog::search_active_products(connection, "Toyota").unwrap();
+        assert_eq!(products.len(), 1);
+        assert_eq!(products[0].sku, "FLT-001");
+        assert_eq!(products[0].available_quantity, 8);
+    };
+    assert_legacy_match(&connection);
+    EditCatalogUseCase::new(&mut connection, SqliteCatalogRepository)
+        .execute(EditCatalogInput::product(1, 0, "FLT-001", "Updated filter", None, 2500, 2500, 0, vec![]))
+        .unwrap();
+    assert_legacy_match(&connection);
+    EditCatalogUseCase::new(&mut connection, SqliteCatalogRepository)
+        .execute(EditCatalogInput::category(1, 0, "Updated category"))
+        .unwrap();
+    assert_legacy_match(&connection);
+    maintain(&mut connection, CatalogTarget::Product, 1, CatalogIntent::Archive, 1).unwrap();
+    assert!(repuestos_autos::catalog::search_active_products(&connection, "Toyota").unwrap().is_empty());
+    maintain(&mut connection, CatalogTarget::Product, 1, CatalogIntent::Reactivate, 2).unwrap();
+    assert_legacy_match(&connection);
+}
+
+#[test]
+fn metadata_refresh_still_works_without_the_legacy_search_table() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute_batch("DROP TABLE product_searchable_values;").unwrap();
+    EditCatalogUseCase::new(&mut connection, SqliteCatalogRepository)
+        .execute(EditCatalogInput::product(1, 0, "FLT-001", "Updated filter", None, 2500, 2500, 0, vec![]))
+        .unwrap();
+    let products = repuestos_autos::catalog::search_active_products(&connection, "Updated").unwrap();
+    assert_eq!(products.len(), 1);
+    assert_eq!(products[0].sku, "FLT-001");
+    assert!(repuestos_autos::catalog::search_active_products(&connection, "Toyota").unwrap().is_empty());
+}
+
+#[test]
 fn product_names_may_repeat_on_edit() {
     let mut connection = open_seeded_catalog().unwrap();
     connection.execute_batch("INSERT INTO products (id, sku, name, category_id, list_price_centavos, minimum_unit_price_centavos, active) VALUES (91, 'OTHER', 'Shared name', 2, 2500, 2500, 1);").unwrap();

@@ -65,7 +65,7 @@ fn sales_browse_projection_contains_only_active_filter_and_sale_facts() {
 }
 
 #[test]
-fn sales_browse_rejects_attribute_facts_over_the_projection_bounds() {
+fn sales_browse_omits_oversized_attribute_facts_without_blocking_products() {
     let connection = open_seeded_catalog().expect("a disposable catalog database");
     connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (9002, 1, 'Material', 'text', 0)", []).unwrap();
     connection.execute("INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 9002, ?1, ?1)", ["x".repeat(257)]).unwrap();
@@ -73,7 +73,49 @@ fn sales_browse_rejects_attribute_facts_over_the_projection_bounds() {
         query: Some("filtro".into()), category_id: Some(1), stock_filter: repuestos_autos::application::catalog::ProductStockFilter::Available,
         activity_filter: repuestos_autos::application::catalog::ProductActivityFilter::Active, page: 1, page_size: 20,
     });
-    assert!(result.is_err(), "oversized persisted attribute text must fail closed");
+    let page = result.expect("an oversized optional attribute must not block selling the product");
+    assert_eq!(page.total, 1);
+    assert_eq!(page.products.len(), 1);
+    assert_eq!(page.products[0].sku, "FLT-001");
+    assert_eq!(page.products[0].available_quantity, 8);
+    assert_eq!(page.products[0].sale_price_centavos, 2500);
+    assert!(page.products[0].attribute_values.is_empty());
+}
+
+#[test]
+fn sales_browse_keeps_exact_unicode_bounds_and_skips_oversized_labels() {
+    let connection = open_seeded_catalog().unwrap();
+    let label = "界".repeat(128);
+    let value = "á".repeat(256);
+    connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (9001, 1, ?1, 'text', 0), (9002, 1, ?2, 'text', 0)", params![label, "界".repeat(129)]).unwrap();
+    connection.execute("INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 9001, ?1, ?1), (1, 9002, 'hidden', 'hidden')", [&value]).unwrap();
+    let page = repuestos_autos::application::catalog::browse_active_sale_products(&connection, &repuestos_autos::application::catalog::BrowseProductsInput {
+        query: Some("filtro".into()), category_id: Some(1), stock_filter: repuestos_autos::application::catalog::ProductStockFilter::All,
+        activity_filter: repuestos_autos::application::catalog::ProductActivityFilter::Active, page: 1, page_size: 20,
+    }).unwrap();
+    assert_eq!(page.total, 1);
+    assert_eq!(page.total_pages, 1);
+    assert_eq!(page.products.len(), 1);
+    assert_eq!(page.products[0].attribute_values.len(), 1);
+    assert_eq!(page.products[0].attribute_values[0].definition_id, 9001);
+    assert_eq!(page.products[0].attribute_values[0].label, label);
+    assert_eq!(page.products[0].attribute_values[0].value, value);
+    assert_eq!(page.products[0].minimum_sale_price_centavos, 2500);
+}
+
+#[test]
+fn sales_browse_still_caps_optional_attributes_at_thirty_two() {
+    let connection = open_seeded_catalog().unwrap();
+    for id in 9001..=9033 {
+        connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (?1, 1, ?2, 'text', 0)", params![id, format!("Field {id}")]).unwrap();
+    }
+    let page = repuestos_autos::application::catalog::browse_active_sale_products(&connection, &repuestos_autos::application::catalog::BrowseProductsInput {
+        query: Some("filtro".into()), category_id: None, stock_filter: repuestos_autos::application::catalog::ProductStockFilter::All,
+        activity_filter: repuestos_autos::application::catalog::ProductActivityFilter::Active, page: 1, page_size: 20,
+    }).unwrap();
+    assert_eq!(page.products[0].attribute_values.len(), 32);
+    assert_eq!(page.products[0].attribute_values.first().unwrap().definition_id, 9001);
+    assert_eq!(page.products[0].attribute_values.last().unwrap().definition_id, 9032);
 }
 
 #[test]

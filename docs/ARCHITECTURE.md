@@ -67,6 +67,12 @@ Store all money as integer centavos of Bs, never floating-point values. Model mo
 
 All inventory quantities use positive integers because every product is sold by whole units. Fractional quantities and measured-goods support are out of scope.
 
+## Catalog search availability
+
+Search-document refreshes preserve both typed attribute values and legacy searchable values when the legacy table is present. Product edits, category renames and product lifecycle changes rebuild from current source facts, not from the previous search document. No historical source values are rewritten; an already stale document is recovered on its next refresh.
+
+Sales browsing keeps the product and its authoritative price/stock facts available when an optional attribute exceeds the display bounds. It omits the entire oversized attribute rather than truncating it or failing the page. The response still contains at most the first 32 active attribute definitions per product, with labels up to 128 Unicode characters and values up to 256; oversized facts within those slots are omitted. Full values remain stored and available in catalog maintenance, and IPC validation remains strict.
+
 ## Critical transaction: confirm sale
 
 `ConfirmSaleUseCase` owns the entire transaction. Repositories receive the transaction context; they never independently begin or commit transactions.

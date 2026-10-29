@@ -1054,12 +1054,23 @@ fn activity_from_sql(value: i64) -> Result<CatalogActivity> {
 }
 
 fn refresh_product_search(transaction: &Transaction<'_>, product_id: i64) -> Result<()> {
+    // Match the migration's source facts, but keep typed-only catalogs supported.
+    let has_legacy_values: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'product_searchable_values')",
+        [],
+        |row| row.get(0),
+    )?;
+    let legacy_values = if has_legacy_values {
+        "COALESCE((SELECT group_concat(value, ' ') FROM product_searchable_values WHERE product_id = p.id), '')"
+    } else {
+        "''"
+    };
     transaction.execute(
         "DELETE FROM catalog_product_search WHERE rowid = ?1",
         [product_id],
     )?;
     transaction.execute(
-        "INSERT INTO catalog_product_search (rowid, product_id, content) SELECT p.id, p.id, lower(p.sku || ' ' || p.name || ' ' || c.name || ' ' || COALESCE((SELECT group_concat(searchable_value, ' ') FROM product_attribute_values WHERE product_id = p.id), '')) FROM products p JOIN categories c ON c.id = p.category_id WHERE p.id = ?1",
+        &format!("INSERT INTO catalog_product_search (rowid, product_id, content) SELECT p.id, p.id, lower(p.sku || ' ' || p.name || ' ' || c.name || ' ' || {legacy_values} || ' ' || COALESCE((SELECT group_concat(searchable_value, ' ') FROM product_attribute_values WHERE product_id = p.id), '')) FROM products p JOIN categories c ON c.id = p.category_id WHERE p.id = ?1"),
         [product_id],
     )?;
     Ok(())

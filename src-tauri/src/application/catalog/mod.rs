@@ -1036,7 +1036,9 @@ pub fn browse_active_sale_products(connection: &Connection, input: &BrowseProduc
         })?.collect::<Result<Vec<_>>>()?;
         for (product_id, attribute, label_length, value_length) in attributes {
             if label_length > MAX_SALES_ATTRIBUTE_LABEL_CHARS || value_length > MAX_SALES_ATTRIBUTE_VALUE_CHARS {
-                return Err(rusqlite::Error::InvalidQuery);
+                // Optional display facts must stay bounded without blocking the product.
+                // Omit the whole fact rather than presenting a misleading truncated value.
+                continue;
             }
             if let Some(product) = products.iter_mut().find(|product| product.product_id == product_id) {
                 product.attribute_values.push(attribute);
