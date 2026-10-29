@@ -49,7 +49,7 @@ function motion(t: TestContext) {
   t.mock.method(gsap, "to", (target: unknown, vars: gsap.TweenVars) => { tweens.push({ target, complete: vars.onComplete as () => void }); return {} as gsap.core.Tween; });
   return { tweens, finish: (index: number) => act(() => tweens[index].complete()) };
 }
-async function fixture(t: TestContext, kind: Kind, held = false) {
+async function fixture(t: TestContext, kind: Kind, held = false, mode: "table" | "gallery" = "table") {
   const m = motion(t), writes: Array<{ command: string; request: Record<string, unknown> }> = [];
   let settle!: (value: unknown) => void, detailDone!: (value: unknown) => void, locationsDone!: (value: unknown) => void, imageDone!: (value: unknown) => void;
   let saved = false, reads = 0, images = 0;
@@ -76,6 +76,7 @@ async function fixture(t: TestContext, kind: Kind, held = false) {
     await user.type(await screen.findByRole("searchbox", { name: "Buscar en el catálogo" }), browseProduct.sku);
     await user.click(screen.getByRole("button", { name: "Buscar" }));
   }
+  if (kind === "product") await user.click(await screen.findByRole("button", { name: mode === "table" ? "Vista de tabla" : "Vista de galería" }));
   const source = await screen.findByRole("button", { name: kind === "product" ? "Editar" : "Editar Filtros" });
   const open = async () => { await user.click(source); return screen.getByRole("dialog"); };
   const ready = async () => { const frame = await open(); await within(frame).findByLabelText(nameLabel(kind)); assert.equal(m.tweens.length > 0, true); m.finish(m.tweens.length - 1); return frame; };
@@ -85,6 +86,26 @@ async function fixture(t: TestContext, kind: Kind, held = false) {
     releaseLocations: async () => { await act(async () => locationsDone({ kind: "locations_success", locations: [] })); },
     releaseImage: async () => { await act(async () => imageDone({ kind: "cancelled" })); } };
 }
+for (const mode of ["table", "gallery"] as const) test(`T5f1r: ${mode} opening stays animated while product detail loads`, async t => {
+  const f = await fixture(t, "product", true, mode), frame = await f.open();
+  assert.equal(f.tweens.length, 1);
+  assert.equal(frame.style.width, "180px", "opening retains captured source geometry until completion");
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.mouseDown(frame.parentElement!);
+  assert.equal(screen.getByRole("dialog") === frame, true);
+  assert.equal(f.writes.length, 0);
+  await f.releaseDetail(); await f.releaseLocations();
+  await within(frame).findByLabelText("Nombre del producto");
+  assert.equal(frame.style.width, "180px", "read completion does not finish or replay opening");
+  assert.equal(f.tweens.length, 1);
+  f.finish(0);
+  assert.equal(frame.style.width, "");
+  fireEvent.click(within(frame).getByRole("button", { name: "Volver" }));
+  assert.equal(f.tweens.length, 2); f.finish(1);
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(f.writes.length, 0);
+});
+
 function transparent(source: HTMLElement) {
   assert.equal(source.isConnected, true); assert.equal(source.getBoundingClientRect().width, 180); assert.equal(source.getClientRects().length > 0, true);
   assert.equal(window.getComputedStyle(source).opacity, "0"); assert.equal(window.getComputedStyle(source).pointerEvents, "none");

@@ -131,11 +131,12 @@ export function CatalogEditDialog({ record, open = true, opening, restoreFocusFa
   const hasFocusedDetail = useRef(false);
   const product = record.target === "product";
   const dismissed = useRef(false);
-  const lifecycle = useDialogLifecycle({ open, opening, pending: loading || pending || imagePending,
+  const lifecycle = useDialogLifecycle({ open, opening, pending: pending || imagePending,
     motion: (frame, source, complete, direction, snapshot) =>
       (product ? startCatalogProductMotion : startCatalogEditorMotion)(frame, source, complete, direction, snapshot),
     onDismiss: () => {
-      if (dismissed.current) return false;
+      // Reading detail must not finish opening motion, but still owns dismissal.
+      if (loading || dismissed.current) return false;
       if (onCancel() !== true) return false; // Void/static callers keep controlled ownership.
       dismissed.current = true;
       return true;
