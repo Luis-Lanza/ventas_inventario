@@ -9,10 +9,28 @@ import userEvent from "@testing-library/user-event";
 
 import { ConfirmationDialog } from "./confirmation-dialog.ts";
 import { CheckoutDialog } from "./checkout-dialog.ts";
+import { SalesProductDetailDialog } from "./sales-product-detail-dialog.ts";
 import { PersistedSaleSummaryView } from "../sales/persisted-summary.ts";
 import { Action, Badge, Field } from "./controls.ts";
 import type { CatalogProductBrowseResult } from "../../commands/catalog.ts";
 import { ProductBrowser, initialProductBrowserState, type CatalogViewMode } from "../catalog/product-browser.ts";
+
+test("Product image zoom backdrop stacks above detail without changing the generic modal layer", async () => {
+  const style = await mountBaseStyles();
+  try {
+    render(createElement("div", null,
+      createElement(SalesProductDetailDialog, { open: true, title: "Product detail", label: "Close detail", triggerRef: { current: null }, onClose() {} }),
+      createElement(SalesProductDetailDialog, { open: true, viewer: true, title: "Product image", label: "Close image", triggerRef: { current: null }, onClose() {} })));
+    const detail = document.querySelector<HTMLElement>("[data-ui-sales-nested-detail]")!;
+    const viewer = document.querySelector<HTMLElement>("[data-ui-sales-image-viewer-backdrop]")!;
+    assert.equal(getComputedStyle(detail).position, "fixed");
+    assert.equal(getComputedStyle(viewer).position, "fixed");
+    assert.equal(getComputedStyle(detail).zIndex, "101");
+    assert.ok(Number(getComputedStyle(viewer).zIndex) > Number(getComputedStyle(detail).zIndex), "zoom must paint above its product detail");
+    const generic = document.createElement("div"); generic.setAttribute("data-ui-dialog-backdrop", "true"); document.body.append(generic);
+    try { assert.equal(getComputedStyle(generic).zIndex, "100"); } finally { generic.remove(); }
+  } finally { style.remove(); }
+});
 
 async function mountBaseStyles(width?: number, browseWidth?: number, height = 900) {
   const style = document.createElement("style");
