@@ -14,6 +14,8 @@ pub(crate) mod bootstrap_demo;
 pub mod access;
 pub mod locations;
 pub mod repository;
+mod search;
+use search::{normalized_search_query, CATALOG_SEARCH_CLAUSE};
 
 pub use bootstrap_demo::{
     bootstrap_demo_catalog, BootstrapDemoError, BootstrapDemoOutcome, BootstrapDemoSummary,
@@ -799,6 +801,7 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
     if input.page < 1 || input.page_size < 1 || input.page_size > MAX_PAGE_SIZE {
         return Err(rusqlite::Error::InvalidQuery);
     }
+    search::register(connection)?;
     let query = input.query.as_deref().and_then(normalized_search_query);
     let stock_clause = match input.stock_filter {
         ProductStockFilter::All => "1 = 1",
@@ -814,7 +817,7 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
     };
     let (search_clause, category_clause) = if query.is_some() {
         (
-            "search.content MATCH ?1",
+            CATALOG_SEARCH_CLAUSE,
             if input.category_id.is_some() {
                 "AND p.category_id = ?2"
             } else {
@@ -966,8 +969,9 @@ pub fn browse_active_sale_products(connection: &Connection, input: &BrowseProduc
     if input.page < 1 || input.page_size < 1 || input.page_size > MAX_PAGE_SIZE || input.category_id.is_some_and(|id| id <= 0) {
         return Err(rusqlite::Error::InvalidQuery);
     }
+    search::register(connection)?;
     let query = input.query.as_deref().and_then(normalized_search_query);
-    let search_clause = if query.is_some() { "search.content MATCH ?1" } else { "1 = 1" };
+    let search_clause = if query.is_some() { CATALOG_SEARCH_CLAUSE } else { "1 = 1" };
     let category_clause = if input.category_id.is_some() {
         if query.is_some() { "AND p.category_id = ?2" } else { "AND p.category_id = ?1" }
     } else { "" };
@@ -1601,19 +1605,20 @@ pub fn search_active_sale_products(
     connection: &Connection,
     query: &str,
 ) -> Result<Vec<SaleProductSearchResult>> {
+    search::register(connection)?;
     let Some(query) = normalized_search_query(query) else {
         return Ok(Vec::new());
     };
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare(&format!(
         "SELECT p.id, p.sku, p.name, c.name, s.quantity,
          p.list_price_centavos, p.minimum_unit_price_centavos
          FROM catalog_product_search search
          JOIN products p ON p.id = search.product_id
          JOIN categories c ON c.id = p.category_id
          JOIN stock_balances s ON s.product_id = p.id
-         WHERE search.content MATCH ?1 AND p.active = 1 AND c.active = 1
+         WHERE {CATALOG_SEARCH_CLAUSE} AND p.active = 1 AND c.active = 1
          ORDER BY p.name LIMIT 20",
-    )?;
+    ))?;
     let results = statement.query_map([query], |row| Ok(SaleProductSearchResult {
         product_id: row.get(0)?, sku: row.get(1)?, name: row.get(2)?,
         category_name: row.get(3)?, available_quantity: row.get(4)?,
@@ -1626,10 +1631,11 @@ pub fn search_active_products(
     connection: &Connection,
     query: &str,
 ) -> Result<Vec<ProductSearchResult>> {
+    search::register(connection)?;
     let Some(query) = normalized_search_query(query) else {
         return Ok(Vec::new());
     };
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare(&format!(
         "SELECT p.id, p.sku, p.name, c.name, s.quantity,
          p.purchase_price_centavos, p.list_price_centavos,
          p.minimum_unit_price_centavos
@@ -1637,10 +1643,10 @@ pub fn search_active_products(
          JOIN products p ON p.id = search.product_id
          JOIN categories c ON c.id = p.category_id
          JOIN stock_balances s ON s.product_id = p.id
-          WHERE search.content MATCH ?1 AND p.active = 1 AND c.active = 1
+          WHERE {CATALOG_SEARCH_CLAUSE} AND p.active = 1 AND c.active = 1
          ORDER BY p.name
          LIMIT 20",
-    )?;
+    ))?;
     let results = statement
         .query_map([query], |row| {
             Ok(ProductSearchResult {
@@ -1656,14 +1662,4 @@ pub fn search_active_products(
         })?
         .collect();
     results
-}
-
-fn normalized_search_query(query: &str) -> Option<String> {
-    let terms = query
-        .split(|character: char| !character.is_alphanumeric())
-        .filter(|term| !term.is_empty())
-        .map(|term| format!("\"{}\"*", term.to_lowercase()))
-        .collect::<Vec<_>>();
-
-    (!terms.is_empty()).then(|| terms.join(" "))
 }
