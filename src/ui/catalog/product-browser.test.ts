@@ -780,7 +780,7 @@ test("changing query or a browse filter resets the page without pretending a req
   assert.deepEqual([stock.page, stock.query, stock.category_id, stock.stock_state, stock.status], [1, "brake", 3, "out_of_stock", "initial"]);
 });
 
-test("invalidates in-flight responses when any browse filter changes", () => {
+test("settles submitted requests when any toolbar draft changes", () => {
   const filters = [
     { type: "query_changed" as const, value: "brake" },
     { type: "category_changed" as const, value: 3 },
@@ -795,7 +795,8 @@ test("invalidates in-flight responses when any browse filter changes", () => {
     const changed = createProductBrowserFlow(loading, filter);
     const stale = createProductBrowserFlow(changed, { type: "browse_succeeded", request_id: 1, result: page });
 
-    assert.equal(changed.request_id, 2, filter.type);
-    assert.equal(stale, changed, `${filter.type} must reject the old response`);
+    assert.equal(changed.request_id, 1, filter.type);
+    assert.equal(stale.status, "results", filter.type);
+    assert.equal(stale.result, page, filter.type);
   }
 });

@@ -114,11 +114,11 @@ export function SaleScreen(props: SaleScreenProps) {
   const draftDispatch = (action: SaleSessionEdit) => !closingRef.current && session.edit(action);
 
   const appliedBrowse = useRef({ query: "", category_id: null as number | null, page: 1 });
-  async function browsePage(query: string, category_id: number | null, page: number, refresh = false) {
+  async function browsePage(query: string, category_id: number | null, page: number, refresh = false, preserve_drafts = false) {
     const attempt = Math.max(++searchSequence.current, browserRef.current.request_id + 1);
     searchSequence.current = attempt;
     appliedBrowse.current = { query, category_id, page };
-    browserDispatch(refresh ? { type: "refresh_started", request_id: attempt } : { type: "browse_started", query, category_id, stock_state: "all", activity: "active", page, request_id: attempt });
+    browserDispatch(refresh ? { type: "refresh_started", request_id: attempt } : { type: "browse_started", query, category_id, stock_state: "all", activity: "active", page, request_id: attempt, preserve_drafts });
     try {
       const result = await browseSalesProducts({ query, category_id, stock_state: "all", activity: "active", page, page_size: 20 });
       if (ownerCurrent() && mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
@@ -135,7 +135,8 @@ export function SaleScreen(props: SaleScreenProps) {
   }
   async function changePage(page: number) {
     if (page < 1 || locked()) return;
-    await browsePage(browser.query, browser.category_id, page);
+    const applied = appliedBrowse.current;
+    await browsePage(applied.query, applied.category_id, page, false, true);
   }
 
   async function confirm() {
@@ -172,7 +173,7 @@ export function SaleScreen(props: SaleScreenProps) {
     if (!draftDispatch({ type: "discard" })) return false;
     setCheckoutOpening(null);
     setCheckoutDetail(null);
-    browserDispatch({ type: "browse_started", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: ++searchSequence.current });
+    void browsePage("", null, 1);
     return true;
   };
   const total = formatBs(draftTotalCentavos(state.lines));

@@ -43,24 +43,25 @@ export type ProductBrowserAction<T extends ProductBrowserProduct = ProductBrowse
   | { type: "category_changed"; value: number | null }
   | { type: "stock_state_changed"; value: ProductStockState }
   | { type: "activity_changed"; value: ProductActivityState }
-  | { type: "browse_started"; query: string; category_id: number | null; stock_state: ProductStockState; activity: ProductActivityState; page: number; request_id: number }
+  | { type: "browse_started"; query: string; category_id: number | null; stock_state: ProductStockState; activity: ProductActivityState; page: number; request_id: number; preserve_drafts?: boolean }
   | { type: "browse_succeeded"; request_id: number; result: ProductBrowserPage<T> }
   | { type: "browse_failed"; request_id: number; message: string };
 export function createProductBrowserFlow<T extends ProductBrowserProduct>(state: ProductBrowserState<T>, action: ProductBrowserAction<T>): ProductBrowserState<T> {
   switch (action.type) {
-    case "query_changed": return { ...state, query: action.value, page: 1, request_id: state.request_id + 1 };
-    case "category_changed": return { ...state, category_id: action.value, page: 1, request_id: state.request_id + 1 };
-    case "stock_state_changed": return { ...state, stock_state: action.value, page: 1, request_id: state.request_id + 1 };
-    case "activity_changed": return { ...state, activity: action.value, page: 1, request_id: state.request_id + 1 };
+    // Toolbar drafts do not retire the submitted request that is still loading.
+    case "query_changed": return { ...state, query: action.value, page: 1 };
+    case "category_changed": return { ...state, category_id: action.value, page: 1 };
+    case "stock_state_changed": return { ...state, stock_state: action.value, page: 1 };
+    case "activity_changed": return { ...state, activity: action.value, page: 1 };
     case "browse_started":
       if (action.request_id <= state.request_id) return state;
-      return { ...state, status: "loading", query: action.query, category_id: action.category_id, stock_state: action.stock_state, activity: action.activity, page: action.page, request_id: action.request_id, error: null };
+      return { ...state, status: "loading", query: action.preserve_drafts ? state.query : action.query, category_id: action.preserve_drafts ? state.category_id : action.category_id, stock_state: action.preserve_drafts ? state.stock_state : action.stock_state, activity: action.preserve_drafts ? state.activity : action.activity, page: action.page, request_id: action.request_id, error: null };
     case "browse_succeeded":
       if (action.request_id !== state.request_id) return state;
       return { ...state, status: action.result.products.length ? "results" : "empty", result: action.result, error: null };
     case "browse_failed":
       if (action.request_id !== state.request_id) return state;
-      return { ...state, status: "error", result: null, error: action.message };
+      return { ...state, status: "error", error: action.message };
   }
 }
 

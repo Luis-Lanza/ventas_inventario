@@ -172,11 +172,11 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
     const current = browserRef.current;
     return { query: current.query, category_id: current.category_id, stock_state: current.stock_state, activity: current.activity, page: current.page, request_id: current.request_id };
   };
-  const browseCatalogProducts = async (snapshot: BrowserSnapshot, page = 1, refresh = false) => {
+  const browseCatalogProducts = async (snapshot: BrowserSnapshot, page = 1, refresh = false, preserve_drafts = false) => {
     const current = Math.max(++browseAttempt.current, browserRef.current.request_id + 1);
     browseAttempt.current = current;
     appliedBrowse.current = { ...snapshot, page };
-    browserDispatch(refresh ? { type: "refresh_started", request_id: current } : { type: "browse_started", query: snapshot.query, category_id: snapshot.category_id, stock_state: snapshot.stock_state, activity: snapshot.activity, page, request_id: current });
+    browserDispatch(refresh ? { type: "refresh_started", request_id: current } : { type: "browse_started", query: snapshot.query, category_id: snapshot.category_id, stock_state: snapshot.stock_state, activity: snapshot.activity, page, request_id: current, preserve_drafts });
     try {
       const result = await browseProducts({ query: snapshot.query, category_id: snapshot.category_id, activity: snapshot.activity, page, page_size: 20 });
       if (!ownerCurrent() || !mounted.current || current !== browseAttempt.current) return false;
@@ -640,7 +640,7 @@ export function CatalogMaintenanceScreen({ acceptedMutations }: { acceptedMutati
             onActivityChange: (value) => browserDispatch({ type: "activity_changed", value }),
             showActivity: true,
             onSubmit: submitBrowse,
-            onPageChange: (page) => void browseCatalogProducts(browserSnapshot(), page),
+            onPageChange: (page) => void browseCatalogProducts(appliedBrowse.current ?? browserSnapshot(), page, false, true),
             onCatalogSelect: (product, opener) => {
               editorDismissed.current = false;
               const record: CatalogMaintenanceRecord = { target: "product", entity_id: product.product_id, label: `${product.sku} — ${product.name}`, activity: "active", revision: product.revision };

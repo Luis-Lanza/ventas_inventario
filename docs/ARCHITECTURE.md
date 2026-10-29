@@ -69,6 +69,8 @@ All inventory quantities use positive integers because every product is sold by 
 
 ## Catalog search availability
 
+Search toolbar fields are editable drafts until submitted. Pagination uses the last applied filters without submitting or replacing those drafts. Editing a draft does not invalidate an in-flight submitted request; only a newer request supersedes its response. Failed searches settle loading and keep category choices available for correction. Discarding a Sales draft issues a real first-page browse with cleared filters, which settles on either success or failure.
+
 Catalog, Inventory and Sales share one search input. Words keep FTS prefix matching; compound identifiers such as `FLT-001` still find `FLT-0010`. Whole whitespace-separated finite signed decimal/exponent terms match complete attribute values, including numeric text and options, independent of labels and order. `10` and `10.0` are numerically equal, not `100`, `10.5`, or mixed text `model 10`; `cap 10` combines the word prefix with an exact attribute value. Values use finite `f64` equality, consistent with numeric attributes; commas and units are not converted.
 
 Repeated measures require distinct attribute rows: `28 28 58` needs two values equal to 28 and one equal to 58. SKU, name and category cannot supply missing measures. An exact whole SKU is always an independent alternative, including whitespace-bearing SKUs; a single numeric query also retains SKU token-prefix matching. Private deterministic SQLite functions parse whole numeric values and isolate SKU prefix matching. Parameterized SQL groups numeric requirements and counts source attribute rows before totals, pagination and legacy LIMIT. No schema, stored document or source value is changed.

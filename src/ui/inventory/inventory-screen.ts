@@ -114,14 +114,14 @@ export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; 
     return () => { thumbnailAttempt.current += 1; };
   }, [browser.result, browser.status]);
 
-  async function browsePage(query: string, category_id: number | null, stock_state: ProductStockState, page: number, refresh = false) {
+  async function browsePage(query: string, category_id: number | null, stock_state: ProductStockState, page: number, refresh = false, preserve_drafts = false) {
     if (!ownerCurrent() || !mounted.current) return;
     thumbnailAttempt.current += 1;
     setThumbnails({});
     const attempt = Math.max(++searchAttempt.current, browserRef.current.request_id + 1);
     searchAttempt.current = attempt;
     appliedBrowse.current = { query, category_id, stock_state, page };
-    browserDispatch(refresh ? { type: "refresh_started", request_id: attempt } : { type: "browse_started", query, category_id, stock_state, activity: "active", page, request_id: attempt });
+    browserDispatch(refresh ? { type: "refresh_started", request_id: attempt } : { type: "browse_started", query, category_id, stock_state, activity: "active", page, request_id: attempt, preserve_drafts });
     try {
       const result = await browseInventoryProducts({ query, category_id, stock_state, activity: "active", page, page_size: 20 });
       if (ownerCurrent() && mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
@@ -139,7 +139,8 @@ export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; 
   };
   const changePage = async (page: number) => {
     if (page < 1) return;
-    await browsePage(browser.query, browser.category_id, browser.stock_state, page);
+    const applied = appliedBrowse.current;
+    await browsePage(applied.query, applied.category_id, applied.stock_state, page, false, true);
   };
   const resetDraft = () => {
     setCatalogPassword("");
