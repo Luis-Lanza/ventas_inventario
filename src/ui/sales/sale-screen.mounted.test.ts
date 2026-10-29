@@ -890,7 +890,7 @@ test("keeps Sales toolbar and gallery presentation isolated from browser layout 
   const css = style.textContent ?? "";
   assert.equal(toolbar.getAttribute("data-ui-browser-toolbar"), "wrap");
   assert.match(css, /\[data-ui-product-browser\] \[data-ui-browser-toolbar="wrap"\] \{[^}]*display: flex;[^}]*flex-wrap: wrap/);
-  assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*block-size: 5rem; aspect-ratio: auto/);
+  assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*block-size: auto; aspect-ratio: 3 \/ 2/);
 });
 
 test("Sales product details show operational location while the cart remains unchanged", async () => {

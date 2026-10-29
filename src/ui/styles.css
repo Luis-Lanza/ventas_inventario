@@ -645,9 +645,9 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-inventory-image-placeholder] { display: grid; block-size: 100%; place-items: center; color: var(--color-text-muted); font-size: var(--type-caption-size); line-height: 1.1; text-align: center; }
 [data-ui-product-browser="inventory"] [data-ui-inventory-table] > li > :is([data-ui-money], [data-ui-inventory-product-category], [data-ui-badge], [data-ui-action]) { grid-column: 2; }
 [data-ui-inventory-table] > li > [data-ui-inventory-product-category] { color: var(--color-text-muted); font-size: var(--type-caption-size); }
-[data-ui-product-browser="inventory"] [data-ui-product-browser-list][data-ui-inventory-gallery] { grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); gap: var(--space-3); }
+[data-ui-product-browser="inventory"] [data-ui-product-browser-list][data-ui-inventory-gallery] { grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr)); gap: var(--space-3); }
 [data-ui-product-browser="inventory"] [data-ui-inventory-gallery] > li { grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--space-2); }
-[data-ui-inventory-gallery] [data-ui-inventory-image-area] { inline-size: 100%; block-size: 5rem; aspect-ratio: auto; border-radius: 24px; }
+[data-ui-inventory-gallery] [data-ui-inventory-image-area] { inline-size: 100%; block-size: auto; aspect-ratio: 3 / 2; border-radius: 24px; }
 [data-ui-inventory-gallery] [data-ui-inventory-product-identity] > strong { font-size: var(--type-h2-size); line-height: var(--type-h2-line); }
 [data-ui-inventory-gallery] [data-ui-action] { inline-size: 100%; margin-block-start: var(--space-2); }
 [data-ui-inventory-layout] [data-ui-product-browser-pages] { flex: 0 0 auto; justify-content: flex-end; margin: 0; padding-block-start: var(--space-2); border-block-start: 1px solid var(--color-border); }
@@ -889,7 +889,7 @@ html:has([data-ui-location-lifecycle-dialog]), body:has([data-ui-location-lifecy
 [data-ui-catalog-workspace] [data-ui-catalog-table="true"] [data-ui-catalog-primary-location] { display: block; overflow-wrap: anywhere; }
 [data-ui-catalog-workspace] [data-ui-catalog-table-category] { min-inline-size: 0; overflow-wrap: anywhere; word-break: normal; }
 [data-ui-catalog-workspace] [data-ui-catalog-table-edit] { justify-self: end; }
-[data-ui-catalog-workspace] [data-ui-product-browser-list][data-ui-catalog-gallery="true"] { grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); gap: var(--space-3); }
+[data-ui-catalog-workspace] [data-ui-product-browser-list][data-ui-catalog-gallery="true"] { grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr)); gap: var(--space-3); }
 [data-ui-catalog-workspace] [data-ui-catalog-gallery="true"] > [data-ui-catalog-product-card] { display: grid; min-inline-size: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr auto auto; gap: var(--space-4); align-content: start; }
 @container catalog-browse (min-width: 34rem) {
   [data-ui-catalog-workspace] [data-ui-product-browser] > form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -897,7 +897,7 @@ html:has([data-ui-location-lifecycle-dialog]), body:has([data-ui-location-lifecy
 @container catalog-browse (min-width: 68rem) {
   [data-ui-catalog-workspace] [data-ui-product-browser] > form { grid-template-columns: minmax(12rem, 2fr) minmax(10rem, 1.2fr) minmax(8rem, 1fr) auto auto; }
 }
-[data-ui-catalog-workspace] [data-ui-catalog-image-area] { display: grid; inline-size: 100%; block-size: 5rem; aspect-ratio: auto; place-items: center; overflow: hidden; border-radius: 24px; background: var(--color-surface-subtle); }
+[data-ui-catalog-workspace] [data-ui-catalog-image-area] { display: grid; inline-size: 100%; block-size: auto; aspect-ratio: 3 / 2; place-items: center; overflow: hidden; border-radius: 24px; background: var(--color-surface-subtle); }
 [data-ui-catalog-workspace] [data-ui-catalog-image-area] > :is([data-ui-product-thumbnail], [data-ui-catalog-image-placeholder]) { inline-size: 100%; block-size: 100%; min-block-size: 0; }
 [data-ui-catalog-image-placeholder] { display: grid; inline-size: 100%; min-block-size: 8rem; place-items: center; color: var(--color-text-muted); font-size: var(--type-caption-size); }
 [data-ui-catalog-workspace] [data-ui-catalog-product-card-identity] { display: grid; min-inline-size: 0; align-content: start; gap: var(--space-3); overflow-wrap: anywhere; }
@@ -1097,7 +1097,7 @@ html:has([data-ui-location-lifecycle-dialog]), body:has([data-ui-location-lifecy
   [data-ui-product-browser="inventory"] [data-ui-browser-view-toggle] > button { gap: var(--space-1); padding-inline: var(--space-2); }
 }
 /* Auto-fill retains equal card widths in short final rows. */
-[data-ui-product-browser="sales"] [data-ui-product-browser-list][data-ui-sales-gallery="true"] { grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); gap: var(--space-3);
+[data-ui-product-browser="sales"] [data-ui-product-browser-list][data-ui-sales-gallery="true"] { grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr)); gap: var(--space-3);
   align-content: start; align-items: stretch; min-block-size: auto; margin-block-start: var(--space-2);
 }
 [data-ui-product-browser="sales"] [data-ui-product-browser-list][data-ui-sales-gallery="true"] > [data-ui-sales-product-card] {
@@ -1105,7 +1105,7 @@ html:has([data-ui-location-lifecycle-dialog]), body:has([data-ui-location-lifecy
   align-content: start; align-items: start; padding: var(--space-4); border: 1px solid var(--color-border);
   border-radius: 32px; background: var(--color-surface); box-shadow: none;
 }
-[data-ui-sales-gallery="true"] [data-ui-sales-image-area] { display: grid; min-inline-size: 0; inline-size: 100%; block-size: 5rem; aspect-ratio: auto; place-items: center;
+[data-ui-sales-gallery="true"] [data-ui-sales-image-area] { display: grid; min-inline-size: 0; inline-size: 100%; block-size: auto; aspect-ratio: 3 / 2; place-items: center;
   overflow: hidden; border-radius: 24px; background: var(--color-surface-subtle);
 }
 [data-ui-sales-gallery="true"] [data-ui-sales-image-area] > [data-ui-product-thumbnail],

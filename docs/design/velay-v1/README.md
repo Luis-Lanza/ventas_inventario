@@ -44,9 +44,9 @@ The screen resource format is `projects/14752450755960214215/screens/<screen-id>
 
 ## Compact gallery trial
 
-The compact-gallery trial supersedes the fixed three-/four-column counts below for Sales, Inventory and Catalog. All three use adaptive tracks targeting a minimum width of 14rem (or the available width on narrower windows), 5rem-high contained images, and reduced card padding/gaps. Text and 44px control targets retain their existing scale. Short final rows keep the same card width. Sales detail/add actions share a row; table presentation is unchanged.
+The compact-gallery trial supersedes the fixed three-/four-column counts below for Sales, Inventory and Catalog. All three use adaptive tracks targeting a minimum width of 18rem (288px at base scale, or the available width on narrower windows), full-width 3:2 image areas with automatic height and contained images (no cropping or deformation), and reduced card padding/gaps. Text and 44px control targets retain their existing scale. Short final rows keep the same card width. Sales detail/add actions share a row; table presentation is unchanged.
 
-The acceptance target is two complete product rows in a window like the reported 1896 × 1030 screenshot. This is not a guarantee for every window, zoom level or long product description: preserve readable content and scrolling instead of clipping cards. Browser/native visual acceptance remains required; CSS cascade tests alone do not prove visible row counts.
+The original goal was two complete product rows in a window like the reported 1896 × 1030 screenshot. This iteration instead prioritizes a prominent image and a substantial card body, not tiny or thin cards; two visible rows are not guaranteed with the larger images. Preserve readable content and scrolling instead of clipping cards at any window size, zoom level or long product description. Browser/native Windows visual acceptance remains pending; CSS cascade tests alone do not prove rendered geometry or visible row counts.
 
 ## Visual decisions
 

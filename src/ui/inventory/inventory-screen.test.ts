@@ -14,7 +14,7 @@ test("Inventory CSS separates browse surfaces, adapts gallery tracks and preserv
   assert.match(css, /\[data-ui-inventory-layout\] > \[data-ui-panel\]:has\(> \[data-ui-product-browser="inventory"\]\) \{[^}]*padding: 0; border: 0; background: transparent; box-shadow: none/);
   assert.match(css, /\[data-ui-inventory-layout\] > \[data-ui-panel\]:first-child:has\(\[data-ui-inventory-operation\]\) \{ align-self: start/);
   assert.match(css, /\[data-ui-product-browser="inventory"\] \[data-ui-product-browser-list\] \{[^}]*overflow: visible; align-content: start;[^}]*grid-auto-rows: max-content/);
-  assert.match(css, /\[data-ui-inventory-gallery\] \[data-ui-inventory-image-area\] \{ inline-size: 100%; block-size: 5rem; aspect-ratio: auto/);
+  assert.match(css, /\[data-ui-inventory-gallery\] \[data-ui-inventory-image-area\] \{ inline-size: 100%; block-size: auto; aspect-ratio: 3 \/ 2/);
   assert.match(css, /\[data-ui-inventory-gallery\] \[data-ui-action\] \{ inline-size: 100%/);
   assert.match(css, /\[data-ui-product-browser="inventory"\] \[data-ui-money\] \{[^}]*white-space: normal; overflow-wrap: anywhere/);
   assert.match(css, /@media \(forced-colors: active\) \{\s*\[data-ui-inventory-view-toggle\] > button\[aria-pressed="true"\] \{ outline: 2px solid Highlight/);

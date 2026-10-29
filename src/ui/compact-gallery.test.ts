@@ -8,9 +8,9 @@ test("all product galleries use compact adaptive tracks and bounded images", asy
   for (const marker of ["inventory", "sales", "catalog"]) {
     const gallery = marker === "inventory" ? "data-ui-inventory-gallery" : `data-ui-${marker}-gallery=\"true\"`;
     const listRule = css.split("\n").find((line) => line.includes(`[${gallery}] {`) && line.includes("data-ui-product-browser-list"));
-    assert.ok(listRule?.includes("repeat(auto-fill, minmax(min(100%, 14rem), 1fr))"), `${marker}: adaptive tracks keep short final rows at the same width`);
+    assert.ok(listRule?.includes("repeat(auto-fill, minmax(min(100%, 18rem), 1fr))"), `${marker}: adaptive tracks keep short final rows at the same width`);
     const imageRule = css.split("\n").find((line) => line.includes(`[data-ui-${marker}-image-area] {`) && (marker === "catalog" || line.includes("gallery")));
-    assert.ok(imageRule?.includes("block-size: 5rem; aspect-ratio: auto"), `${marker}: image height does not grow with card width`);
+    assert.ok(imageRule?.includes("block-size: auto; aspect-ratio: 3 / 2"), `${marker}: full-width image area keeps a prominent 3:2 proportion`);
   }
   assert.match(css, /Compact product galleries[\s\S]*gap: var\(--space-2\); padding: var\(--space-3\)/);
 });

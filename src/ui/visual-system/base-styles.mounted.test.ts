@@ -834,8 +834,8 @@ for (const presentation of ["sales", "inventory"] as const) {
         view.rerender(browser("gallery"));
         const galleryArea = document.querySelector(presentation === "sales" ? "[data-ui-sales-image-area]" : "[data-ui-inventory-image-area]")!;
         assert.equal(styleOf(galleryArea, "inline-size"), "100%");
-        assert.equal(styleOf(galleryArea, "aspect-ratio"), "auto");
-        assert.equal(styleOf(galleryArea, "block-size"), "80px");
+        assert.equal(styleOf(galleryArea, "aspect-ratio"), "3 / 2");
+        assert.equal(styleOf(galleryArea, "block-size"), "auto");
         assert.equal(styleOf(galleryArea, "border-radius"), "24px");
       } finally { style.remove(); }
     });
@@ -1015,7 +1015,7 @@ for (const width of [1440, 961, 960, 600, 340]) {
       assert.equal(styleOf(galleryViewport, "overflow-y"), "auto");
       assert.equal(styleOf(galleryViewport, "overflow-x"), "auto");
       assert.equal(styleOf(galleryViewport, "overscroll-behavior"), "contain");
-      assert.equal(styleOf(gallery, "grid-template-columns"), "repeat(auto-fill, minmax(min(100%, 14rem), 1fr))");
+      assert.equal(styleOf(gallery, "grid-template-columns"), "repeat(auto-fill, minmax(min(100%, 18rem), 1fr))");
       const edit = document.querySelector("[data-ui-catalog-edit-content]")!;
       assert.equal(styleOf(edit, "min-block-size"), "0px");
       assert.equal(styleOf(edit, "overflow-y"), "auto");
@@ -1210,7 +1210,7 @@ for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [1440,
         onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: () => {}, onPageChange: () => {}, onSelect: () => {}, actionLabel: "Agregar", thumbnails: { 1: "data:image/jpeg;base64,/9j/2Q==" } };
       render(createElement("div", { "data-ui-catalog-workspace": true }, createElement(ProductBrowser, props), catalogBrowser("gallery")));
       const gallery = document.querySelector('[data-ui-sales-gallery="true"]')!;
-      assert.equal(styleOf(gallery, "grid-template-columns"), "repeat(auto-fill, minmax(min(100%, 14rem), 1fr))");
+      assert.equal(styleOf(gallery, "grid-template-columns"), "repeat(auto-fill, minmax(min(100%, 18rem), 1fr))");
       assert.equal(styleOf(gallery, "align-content"), "start");
       assert.equal(styleOf(gallery, "align-items"), "stretch");
       assert.equal(styleOf(gallery, "gap"), "12px");
@@ -1223,8 +1223,8 @@ for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [1440,
         assert.equal(styleOf(card, "grid-template-columns"), "minmax(0, 1fr)");
         const image = card.querySelector("[data-ui-sales-image-area]")!;
         assert.equal(styleOf(image, "inline-size"), "100%");
-        assert.equal(styleOf(image, "aspect-ratio"), "auto");
-        assert.equal(styleOf(image, "block-size"), "80px");
+        assert.equal(styleOf(image, "aspect-ratio"), "3 / 2");
+        assert.equal(styleOf(image, "block-size"), "auto");
         assert.equal(styleOf(image, "border-radius"), "24px");
         assert.equal(styleOf(image.firstElementChild!, "inline-size"), "100%");
         assert.equal(styleOf(image.firstElementChild!, "block-size"), "100%");
@@ -1258,8 +1258,8 @@ for (const [width, browseWidth] of [[1440, 800], [1200, 560], [960, 700], [1440,
       }
       const shared = document.querySelector('[data-ui-catalog-gallery="true"] [data-ui-catalog-image-placeholder]')!;
       assert.equal(styleOf(shared, "min-block-size"), "0px");
-      assert.equal(styleOf(shared.parentElement!, "aspect-ratio"), "auto");
-      assert.equal(styleOf(shared.parentElement!, "block-size"), "80px");
+      assert.equal(styleOf(shared.parentElement!, "aspect-ratio"), "3 / 2");
+      assert.equal(styleOf(shared.parentElement!, "block-size"), "auto");
       assert.equal(styleOf(shared, "block-size"), "100%");
       assert.equal(styleOf(shared.closest("li")!, "border-radius"), "24px", "Catalog shares the compact rounded card family");
       assert.equal(styleOf(shared.parentElement!, "border-radius"), "24px");
