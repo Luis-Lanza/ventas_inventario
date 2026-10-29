@@ -44,7 +44,15 @@ export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; 
   const onAlertCueChange = props?.onAlertCueChange;
   const [state, dispatch] = useReducer(screenFlow, initialInventoryState);
   const [browser, browserDispatch] = useReducer(createRefreshingProductBrowserFlow<InventoryBrowseProduct>, { ...initialProductBrowserState, stock_state: props.initialStockState ?? "all" });
-  const [viewMode, setViewMode] = useState<CatalogViewMode>("table");
+  const [viewMode, setViewMode] = useState<CatalogViewMode>(() => {
+    try { return globalThis.localStorage.getItem("inventory-view-mode") === "gallery" ? "gallery" : "table"; }
+    catch { return "table"; }
+  });
+  const changeViewMode = (mode: CatalogViewMode) => {
+    setViewMode(mode);
+    try { globalThis.localStorage.setItem("inventory-view-mode", mode); }
+    catch { /* An unavailable preference store must not block Inventory. */ }
+  };
   const [alertState, setAlertState] = useState<LoadState>("loading");
   const [catalogPassword, setCatalogPassword] = useState("");
   const root = useRef<HTMLElement>(null);
@@ -191,7 +199,7 @@ export function InventoryScreen(props: { acceptedMutations?: AcceptedMutations; 
       savedOutcome.stale ? createElement(Feedback, { kind: "advisory" }, "Saldo proyectado desactualizado. Revisá el stock actual.") : null) : null,
     createElement("div", { "data-ui-inventory-layout": true },
       createElement("section", { "data-ui-panel": true, "aria-label": "Operación de inventario" },
-        createElement(ProductBrowser<InventoryBrowseProduct>, { state: browser, thumbnails, presentation: "inventory", inventoryViewMode: viewMode, onInventoryViewModeChange: setViewMode, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage,
+        createElement(ProductBrowser<InventoryBrowseProduct>, { state: browser, thumbnails, presentation: "inventory", inventoryViewMode: viewMode, onInventoryViewModeChange: changeViewMode, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage,
           onInventorySelect: (product, button) => { if (confirmLocked.current || presentationLocked.current || state.product) return; opener.current = button; setOpening(captureInventoryOpening(button, ++operationId.current)); setSavedOutcome(null); setCatalogPassword(""); setOrdinaryFailure(false); dispatch({ type: "product_selected", product }); },
           actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending })),
       createElement("section", { "data-ui-panel": true, "data-ui-inventory-alert-panel": true, "aria-labelledby": "inventory-alert-heading" },
