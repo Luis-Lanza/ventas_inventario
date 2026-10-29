@@ -890,8 +890,7 @@ test("keeps Sales toolbar and gallery presentation isolated from browser layout 
   const css = style.textContent ?? "";
   assert.equal(toolbar.getAttribute("data-ui-browser-toolbar"), "wrap");
   assert.match(css, /\[data-ui-product-browser\] \[data-ui-browser-toolbar="wrap"\] \{[^}]*display: flex;[^}]*flex-wrap: wrap/);
-  assert.match(css, /@container sales-browse \(min-width: 46rem\)[\s\S]*\[data-ui-sales-gallery="true"\] \{[^}]*repeat\(3, minmax\(0, 1fr\)\)[^}]*\}/);
-  assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*aspect-ratio: 4 \/ 3/);
+  assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*block-size: 5rem; aspect-ratio: auto/);
 });
 
 test("Sales product details show operational location while the cart remains unchanged", async () => {
@@ -1097,7 +1096,6 @@ test("contains the product result viewport between search and pagination without
   assert.ok(within(list).getAllByRole("button", { name: "Agregar" }).length > 0);
   await user().click(within(catalog).getByRole("button", { name: "Vista de galería" }));
   assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
-  assert.match(style.textContent ?? "", /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\][^}]*repeat\(1, minmax\(0, 1fr\)\)/s);
   assert.equal(within(list).getAllByRole("listitem").length, 100);
   assert.ok(within(catalog).getByRole("status"));
   assert.ok(within(catalog).getByRole("button", { name: "Siguiente" }));

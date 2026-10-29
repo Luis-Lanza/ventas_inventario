@@ -8,17 +8,13 @@ import { createSearchProductsCommand } from "../../commands/catalog.ts";
 import { createInventoryCatalogInteraction, InventoryOperationChoices, inventoryScreenDescription } from "./inventory-screen.ts";
 import { createInventoryFlow, initialInventoryState } from "./inventory-flow.ts";
 
-test("Inventory CSS separates browse surfaces, fixes gallery tracks and preserves intrinsic row height", async () => {
+test("Inventory CSS separates browse surfaces, adapts gallery tracks and preserves intrinsic row height", async () => {
   // Passive CSS contracts only: these assertions do not establish rendered geometry.
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /\[data-ui-inventory-layout\] > \[data-ui-panel\]:has\(> \[data-ui-product-browser="inventory"\]\) \{[^}]*padding: 0; border: 0; background: transparent; box-shadow: none/);
   assert.match(css, /\[data-ui-inventory-layout\] > \[data-ui-panel\]:first-child:has\(\[data-ui-inventory-operation\]\) \{ align-self: start/);
   assert.match(css, /\[data-ui-product-browser="inventory"\] \[data-ui-product-browser-list\] \{[^}]*overflow: visible; align-content: start;[^}]*grid-auto-rows: max-content/);
-  assert.match(css, /\[data-ui-product-browser="inventory"\] \[data-ui-product-browser-list\]\[data-ui-inventory-gallery\] \{ grid-template-columns: repeat\(1, minmax\(0, 1fr\)\)/);
-  for (const [width, columns] of [[30, 2], [46, 3]]) {
-    assert.match(css, new RegExp(`@container inventory-browse \\(min-width: ${width}rem\\)[\\s\\S]*?\\[data-ui-product-browser="inventory"\\] \\[data-ui-product-browser-list\\]\\[data-ui-inventory-gallery\\] \\{ grid-template-columns: repeat\\(${columns}, minmax\\(0, 1fr\\)\\)`));
-  }
-  assert.match(css, /\[data-ui-inventory-gallery\] \[data-ui-inventory-image-area\] \{ inline-size: 100%; aspect-ratio: 4 \/ 3/);
+  assert.match(css, /\[data-ui-inventory-gallery\] \[data-ui-inventory-image-area\] \{ inline-size: 100%; block-size: 5rem; aspect-ratio: auto/);
   assert.match(css, /\[data-ui-inventory-gallery\] \[data-ui-action\] \{ inline-size: 100%/);
   assert.match(css, /\[data-ui-product-browser="inventory"\] \[data-ui-money\] \{[^}]*white-space: normal; overflow-wrap: anywhere/);
   assert.match(css, /@media \(forced-colors: active\) \{\s*\[data-ui-inventory-view-toggle\] > button\[aria-pressed="true"\] \{ outline: 2px solid Highlight/);

@@ -562,10 +562,8 @@ test("Sales browse modes retain distinct geometry and protect table price and Ad
   assert.match(css, /data-ui-sales-table="true"[^}]*grid-template-columns:\s*3rem minmax\(0, 1fr\)/s);
   assert.match(css, /data-ui-sales-table="true"] \[data-ui-product-action\][^}]*flex-wrap:\s*wrap/s);
   assert.match(css, /data-ui-sales-table="true"] \[data-ui-money\][^}]*word-break:\s*keep-all/s);
-  assert.match(css, /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\]\s*\{[^}]*repeat\(1, minmax\(0, 1fr\)\)/s);
-  assert.match(css, /@container sales-browse \(min-width: 46rem\)[\s\S]*data-ui-sales-gallery="true"\]\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/s);
   assert.match(css, /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\] > \[data-ui-sales-product-card\][^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
-  assert.match(css, /data-ui-sales-image-area\]\s*\{[^}]*inline-size:\s*100%[^}]*aspect-ratio:\s*4 \/ 3/s);
+  assert.match(css, /data-ui-sales-image-area\]\s*\{[^}]*inline-size:\s*100%[^}]*aspect-ratio:\s*auto/s);
   assert.match(css, /data-ui-sales-image-area\] > \[data-ui-product-thumbnail\],[\s\S]*data-ui-sales-image-area\] > \[data-ui-catalog-image-placeholder\][^}]*inline-size:\s*100%[^}]*block-size:\s*100%/s);
   assert.match(css, /data-ui-sales-commercial-footer\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
   assert.match(css, /data-ui-sales-commercial-footer\] > \[data-ui-action\][^}]*inline-size:\s*100%[^}]*white-space:\s*normal/s);

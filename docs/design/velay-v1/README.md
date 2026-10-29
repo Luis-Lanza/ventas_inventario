@@ -42,6 +42,12 @@ These thirty-one user-approved static mockups are the visual references for the 
 
 The screen resource format is `projects/14752450755960214215/screens/<screen-id>`. Titles and IDs above distinguish these selections from discarded alternatives. Screenshot pixels are export dimensions, **not** application viewport requirements.
 
+## Compact gallery trial
+
+The compact-gallery trial supersedes the fixed three-/four-column counts below for Sales, Inventory and Catalog. All three use adaptive tracks targeting a minimum width of 14rem (or the available width on narrower windows), 5rem-high contained images, and reduced card padding/gaps. Text and 44px control targets retain their existing scale. Short final rows keep the same card width. Sales detail/add actions share a row; table presentation is unchanged.
+
+The acceptance target is two complete product rows in a window like the reported 1896 × 1030 screenshot. This is not a guarantee for every window, zoom level or long product description: preserve readable content and scrolling instead of clipping cards. Browser/native visual acceptance remains required; CSS cascade tests alone do not prove visible row counts.
+
 ## Visual decisions
 
 - Preserve the plum/ivory identity: primary `#3d3042`, hover `#312535`, background `#f4efe6`, surface `#fffcf7`, text `#29252b`, secondary text `#625a63`, restrained copper `#c56845`.

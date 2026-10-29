@@ -733,10 +733,6 @@ test("production CSS declares the desktop and compact shell width contracts", as
   assert.match(source, /\[data-ui-product-browser="sales"\] \[data-ui-sale-list\] > li\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s);
   assert.match(source, /data-ui-product-browser-pages[^}]*flex:\s*0 0 auto/);
   assert.doesNotMatch(source, /data-ui-catalog-search-actions/);
-  assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\]\[data-ui-catalog-gallery="true"\] \{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
-  for (const [minimum, columns] of [[34, 2], [52, 3], [68, 4]]) {
-    assert.match(source, new RegExp(`@container catalog-browse \\(min-width: ${minimum}rem\\) \\{[^@]*?\\[data-ui-catalog-gallery="true"\\] \\{[^}]*grid-template-columns:\\s*repeat\\(${columns}, minmax\\(0, 1fr\\)\\)`));
-  }
   assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-catalog-toolbar-item="views"\] > button[^}]*min-block-size:\s*var\(--size-control-default\)/);
   assert.doesNotMatch(source, /data-ui-catalog-master[^}]*max-block-size:\s*(?:520|208)px/);
 });
