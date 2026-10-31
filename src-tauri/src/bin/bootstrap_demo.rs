@@ -4,6 +4,7 @@ use repuestos_autos::application::catalog::{
     bootstrap_demo_catalog, BootstrapDemoError, BootstrapDemoOutcome,
 };
 use repuestos_autos::identity::{APPLICATION_ID, DATABASE_FILENAME};
+use repuestos_autos::infrastructure::filesystem::storage_ownership::StorageOwnership;
 use repuestos_autos::infrastructure::sqlite::{
     database_config, default_application_database_config, open_existing_database,
 };
@@ -38,6 +39,16 @@ fn run(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
         Some(path) => database_config(path),
         None => default_application_database_config()?,
     };
+    if !config.path().is_file() {
+        return Err("database file does not exist".into());
+    }
+    let root = config
+        .path()
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    // Declared before the connection: retain ownership until SQLite closes.
+    let _owner = StorageOwnership::acquire(root).map_err(|error| error.to_string())?;
     let mut connection = open_existing_database(&config)?;
     match bootstrap_demo_catalog(&mut connection) {
         Ok(BootstrapDemoOutcome::Loaded(summary)) => {
@@ -56,7 +67,9 @@ fn run(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
                 "refused: database is not the recognized pristine bootstrap state".into()
             }
             BootstrapDemoError::InvalidPlan => "bootstrap demo plan is invalid".into(),
-            BootstrapDemoError::Persistence => "persistence failed; no bootstrap changes committed".into(),
+            BootstrapDemoError::Persistence => {
+                "persistence failed; no bootstrap changes committed".into()
+            }
         }),
     }
 }
@@ -67,6 +80,7 @@ fn print_help() {
 
 Bootstrap the deterministic automotive demo catalog only on the exact pristine
 application bootstrap database. A complete recognized demo catalog is idempotent.
+Requires exclusive storage access; close Velay before running this command.
 
 Options:
   --database <path>  Use an explicit SQLite database path

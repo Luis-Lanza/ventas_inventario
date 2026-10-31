@@ -772,7 +772,9 @@ fn is_complete_demo_state(transaction: &Transaction<'_>, plan: &BootstrapDemoPla
         (
             2,
             2,
-            fts_content("BUJ-001", "Bujia archivada", "Bujias", None, false),
+            // Reactivation refreshes both legacy and typed search segments,
+            // unlike the insertion path used by the new demo products below.
+            fts_content("BUJ-001", "Bujia archivada", "Bujias", None, true),
         ),
     ];
     expected_fts.extend(plan.products.iter().enumerate().map(|(index, product)| {

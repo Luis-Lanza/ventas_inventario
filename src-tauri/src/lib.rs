@@ -32,6 +32,8 @@ struct DatabaseStateInner {
     status: DatabaseStatus,
     // Connection readiness does not establish database identity after a failed replacement.
     writes_blocked: bool,
+    // Fields drop in declaration order: close the connection before releasing ownership.
+    _ownership: Option<infrastructure::filesystem::storage_ownership::StorageOwnership>,
 }
 
 pub struct DatabaseState(Mutex<DatabaseStateInner>, AtomicU64);
@@ -57,6 +59,26 @@ impl RestoreInstallOutcome {
 }
 
 impl DatabaseState {
+    /// Start the application against one exclusively owned storage directory.
+    pub fn open_owned_application(
+        root: &std::path::Path,
+    ) -> Result<Self, infrastructure::filesystem::storage_ownership::OwnershipError> {
+        std::fs::create_dir_all(root).map_err(|_| {
+            infrastructure::filesystem::storage_ownership::OwnershipError::Unavailable
+        })?;
+        let owner = infrastructure::filesystem::storage_ownership::StorageOwnership::acquire(root)?;
+        let config = infrastructure::sqlite::production_database_config(root);
+        let mut state = Self::recover_on_startup(config, &BackupStore::new(root));
+        state
+            .0
+            .get_mut()
+            .map_err(|_| {
+                infrastructure::filesystem::storage_ownership::OwnershipError::Unavailable
+            })?
+            ._ownership = Some(owner);
+        Ok(state)
+    }
+
     pub fn open(config: DatabaseConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let connection = open_database(&config)?;
         Ok(Self::from_connection(config, connection))
@@ -68,6 +90,7 @@ impl DatabaseState {
             connection: Some(connection),
             status: DatabaseStatus::Ready,
             writes_blocked: false,
+            _ownership: None,
         }), AtomicU64::new(0))
     }
 
@@ -137,6 +160,7 @@ impl DatabaseState {
             connection: None,
             status: DatabaseStatus::Unavailable,
             writes_blocked: true,
+            _ownership: None,
         }), AtomicU64::new(1))
     }
 
@@ -595,6 +619,79 @@ mod database_state_tests {
     use std::{cell::Cell, fs};
 
     use super::*;
+
+    #[test]
+    fn owned_unavailable_startup_preserves_evidence_and_retains_exclusion() {
+        use infrastructure::filesystem::storage_ownership::{OwnershipError, StorageOwnership};
+        let root = tempfile::tempdir().unwrap();
+        let config = infrastructure::sqlite::production_database_config(root.path());
+        fs::write(config.path(), b"unrecognized retained database").unwrap();
+        let state = DatabaseState::open_owned_application(root.path()).unwrap();
+        assert_eq!(
+            state.with_read(|_| Ok(())).unwrap_err(),
+            "database_unavailable"
+        );
+        assert!(matches!(state.admit_write(), Err(error) if error == "database_unavailable"));
+        assert!(matches!(
+            StorageOwnership::acquire(root.path()),
+            Err(OwnershipError::InUse)
+        ));
+        assert_eq!(
+            fs::read(config.path()).unwrap(),
+            b"unrecognized retained database"
+        );
+        drop(state);
+        drop(StorageOwnership::acquire(root.path()).unwrap());
+        root.close().unwrap();
+    }
+
+    #[test]
+    fn owned_startup_lock_error_does_not_initialize_database() {
+        use infrastructure::filesystem::storage_ownership::OwnershipError;
+        let root = tempfile::tempdir().unwrap();
+        let lock = root.path().join(".velay-storage.lock");
+        fs::create_dir(&lock).unwrap();
+        fs::write(lock.join("evidence"), b"retained").unwrap();
+        assert!(matches!(
+            DatabaseState::open_owned_application(root.path()),
+            Err(OwnershipError::Unavailable)
+        ));
+        assert!(
+            !infrastructure::sqlite::production_database_config(root.path())
+                .path()
+                .exists()
+        );
+        assert_eq!(fs::read(lock.join("evidence")).unwrap(), b"retained");
+        root.close().unwrap();
+    }
+
+    #[test]
+    fn owned_startup_rejects_competitor_before_creating_database() {
+        use infrastructure::filesystem::storage_ownership::{OwnershipError, StorageOwnership};
+        let root = tempfile::tempdir().unwrap();
+        let owner = StorageOwnership::acquire(root.path()).unwrap();
+        let config = infrastructure::sqlite::production_database_config(root.path());
+        assert!(matches!(
+            DatabaseState::open_owned_application(root.path()),
+            Err(OwnershipError::InUse)
+        ));
+        assert!(!config.path().exists());
+        drop(owner);
+        let state = DatabaseState::open_owned_application(root.path()).unwrap();
+        assert!(state
+            .with_read(|db| validate_restored_database(db).map_err(|_| "invalid".into()))
+            .is_ok());
+        assert!(state.admit_write().is_ok());
+        assert!(matches!(
+            StorageOwnership::acquire(root.path()),
+            Err(OwnershipError::InUse)
+        ));
+        drop(state);
+        let next = DatabaseState::open_owned_application(root.path()).unwrap();
+        assert!(next.admit_write().is_ok());
+        drop(next);
+        root.close().unwrap();
+    }
 
     #[test]
     fn fresh_start_with_absent_root_creates_a_valid_database() {
@@ -1674,10 +1771,8 @@ pub fn run() -> Result<(), tauri::Error> {
     desktop_command_builder(tauri::Builder::default())
         .setup(|app: &mut tauri::App<tauri::Wry>| {
             let app_data_directory = app.path().app_data_dir()?;
-            let database_config =
-                infrastructure::sqlite::production_database_config(&app_data_directory);
-            let store = BackupStore::new(&app_data_directory);
-            let state = DatabaseState::recover_on_startup(database_config, &store);
+            // Ownership precedes database recovery and Catalog/session initialization.
+            let state = DatabaseState::open_owned_application(&app_data_directory)?;
             app.manage(state);
             app.manage(application::catalog::access::CatalogAccessSession::open(
                 infrastructure::filesystem::catalog_access::CatalogAccessStore::new(&app_data_directory),

@@ -8,6 +8,8 @@ Before running it, use the app's **Copia y restauración** screen to create and 
 
 The command opens an existing, current-schema database and refuses missing, invalid, unexpected, user-populated, partial, or incomplete databases without mutation.
 
+Close Velay before running it. The command requires the same [exclusive storage ownership](STORAGE_OWNERSHIP.md) as desktop startup; contention reports `bootstrap-demo: storage_in_use` and other ownership failures report `bootstrap-demo: storage_unavailable`, both with exit code 1 before opening SQLite. Do not delete `.velay-storage.lock`: the OS releases ownership when its holder exits, and the persistent file is not reset authority. Building requires Rust 1.89 or newer.
+
 ## Windows invocation
 
 From the repository root, run:
@@ -31,7 +33,7 @@ cargo run --manifest-path src-tauri/Cargo.toml --bin bootstrap-demo -- --help
 ## Outcomes
 
 - **Loaded demo catalog:** preserves `FLT-001` and archived `BUJ-001`, reactivates `BUJ-001`, adds 8 deterministic automotive categories and 98 products, and commits exactly 10 active categories and 100 active products.
-- **Already complete:** reports success without changes when the recognized demo state is already complete.
+- **Already complete:** reports success without changes when the recognized demo state is already complete, including when reopened by a new CLI process. Recognition preserves the exact search fingerprint of reactivated products; altered fingerprints are refused without mutation.
 - **Refused:** reports a refusal for any partial, unexpected, user-populated, or non-pristine database. Refusal does not mutate the database.
 - **Persistence failure:** the single transaction rolls back categories, products, stock, opening movements, FTS rows, reactivation, and audit facts together.
 
