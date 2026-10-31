@@ -622,7 +622,7 @@ fn rejects_lifecycle_backup_changed_original_fact_without_mutating_selected_sour
         &directory,
         "changed-original-fact",
         "DROP TRIGGER confirmed_sale_lines_immutable_price;
-         UPDATE sale_lines SET negotiated_unit_price_centavos = 6_000 WHERE id = 20;",
+         UPDATE sale_lines SET negotiated_unit_price_centavos = 6000 WHERE id = 20;",
     );
 
     fs::remove_dir_all(directory).unwrap();
