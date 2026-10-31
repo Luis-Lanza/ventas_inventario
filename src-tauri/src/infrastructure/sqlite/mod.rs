@@ -196,6 +196,14 @@ fn validate_existing_family(path: &Path) -> Result<()> {
     validate_family(&connection)
 }
 
+/// Initialize an already-keyed, exclusively created empty candidate.
+/// Existing application openers intentionally retain their current behavior.
+#[cfg(feature = "sqlcipher-build-probe")]
+pub(crate) fn initialize_encrypted_candidate(connection: &mut Connection) -> Result<()> {
+    initialize_fresh_database(connection)?;
+    migrate_if_needed(connection)
+}
+
 fn initialize_fresh_database(connection: &mut Connection) -> Result<()> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(include_str!("migrations/0001_confirm_sale.sql"))?;

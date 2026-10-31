@@ -10,6 +10,8 @@ use chacha20poly1305::{
 };
 use zeroize::Zeroizing;
 
+#[cfg(feature = "sqlcipher-build-probe")]
+pub(crate) mod encrypted_database;
 pub(crate) mod remembered_key;
 
 const MAGIC: &[u8; 8] = b"VELAYKEY";
