@@ -10,18 +10,20 @@ use chacha20poly1305::{
 };
 use zeroize::Zeroizing;
 
+pub(crate) mod remembered_key;
+
 const MAGIC: &[u8; 8] = b"VELAYKEY";
 const DOMAIN: &[u8; 26] = b"com.velay.app/key-envelope";
 
 const HEADER: usize = 43;
 const SLOT: usize = 88;
 const LENGTH: usize = HEADER + 2 * SLOT;
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EnvelopeContext {
     pub(crate) database_id: [u8; 16],
     pub(crate) generation_id: [u8; 16],
 }
-pub(crate) struct DataKey(Zeroizing<[u8; 32]>);
+pub(crate) struct DataKey(Zeroizing<[u8; 32]>, EnvelopeContext);
 pub(crate) struct EnvelopeBytes([u8; LENGTH]);
 impl EnvelopeBytes {
     pub(crate) fn as_bytes(&self) -> &[u8] {
@@ -63,7 +65,7 @@ fn create_random(
 ) -> Result<(DataKey, EnvelopeBytes)> {
     validate_secret(password)?;
     validate_secret(recovery)?;
-    let mut key = DataKey(Zeroizing::new([0; 32]));
+    let mut key = DataKey(Zeroizing::new([0; 32]), *context);
     random(key.0.as_mut())?;
     let mut bytes = EnvelopeBytes([0; LENGTH]);
     bytes.0[..8].copy_from_slice(MAGIC);
@@ -120,7 +122,7 @@ pub(crate) fn unlock(
     let start = HEADER + role * SLOT;
     let derived = derive(secret, &bytes[start..start + 16])?;
     let cipher = XChaCha20Poly1305::new((&*derived).into());
-    let mut key = DataKey(Zeroizing::new([0; 32]));
+    let mut key = DataKey(Zeroizing::new([0; 32]), *context);
     key.0.copy_from_slice(&bytes[start + 40..start + 72]);
     cipher
         .decrypt_in_place_detached(
