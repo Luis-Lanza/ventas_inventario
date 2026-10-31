@@ -1071,6 +1071,7 @@ mod destination_token_tests {
 
         assert!(matches!(prepare_restore(&state, &mut commands, PrepareRestoreRequest { source_token }), BackupResponse::Error { code: "invalid_backup", .. }));
         assert_eq!(fs::read_dir(root.join("backup-restore/staging")).unwrap().count(), 0);
+        drop(state);
         fs::remove_dir_all(root).unwrap();
     }
 
