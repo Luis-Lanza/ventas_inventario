@@ -17,7 +17,8 @@ const DOMAIN: &[u8; 26] = b"com.velay.app/key-envelope";
 
 const HEADER: usize = 43;
 const SLOT: usize = 88;
-const LENGTH: usize = HEADER + 2 * SLOT;
+pub(crate) const ENCODED_LENGTH: usize = HEADER + 2 * SLOT;
+const LENGTH: usize = ENCODED_LENGTH;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EnvelopeContext {
     pub(crate) database_id: [u8; 16],
@@ -96,12 +97,8 @@ fn create_random(
     }
     Ok((key, bytes))
 }
-pub(crate) fn unlock(
-    bytes: &[u8],
-    context: &EnvelopeContext,
-    secret: UnlockSecret<'_>,
-) -> Result<DataKey> {
-    // No allocations or KDF before fixed framing, identifiers and secret bounds.
+/// Checks framing/profile/context only. Does not authenticate credentials or disk context.
+pub(crate) fn validate_framing(bytes: &[u8], context: &EnvelopeContext) -> Result<()> {
     if bytes.len() != LENGTH || &bytes[..8] != MAGIC {
         return Err(EnvelopeError::Malformed);
     }
@@ -114,6 +111,15 @@ pub(crate) fn unlock(
     if bytes[11..27] != context.database_id || bytes[27..43] != context.generation_id {
         return Err(EnvelopeError::ContextMismatch);
     }
+    Ok(())
+}
+pub(crate) fn unlock(
+    bytes: &[u8],
+    context: &EnvelopeContext,
+    secret: UnlockSecret<'_>,
+) -> Result<DataKey> {
+    // No allocations or KDF before fixed framing, identifiers and secret bounds.
+    validate_framing(bytes, context)?;
     let (role, secret) = match secret {
         UnlockSecret::Password(s) => (0, s),
         UnlockSecret::Recovery(s) => (1, s),
