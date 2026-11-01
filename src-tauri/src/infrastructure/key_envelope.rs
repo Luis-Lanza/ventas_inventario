@@ -10,7 +10,7 @@ use chacha20poly1305::{
 };
 use zeroize::Zeroizing;
 
-#[cfg(feature = "sqlcipher-build-probe")]
+#[cfg(any(feature = "sqlcipher-build-probe", feature = "production-encryption"))]
 pub(crate) mod encrypted_database;
 pub(crate) mod remembered_key;
 

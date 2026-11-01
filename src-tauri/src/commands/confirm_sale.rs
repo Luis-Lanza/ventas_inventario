@@ -94,7 +94,7 @@ pub struct PersistedLine {
 }
 
 pub fn confirm_sale(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     request: ConfirmSaleRequest,
 ) -> Result<ConfirmSaleResponse, String> {
     let request = match parse_request(request) {

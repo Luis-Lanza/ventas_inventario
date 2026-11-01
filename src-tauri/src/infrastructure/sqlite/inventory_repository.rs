@@ -8,11 +8,11 @@ use crate::domain::inventory::{
 use crate::domain::RequestId;
 
 pub struct SqliteInventoryRepository<'connection> {
-    connection: &'connection mut Connection,
+    connection: &'connection Connection,
 }
 
 impl<'connection> SqliteInventoryRepository<'connection> {
-    pub fn new(connection: &'connection mut Connection) -> Self {
+    pub fn new(connection: &'connection Connection) -> Self {
         Self { connection }
     }
 }
@@ -29,9 +29,7 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
             }
         };
         let identity = operation.identity();
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
+        let transaction = rusqlite::Transaction::new_unchecked(self.connection, TransactionBehavior::Immediate)
             .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
         if let Some(existing) = load_persisted(&transaction, &request_id)? {
             let result = validate_existing(&identity, existing)?;

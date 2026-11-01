@@ -136,14 +136,14 @@ impl EditCatalogInput {
 }
 
 pub struct EditCatalogUseCase<'connection, Repository> {
-    connection: &'connection mut Connection,
+    connection: &'connection Connection,
     repository: Repository,
 }
 impl<'connection, Repository> EditCatalogUseCase<'connection, Repository>
 where
     Repository: CatalogMetadataRepository,
 {
-    pub fn new(connection: &'connection mut Connection, repository: Repository) -> Self {
+    pub fn new(connection: &'connection Connection, repository: Repository) -> Self {
         Self {
             connection,
             repository,
@@ -153,9 +153,7 @@ where
         self,
         input: EditCatalogInput,
     ) -> std::result::Result<CatalogSnapshot, MaintainCatalogError> {
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
+        let transaction = rusqlite::Transaction::new_unchecked(self.connection, TransactionBehavior::Immediate)
             .map_err(|_| MaintainCatalogError::PersistenceFailure)?;
         let (target, id, revision) = match &input {
             EditCatalogInput::Category {
@@ -262,7 +260,7 @@ where
 }
 
 pub struct MaintainCatalogUseCase<'connection, Repository> {
-    connection: &'connection mut Connection,
+    connection: &'connection Connection,
     repository: Repository,
 }
 
@@ -270,7 +268,7 @@ impl<'connection, Repository> MaintainCatalogUseCase<'connection, Repository>
 where
     Repository: CatalogMaintenanceRepository,
 {
-    pub fn new(connection: &'connection mut Connection, repository: Repository) -> Self {
+    pub fn new(connection: &'connection Connection, repository: Repository) -> Self {
         Self {
             connection,
             repository,
@@ -281,9 +279,7 @@ where
         self,
         input: MaintainCatalogInput,
     ) -> std::result::Result<CatalogSnapshot, MaintainCatalogError> {
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
+        let transaction = rusqlite::Transaction::new_unchecked(self.connection, TransactionBehavior::Immediate)
             .map_err(|_| MaintainCatalogError::PersistenceFailure)?;
         let snapshot = self
             .repository
@@ -471,13 +467,12 @@ pub struct ProductImageThumbnailRead {
 }
 
 pub fn replace_product_image(
-    connection: &mut Connection,
+    connection: &Connection,
     product_id: i64,
     expected_revision: i64,
     image: &ProductImage,
 ) -> std::result::Result<i64, ProductImagePersistenceError> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
+    let transaction = rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
         .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
     let revision = product_revision(&transaction, product_id)?;
     check_image_revision(revision, expected_revision)?;
@@ -506,12 +501,11 @@ pub fn read_product_image(
 }
 
 pub fn remove_product_image(
-    connection: &mut Connection,
+    connection: &Connection,
     product_id: i64,
     expected_revision: i64,
 ) -> std::result::Result<i64, ProductImagePersistenceError> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
+    let transaction = rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
         .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
     let revision = product_revision(&transaction, product_id)?;
     check_image_revision(revision, expected_revision)?;
@@ -1195,7 +1189,7 @@ pub enum CreateProductError {
 }
 
 pub struct CreateProductUseCase<'connection, Repository> {
-    connection: &'connection mut Connection,
+    connection: &'connection Connection,
     repository: Repository,
 }
 
@@ -1203,7 +1197,7 @@ impl<'connection, Repository> CreateProductUseCase<'connection, Repository>
 where
     Repository: CreateProductRepository,
 {
-    pub fn new(connection: &'connection mut Connection, repository: Repository) -> Self {
+    pub fn new(connection: &'connection Connection, repository: Repository) -> Self {
         Self {
             connection,
             repository,
@@ -1214,9 +1208,7 @@ where
         self,
         input: CreateProductInput,
     ) -> std::result::Result<CreatedProduct, CreateProductError> {
-        let transaction = self
-            .connection
-            .transaction()
+        let transaction = rusqlite::Transaction::new_unchecked(self.connection, TransactionBehavior::Deferred)
             .map_err(|_| CreateProductError::Persistence)?;
         let category_name = self
             .repository
@@ -1325,7 +1317,7 @@ fn list_categories_with_field_activity(connection: &Connection, active_fields_on
 }
 
 pub fn create_category(
-    connection: &mut Connection,
+    connection: &Connection,
     input: CreateCategoryInput,
 ) -> std::result::Result<Category, CreateCategoryError> {
     let fields = input
@@ -1354,8 +1346,7 @@ pub fn create_category(
         return Err(CreateCategoryError::DuplicateCategory);
     }
 
-    let transaction = connection
-        .transaction()
+    let transaction = rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Deferred)
         .map_err(|_| CreateCategoryError::Persistence)?;
     transaction
         .execute(
@@ -1403,7 +1394,7 @@ pub enum EditCategorySchemaError {
 }
 
 pub struct EditCategorySchemaUseCase<'connection, Repository> {
-    connection: &'connection mut Connection,
+    connection: &'connection Connection,
     repository: Repository,
 }
 
@@ -1411,7 +1402,7 @@ impl<'connection, Repository> EditCategorySchemaUseCase<'connection, Repository>
 where
     Repository: CatalogMetadataRepository,
 {
-    pub fn new(connection: &'connection mut Connection, repository: Repository) -> Self {
+    pub fn new(connection: &'connection Connection, repository: Repository) -> Self {
         Self {
             connection,
             repository,
@@ -1422,9 +1413,7 @@ where
         self,
         input: EditCategorySchemaInput,
     ) -> Result<CatalogSnapshot, EditCategorySchemaError> {
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
+        let transaction = rusqlite::Transaction::new_unchecked(self.connection, TransactionBehavior::Immediate)
             .map_err(|_| EditCategorySchemaError::PersistenceFailure)?;
         let snapshot = self
             .repository
@@ -1463,7 +1452,7 @@ where
 }
 
 pub fn create_product(
-    connection: &mut Connection,
+    connection: &Connection,
     input: CreateProductInput,
 ) -> std::result::Result<CreatedProduct, CreateProductError> {
     CreateProductUseCase::new(connection, SqliteCatalogRepository).execute(input)

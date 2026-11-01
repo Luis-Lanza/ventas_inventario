@@ -86,7 +86,7 @@ pub fn location_schema(connection: &rusqlite::Connection) -> ProductLocationResp
     }
 }
 
-pub fn save_location_schema(connection: &mut rusqlite::Connection, request: SaveLocationSchemaRequest) -> ProductLocationResponse {
+pub fn save_location_schema(connection: &rusqlite::Connection, request: SaveLocationSchemaRequest) -> ProductLocationResponse {
     if request.expected_revision < 0 { return ProductLocationResponse::Error(map_location_error(crate::domain::catalog::location::LocationValidationError::InvalidSchema)); }
     match product_locations::save_location_schema(connection, product_locations::SaveLocationSchemaInput { expected_revision: request.expected_revision, segments: request.segments }) {
         Ok(schema) => ProductLocationResponse::SchemaSuccess { schema },
@@ -101,21 +101,21 @@ pub fn list_product_locations(connection: &rusqlite::Connection, request: ListPr
     }
 }
 
-pub fn create_product_location(connection: &mut rusqlite::Connection, request: CreateProductLocationRequest) -> ProductLocationResponse {
+pub fn create_product_location(connection: &rusqlite::Connection, request: CreateProductLocationRequest) -> ProductLocationResponse {
     match product_locations::create_product_location(connection, product_locations::CreateProductLocationInput { values: request.values }) {
         Ok(location) => ProductLocationResponse::LocationSuccess { location },
         Err(error) => ProductLocationResponse::Error(map_location_error(error)),
     }
 }
 
-pub fn set_product_location_activity(connection: &mut rusqlite::Connection, request: ProductLocationLifecycleRequest, active: bool) -> ProductLocationResponse {
+pub fn set_product_location_activity(connection: &rusqlite::Connection, request: ProductLocationLifecycleRequest, active: bool) -> ProductLocationResponse {
     match product_locations::set_location_activity(connection, request.location_id, request.expected_revision, active) {
         Ok(location) => ProductLocationResponse::LocationSuccess { location },
         Err(error) => ProductLocationResponse::Error(map_location_error(error)),
     }
 }
 
-pub fn delete_product_location(connection: &mut rusqlite::Connection, request: ProductLocationLifecycleRequest) -> ProductLocationResponse {
+pub fn delete_product_location(connection: &rusqlite::Connection, request: ProductLocationLifecycleRequest) -> ProductLocationResponse {
     if request.location_id <= 0 { return ProductLocationResponse::Error(map_location_error(crate::domain::catalog::location::LocationValidationError::MissingLocation)); }
     match product_locations::delete_product_location(connection, request.location_id, request.expected_revision) {
         Ok(()) => ProductLocationResponse::Deleted,
@@ -123,7 +123,7 @@ pub fn delete_product_location(connection: &mut rusqlite::Connection, request: P
     }
 }
 
-pub fn assign_product_primary_location(connection: &mut rusqlite::Connection, request: AssignProductLocationRequest) -> ProductLocationResponse {
+pub fn assign_product_primary_location(connection: &rusqlite::Connection, request: AssignProductLocationRequest) -> ProductLocationResponse {
     let location_id = match request.location_id {
         ExplicitNullableLocationId::Missing => return ProductLocationResponse::Error(map_location_error(crate::domain::catalog::location::LocationValidationError::InvalidLocationValues)),
         ExplicitNullableLocationId::Null => None,
@@ -315,7 +315,7 @@ pub fn parse_product_image_request(request: ProductImageRequest) -> Result<Produ
 }
 
 #[cfg(feature = "desktop")]
-pub(crate) fn persist_selected_product_image(connection: &mut rusqlite::Connection, product_id: i64, expected_revision: i64, mime_type: &str, bytes: Vec<u8>) -> ProductImageResponse {
+pub(crate) fn persist_selected_product_image(connection: &rusqlite::Connection, product_id: i64, expected_revision: i64, mime_type: &str, bytes: Vec<u8>) -> ProductImageResponse {
     if product_id <= 0 || expected_revision < 0 { return ProductImageResponse::Error(validation_error()); }
     let Ok(image) = catalog::ProductImage::new(mime_type, bytes) else { return ProductImageResponse::Error(validation_error()); };
     match catalog::replace_product_image(connection, product_id, expected_revision, &image) {
@@ -324,7 +324,7 @@ pub(crate) fn persist_selected_product_image(connection: &mut rusqlite::Connecti
     }
 }
 
-pub fn remove_product_image(connection: &mut rusqlite::Connection, request: ProductImageRequest) -> ProductImageResponse {
+pub fn remove_product_image(connection: &rusqlite::Connection, request: ProductImageRequest) -> ProductImageResponse {
     let Ok(request) = parse_product_image_request(request) else { return ProductImageResponse::Error(validation_error()); };
     match catalog::remove_product_image(connection, request.product_id, request.expected_revision) {
         Ok(revision) => ProductImageResponse::Success { product_id: request.product_id, revision },
@@ -480,6 +480,22 @@ pub fn finish_catalog_setup(session: &CatalogAccessSession, request: CatalogConf
 
 pub fn unlock_catalog(session: &CatalogAccessSession, request: CatalogSecretRequest) -> CatalogAccessResponse {
     session.unlock(&request.password).map_or_else(access_error, |_| CatalogAccessResponse::Success)
+}
+
+/// The application uses envelope authority; direct legacy fixtures keep their API.
+pub fn unlock_catalog_for_application(
+    state: &crate::DatabaseState,
+    session: &CatalogAccessSession,
+    request: CatalogSecretRequest,
+) -> CatalogAccessResponse {
+    #[cfg(feature = "production-encryption")]
+    {
+        let password = zeroize::Zeroizing::new(request.password);
+        state.unlock_catalog_access(session, &password)
+            .map_or_else(access_error, |_| CatalogAccessResponse::Success)
+    }
+    #[cfg(not(feature = "production-encryption"))]
+    { let _ = state; unlock_catalog(session, request) }
 }
 
 pub fn lock_catalog(session: &CatalogAccessSession) -> CatalogAccessResponse {
@@ -675,7 +691,7 @@ pub fn list_catalog_maintenance(
 }
 
 pub fn maintain_catalog(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     request: MaintainCatalogRequest,
 ) -> Result<CatalogMaintenanceResponse, String> {
     let (target, intent) = match (target(&request.target), intent(&request.intent)) {
@@ -724,7 +740,7 @@ pub fn maintain_catalog(
 }
 
 pub fn edit_catalog(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     request: EditCatalogRequest,
 ) -> Result<CatalogMaintenanceResponse, String> {
     let (entity_id, target, input) = match request {
@@ -788,7 +804,7 @@ pub fn edit_catalog(
 }
 
 pub fn edit_category_schema(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     request: EditCategorySchemaRequest,
 ) -> CatalogMaintenanceResponse {
     if request.category_id <= 0 || request.expected_revision < 0 {

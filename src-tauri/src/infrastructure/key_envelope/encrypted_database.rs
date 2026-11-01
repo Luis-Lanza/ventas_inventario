@@ -13,6 +13,8 @@ use zeroize::Zeroizing;
 
 const DATABASE: &str = "data.sqlite3";
 const ENVELOPE: &str = "key-envelope.bin";
+const OWNERSHIP_LOCK: &str = ".velay-storage.lock";
+const JOURNAL: &str = "data.sqlite3-journal";
 
 /// Deliberately excludes raw SQLite errors, paths, SQL and secret material.
 #[derive(Debug, PartialEq, Eq)]
@@ -47,6 +49,45 @@ pub(crate) fn create_candidate(root: &Path, password: &str) -> Result<CreatedCan
     })
 }
 
+/// Memory-only credentials awaiting exact recovery confirmation. No raw-key export.
+pub(crate) struct PendingCreation {
+    context: EnvelopeContext,
+    recovery: Zeroizing<String>,
+    key: DataKey,
+    envelope: super::EnvelopeBytes,
+}
+
+impl PendingCreation {
+    pub(crate) fn recovery(&self) -> &str {
+        &self.recovery
+    }
+
+    /// Consumes the pending attempt, including on rejection. No persistent retry/reset.
+    pub(crate) fn confirm(self, root: &Path, recovery: &str) -> Result<CreatedCandidate> {
+        self.confirm_at(root, recovery, Access::Candidate)
+    }
+
+    /// Application setup only: fixed files in an already established safe root.
+    pub(crate) fn confirm_installation(self, root: &Path, recovery: &str) -> Result<CreatedCandidate> {
+        self.confirm_at(root, recovery, Access::Operational)
+    }
+
+    fn confirm_at(self, root: &Path, recovery: &str, access: Access) -> Result<CreatedCandidate> {
+        if recovery != self.recovery.as_str() {
+            return Err(CandidateError::InvalidSecret);
+        }
+        match access {
+            Access::Candidate => empty_root(root)?,
+            Access::Operational => {
+                if !installation_is_empty(root)? {
+                    return Err(CandidateError::Blocked);
+                }
+            }
+        }
+        persist_creation(root, self, access, |_| Ok(()))
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CreationStep {
     EnvelopeWritten,
@@ -60,14 +101,13 @@ fn create_with_checkpoint(
     password: &str,
     checkpoint: impl Fn(CreationStep) -> Result<()>,
 ) -> Result<CreatedCandidate> {
-    safe_root(root)?;
-    if fs::read_dir(root)
-        .map_err(|_| CandidateError::Io)?
-        .next()
-        .is_some()
-    {
-        return Err(CandidateError::Blocked);
-    }
+    empty_root(root)?;
+    let pending = prepare_creation(password)?;
+    persist_creation(root, pending, Access::Candidate, checkpoint)
+}
+
+/// Generate credentials without reading or creating any filesystem artifact.
+pub(crate) fn prepare_creation(password: &str) -> Result<PendingCreation> {
     super::validate_secret(password).map_err(|_| CandidateError::InvalidSecret)?;
     let mut context = EnvelopeContext {
         database_id: [0; 16],
@@ -86,6 +126,26 @@ fn create_with_checkpoint(
     let recovery = hex(recovery_bytes.as_ref());
     let (key, envelope) =
         super::create(&context, password, &recovery).map_err(|_| CandidateError::Authentication)?;
+    Ok(PendingCreation {
+        context,
+        recovery,
+        key,
+        envelope,
+    })
+}
+
+fn persist_creation(
+    root: &Path,
+    pending: PendingCreation,
+    access: Access,
+    checkpoint: impl Fn(CreationStep) -> Result<()>,
+) -> Result<CreatedCandidate> {
+    let PendingCreation {
+        context,
+        recovery,
+        key,
+        envelope,
+    } = pending;
     let mut envelope_file = exclusive_file(&root.join(ENVELOPE))?;
     envelope_file
         .write_all(envelope.as_bytes())
@@ -136,8 +196,8 @@ fn create_with_checkpoint(
         .and_then(|file| file.sync_all())
         .map_err(|_| CandidateError::Io)?;
     checkpoint(CreationStep::IdentityCommitted)?;
-    open_candidate(root, UnlockSecret::Password(password))?
-        .close()
+    open_validated(root, UnlockSecret::Recovery(&recovery), access)?
+        .connection.close()
         .map_err(|_| CandidateError::Sqlite)?;
     Ok(CreatedCandidate { context, recovery })
 }
@@ -146,19 +206,92 @@ fn create_with_checkpoint(
 /// Never repairs, migrates, creates files, or falls back to setup. Callers must
 /// maintain exclusive namespace ownership until this connection is closed.
 pub(crate) fn open_candidate(root: &Path, secret: UnlockSecret<'_>) -> Result<Connection> {
+    open_validated(root, secret, Access::Candidate).map(|admitted| admitted.connection)
+}
+
+/// Structural classification only: a locked installation is not authenticated.
+/// Ownership must already be held. The lock file is never initialization evidence.
+pub(crate) fn installation_is_empty(root: &Path) -> Result<bool> {
     safe_root(root)?;
+    let mut has_artifacts = false;
+    for entry in fs::read_dir(root).map_err(|_| CandidateError::Io)? {
+        let entry = entry.map_err(|_| CandidateError::Io)?;
+        let metadata = safe_metadata(&entry.path())?;
+        if non_authoritative_artifact(&entry.path(), &metadata)? {
+            continue;
+        }
+        has_artifacts = true;
+    }
+    if has_artifacts {
+        inspect_layout(root, Access::Operational)?;
+    }
+    Ok(!has_artifacts)
+}
+
+/// Fixed desktop artifacts are not encrypted initialization evidence. Only safe
+/// final files and the exact empty backup directory layout are recognized.
+fn non_authoritative_artifact(path: &Path, metadata: &fs::Metadata) -> Result<bool> {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some(OWNERSHIP_LOCK | "license.lic" | "catalog-access.json") => {
+            if !metadata.is_file() { return Err(CandidateError::Blocked); }
+            Ok(true)
+        }
+        Some("backup-restore") => {
+            if !metadata.is_dir() { return Err(CandidateError::Blocked); }
+            for entry in fs::read_dir(path).map_err(|_| CandidateError::Io)? {
+                let entry = entry.map_err(|_| CandidateError::Io)?;
+                if !matches!(entry.file_name().to_str(), Some("staging" | "snapshots"))
+                    || !safe_metadata(&entry.path())?.is_dir()
+                    || fs::read_dir(entry.path()).map_err(|_| CandidateError::Io)?.next().is_some()
+                {
+                    return Err(CandidateError::Blocked);
+                }
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Authenticates before opening SQLite; only fixed-DEK rollback recovery is allowed.
+/// No CREATE, migration, reset, raw-key export, or Catalog authorization.
+pub(crate) fn open_operational(root: &Path, secret: UnlockSecret<'_>) -> Result<AdmittedConnection> {
+    if installation_is_empty(root)? {
+        return Err(CandidateError::Blocked);
+    }
+    open_validated(root, secret, Access::Operational)
+}
+
+#[derive(Clone, Copy)]
+enum Access {
+    Candidate,
+    Operational,
+}
+
+fn inspect_layout(root: &Path, access: Access) -> Result<(Vec<u8>, EnvelopeContext)> {
+    safe_root(root)?;
+    let maximum = match access {
+        Access::Candidate => 2,
+        Access::Operational => 3,
+    };
     let mut count = 0;
     for entry in fs::read_dir(root).map_err(|_| CandidateError::Io)? {
         let entry = entry.map_err(|_| CandidateError::Io)?;
+        if matches!(access, Access::Operational)
+            && non_authoritative_artifact(&entry.path(), &safe_metadata(&entry.path())?)?
+        {
+            continue;
+        }
         count += 1;
-        if count > 2 || (entry.file_name() != DATABASE && entry.file_name() != ENVELOPE) {
+        let journal = matches!(access, Access::Operational) && entry.file_name() == JOURNAL;
+        if count > maximum || (entry.file_name() != DATABASE && entry.file_name() != ENVELOPE && !journal) {
             return Err(CandidateError::Blocked);
         }
         if !safe_metadata(&entry.path())?.is_file() {
             return Err(CandidateError::Blocked);
         }
     }
-    if count != 2 || safe_metadata(&root.join(DATABASE))?.len() == 0 {
+    if count < 2 || safe_metadata(&root.join(DATABASE))?.len() == 0 {
         return Err(CandidateError::Blocked);
     }
     if safe_metadata(&root.join(ENVELOPE))?.len() != ENCODED_LENGTH as u64 {
@@ -182,9 +315,48 @@ pub(crate) fn open_candidate(root: &Path, secret: UnlockSecret<'_>) -> Result<Co
             .try_into()
             .map_err(|_| CandidateError::Blocked)?,
     };
+    if matches!(access, Access::Operational) {
+        super::validate_framing(&bytes, &context).map_err(|_| CandidateError::Blocked)?;
+    }
+    Ok((bytes, context))
+}
+
+/// Connection and the exact authenticated envelope that admitted it are inseparable
+/// outside this module. No owned/mutable connection accessor or raw-key retention.
+/// Future credential transitions must deliberately establish a new admitted pair.
+pub(crate) struct AdmittedConnection {
+    connection: Connection,
+    authenticated_envelope: Vec<u8>,
+}
+
+impl AdmittedConnection {
+    pub(crate) fn connection(&self) -> &Connection {
+        &self.connection
+    }
+
+    /// Re-read layout is untrusted: require exact admission-time envelope bytes
+    /// before accepting its password. Public identity IDs alone cannot bind a DEK.
+    pub(crate) fn verify_password(&self, root: &Path, password: &str) -> Result<()> {
+        let (bytes, context) = inspect_layout(root, Access::Operational)?;
+        if bytes != self.authenticated_envelope {
+            return Err(CandidateError::Blocked);
+        }
+        let _key = super::unlock(&bytes, &context, UnlockSecret::Password(password))
+            .map_err(|_| CandidateError::Authentication)?;
+        validate_identity(&self.connection, &context)
+    }
+}
+
+fn open_validated(root: &Path, secret: UnlockSecret<'_>, access: Access) -> Result<AdmittedConnection> {
+    let (bytes, context) = inspect_layout(root, access)?;
     let key =
         super::unlock(&bytes, &context, secret).map_err(|_| CandidateError::Authentication)?;
-    let db = Connection::open_with_flags(root.join(DATABASE), OpenFlags::SQLITE_OPEN_READ_ONLY)
+    // No SQLite handle (and thus no recovery write) before envelope authentication.
+    let flags = match access {
+        Access::Candidate => OpenFlags::SQLITE_OPEN_READ_ONLY,
+        Access::Operational => OpenFlags::SQLITE_OPEN_READ_WRITE,
+    };
+    let db = Connection::open_with_flags(root.join(DATABASE), flags)
         .map_err(|_| CandidateError::Sqlite)?;
     apply_key(&db, &key)?;
     connection_profile(&db)?;
@@ -195,6 +367,13 @@ pub(crate) fn open_candidate(root: &Path, secret: UnlockSecret<'_>) -> Result<Co
         return Err(CandidateError::Blocked);
     }
     validate_restored_database(&db).map_err(|_| CandidateError::Blocked)?;
+    validate_identity(&db, &context)?;
+    // Move the ORIGINAL bytes used by unlock/apply_key above into the proof.
+    // Never reread the path after admission to manufacture trusted evidence.
+    Ok(AdmittedConnection { connection: db, authenticated_envelope: bytes })
+}
+
+fn validate_identity(db: &Connection, context: &EnvelopeContext) -> Result<()> {
     let ids: (Vec<u8>, Vec<u8>) = db.query_row(
         "SELECT database_id, generation_id FROM encrypted_candidate_identity WHERE singleton = 1",
         [], |r| Ok((r.get(0)?, r.get(1)?)),
@@ -209,7 +388,7 @@ pub(crate) fn open_candidate(root: &Path, secret: UnlockSecret<'_>) -> Result<Co
     if count != 1 || ids.0 != context.database_id || ids.1 != context.generation_id {
         return Err(CandidateError::Blocked);
     }
-    Ok(db)
+    Ok(())
 }
 
 fn apply_key(db: &Connection, key: &DataKey) -> Result<()> {
@@ -275,7 +454,19 @@ fn hex(bytes: &[u8]) -> Zeroizing<String> {
     result
 }
 
-fn safe_root(root: &Path) -> Result<()> {
+fn empty_root(root: &Path) -> Result<()> {
+    safe_root(root)?;
+    if fs::read_dir(root)
+        .map_err(|_| CandidateError::Io)?
+        .next()
+        .is_some()
+    {
+        return Err(CandidateError::Blocked);
+    }
+    Ok(())
+}
+
+pub(crate) fn safe_root(root: &Path) -> Result<()> {
     if !root.is_absolute()
         || root
             .as_os_str()
@@ -347,6 +538,62 @@ mod tests {
     }
 
     #[test]
+    fn pending_confirmation_persists_only_after_exact_recovery_delivery() {
+        let root = tempdir().unwrap();
+        let pending = prepare_creation(PASSWORD).unwrap();
+        let recovery = Zeroizing::new(pending.recovery().to_owned());
+        assert!(snapshot(root.path()).is_empty());
+        let created = pending.confirm(root.path(), &recovery).unwrap();
+        assert!(created.recovery.as_str() == recovery.as_str());
+        for secret in [
+            UnlockSecret::Password(PASSWORD),
+            UnlockSecret::Recovery(&recovery),
+        ] {
+            open_candidate(root.path(), secret).unwrap().close().unwrap();
+        }
+        root.close().unwrap();
+    }
+
+    #[test]
+    fn pending_rejection_and_abandonment_leave_no_persistent_credentials() {
+        let root = tempdir().unwrap();
+        drop(prepare_creation(PASSWORD).unwrap());
+        assert!(snapshot(root.path()).is_empty());
+        for changed in 0..3 {
+            let pending = prepare_creation(PASSWORD).unwrap();
+            let recovery = match changed {
+                0 => {
+                    let mut changed = pending.recovery().to_owned();
+                    let replacement = if changed.starts_with('A') { "B" } else { "A" };
+                    changed.replace_range(..1, replacement);
+                    changed
+                }
+                1 => format!(" {}", pending.recovery()),
+                _ => format!("{} ", pending.recovery()),
+            };
+            assert!(matches!(
+                pending.confirm(root.path(), &recovery),
+                Err(CandidateError::InvalidSecret)
+            ));
+            assert!(snapshot(root.path()).is_empty());
+        }
+    }
+
+    #[test]
+    fn pending_confirmation_rechecks_destination_and_preserves_evidence() {
+        let root = tempdir().unwrap();
+        let pending = prepare_creation(PASSWORD).unwrap();
+        let recovery = Zeroizing::new(pending.recovery().to_owned());
+        fs::write(root.path().join("partial"), b"retained").unwrap();
+        let before = snapshot(root.path());
+        assert!(matches!(
+            pending.confirm(root.path(), &recovery),
+            Err(CandidateError::Blocked)
+        ));
+        assert_eq!(before, snapshot(root.path()));
+    }
+
+    #[test]
     fn wrong_credentials_and_unkeyed_reads_leave_artifacts_unchanged() {
         let root = tempdir().unwrap();
         create_candidate(root.path(), PASSWORD).unwrap();
@@ -401,7 +648,7 @@ mod tests {
         let source = tempdir().unwrap();
         create_candidate(source.path(), PASSWORD).unwrap();
         let original = snapshot(source.path());
-        for case in 0..9 {
+        for case in 0..10 {
             let root = tempdir().unwrap();
             for (name, bytes) in &original {
                 fs::write(root.path().join(name), bytes).unwrap();
@@ -436,6 +683,7 @@ mod tests {
                     bytes[43 + 40] ^= 1; // Password-slot ciphertext.
                     fs::write(root.path().join(ENVELOPE), bytes).unwrap();
                 }
+                9 => fs::write(root.path().join(OWNERSHIP_LOCK), b"non-authoritative lock").unwrap(),
                 _ => unreachable!(),
             }
             let before = snapshot(root.path());

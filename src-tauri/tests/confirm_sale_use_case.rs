@@ -1227,7 +1227,7 @@ fn explicit_final_price_below_reloaded_minimum_is_bounded_and_atomic() {
     let mut connection = repuestos_autos::infrastructure::sqlite::open_seeded_catalog().unwrap();
     connection
         .execute(
-            "UPDATE products SET list_price_centavos = 2_700, minimum_unit_price_centavos = 2_700 WHERE id = 1",
+            "UPDATE products SET list_price_centavos = 2700, minimum_unit_price_centavos = 2700 WHERE id = 1",
             [],
         )
         .unwrap();
@@ -1268,7 +1268,7 @@ fn minimum_above_list_price_is_rejected_as_invalid_persisted_data() {
         .unwrap();
     connection
         .execute(
-            "UPDATE products SET minimum_unit_price_centavos = 2_600 WHERE id = 1",
+            "UPDATE products SET minimum_unit_price_centavos = 2600 WHERE id = 1",
             [],
         )
         .unwrap();

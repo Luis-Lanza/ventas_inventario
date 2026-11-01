@@ -106,14 +106,14 @@ fn append_nullable_number(payload: &mut Vec<u8>, value: Option<i64>) {
 }
 
 pub struct ConfirmSaleUseCase<'connection, 'repository, R> {
-    connection: &'connection mut Connection,
+    connection: &'connection Connection,
     repository: &'repository R,
 }
 
 impl<'connection, 'repository, R: ConfirmSaleRepository>
     ConfirmSaleUseCase<'connection, 'repository, R>
 {
-    pub fn new(connection: &'connection mut Connection, repository: &'repository R) -> Self {
+    pub fn new(connection: &'connection Connection, repository: &'repository R) -> Self {
         Self {
             connection,
             repository,
@@ -126,9 +126,7 @@ impl<'connection, 'repository, R: ConfirmSaleRepository>
     ) -> Result<PersistedSaleSummary, ConfirmSaleError> {
         let repository = self.repository;
         let identity = SaleIdentity::from_request(&request);
-        let transaction = self
-            .connection
-            .transaction()
+        let transaction = Transaction::new_unchecked(self.connection, rusqlite::TransactionBehavior::Deferred)
             .map_err(|_| ConfirmSaleError::Persistence)?;
         match Self::confirm_in_transaction(repository, &transaction, request, &identity) {
             Ok(summary) => transaction

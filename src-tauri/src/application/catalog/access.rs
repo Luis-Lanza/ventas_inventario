@@ -21,6 +21,7 @@ struct SessionInner {
     pending: Option<PendingSetup>,
     unlocked: bool,
     unavailable: bool,
+    envelope_authority: bool,
 }
 
 pub struct CatalogAccessSession {
@@ -29,24 +30,47 @@ pub struct CatalogAccessSession {
 }
 
 impl CatalogAccessSession {
+    /// No parallel JSON credential authority in encrypted application mode.
+    /// Legacy credential methods remain unavailable; only admitted storage may grant access.
+    pub fn open_for_application(store: CatalogAccessStore) -> Self {
+        #[cfg(feature = "production-encryption")]
+        { Self { store, inner: Mutex::new(SessionInner {
+            config: None, pending: None, unlocked: false, unavailable: true, envelope_authority: true,
+        }) } }
+        #[cfg(not(feature = "production-encryption"))]
+        { Self::open(store) }
+    }
+
     pub fn open(store: CatalogAccessStore) -> Self {
         let loaded = store.load();
         let (config, unavailable) = match loaded {
             Ok(config) => (config, false),
             Err(_) => (None, true),
         };
-        Self { store, inner: Mutex::new(SessionInner { config, pending: None, unlocked: false, unavailable }) }
+        Self { store, inner: Mutex::new(SessionInner { config, pending: None, unlocked: false, unavailable, envelope_authority: false }) }
     }
 
     pub fn status(&self) -> CatalogAccessStatus {
         let Ok(inner) = self.inner.lock() else { return CatalogAccessStatus::Unavailable };
-        if inner.unavailable { CatalogAccessStatus::Unavailable }
+        if inner.envelope_authority {
+            if inner.unlocked { CatalogAccessStatus::Unlocked } else { CatalogAccessStatus::Locked }
+        }
+        else if inner.unavailable { CatalogAccessStatus::Unavailable }
         else if inner.unlocked { CatalogAccessStatus::Unlocked }
         else if inner.config.is_some() { CatalogAccessStatus::Locked }
         else { CatalogAccessStatus::SetupRequired }
     }
 
     pub fn is_authorized(&self) -> bool { self.status() == CatalogAccessStatus::Unlocked }
+
+    /// Called only after envelope verification while DatabaseState admission is held.
+    /// Lock order is DatabaseState -> Catalog; never call storage from this method.
+    pub(crate) fn authorize_from_storage(&self) -> Result<(), CatalogAccessError> {
+        let mut inner = self.inner.lock().map_err(|_| CatalogAccessError::Storage)?;
+        if !inner.envelope_authority { return Err(CatalogAccessError::Storage); }
+        inner.unlocked = true;
+        Ok(())
+    }
 
     #[cfg(test)]
     pub fn set_test_authorized(&self, authorized: bool) {
@@ -68,6 +92,7 @@ impl CatalogAccessSession {
     pub fn finish_setup(&self, confirmed: bool) -> Result<(), CatalogAccessError> {
         if !confirmed { return Err(CatalogAccessError::Invalid); }
         let mut inner = self.inner.lock().map_err(|_| CatalogAccessError::Storage)?;
+        if inner.unavailable { return Err(CatalogAccessError::Storage); }
         let pending = inner.pending.take().ok_or(CatalogAccessError::Pending)?;
         self.store.save(&pending.config).map_err(|_| CatalogAccessError::Storage)?;
         inner.config = Some(pending.config);

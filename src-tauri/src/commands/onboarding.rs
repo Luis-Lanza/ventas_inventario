@@ -54,7 +54,7 @@ pub fn list_categories(
 }
 
 pub fn create_category(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     request: CreateCategoryInput,
 ) -> Result<CreateCategoryResponse, String> {
     Ok(match catalog::create_category(connection, request) {
@@ -64,7 +64,7 @@ pub fn create_category(
 }
 
 pub fn create_product(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     request: CreateProductInput,
 ) -> Result<CreateProductResponse, String> {
     Ok(match catalog::create_product(connection, request) {
@@ -74,7 +74,7 @@ pub fn create_product(
 }
 
 pub fn create_category_authorized(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     license: &crate::commands::license::LicenseCommandState,
     access: &crate::application::catalog::access::CatalogAccessSession,
     request: CreateCategoryInput,
@@ -86,7 +86,7 @@ pub fn create_category_authorized(
 }
 
 pub fn create_product_authorized(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     license: &crate::commands::license::LicenseCommandState,
     access: &crate::application::catalog::access::CatalogAccessSession,
     request: CreateProductInput,

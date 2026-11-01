@@ -12,3 +12,4 @@ pub mod pdf_format;
 pub mod pdf_table;
 pub mod post_sale;
 pub mod sales_history;
+pub mod storage;

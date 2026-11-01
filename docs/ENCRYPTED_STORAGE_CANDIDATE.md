@@ -2,7 +2,7 @@
 
 This opt-in, crate-private adapter prepares an **inactive candidate**, not an installed database. It creates an empty current-schema SQLCipher database with its authenticated key envelope, closes it, then authenticates and reopens it read-only. Application startup and default builds are unchanged.
 
-**Status:** Linux candidate tests passed (8/8), along with the selected default/SQLCipher regression suites. Independent static inspection found no blocking issue in this bounded adapter; it supplied no independent runtime approval. Windows execution remains pending. This is not production encryption or durable installation provisioning.
+**Status:** The original eight candidate tests passed on Linux and Windows at `670a938` (tracker L54). The memory-only setup prerequisite adds three tests: the worker reported 11/11 passing on Linux after an earlier serial timeout; Windows execution of these additions remains pending. Independent static inspection found no blocking issue in either bounded subunit, but supplied no independent runtime approval. This is not production encryption or durable installation provisioning.
 
 ## Contract
 
@@ -47,7 +47,15 @@ The returned connection is opened with `SQLITE_OPEN_READ_ONLY`, never `CREATE`. 
 | Missing metadata from a nonempty candidate | Rejected, never reset |
 | Any journal/WAL/unknown entry | Rejected without cleanup or automatic recovery |
 
-An error is **not** a promise that no files changed. In particular, losing the create response can lose delivery of the newly generated recovery secret; no application should activate this candidate before a separate credential-delivery/provisioning protocol is established.
+An error is **not** a promise that no files changed. The legacy `create_candidate` contract still returns recovery credentials only after creation; losing that response can lose recovery delivery.
+
+## Memory-only setup prerequisite (T7a foundation)
+
+`prepare_creation(password)` now generates the same context, DEK, envelope and recovery secret entirely in memory. It takes no path and performs no filesystem operations. `PendingCreation::recovery()` lends the secret for delivery. Dropping the pending attempt abandons it without persistent credentials; key and recovery buffers are zeroizing.
+
+`PendingCreation::confirm(root, recovery)` consumes the attempt. An exact recovery-string match is required (no case folding or whitespace normalization); mismatch returns `InvalidSecret` before filesystem access. Confirmation rechecks the existing safe, empty destination and then reuses the candidate persistence path, including exclusive final-name creation and successful writable-file `sync_all` before database creation. Existing or partial evidence returns an error and is never overwritten or reset. Failure consumes the attempt and may retain partial evidence, as with legacy candidate creation.
+
+This is the shared creation prerequisite, not registered native setup or desktop admission. It does not yet implement startup ownership/classification, keyed RW recovery, Catalog guards or business-write admission. The future application seam must retain ownership through confirmation and connection lifetime, deliver recovery before accepting confirmation, and fail closed after any persistence error. The legacy candidate API and strict read-only reopen remain available unchanged.
 
 `sync_all`, successful SQLCipher transactions, explicit close, and these tests do **not** prove parent-directory persistence across power loss. Loss of every newly created namespace artifact cannot be distinguished from an unused empty directory by this adapter. Production provisioning/recognition and matched-pair publication remain unresolved. `DELETE` journal mode here is not a substitute Windows namespace durability barrier.
 

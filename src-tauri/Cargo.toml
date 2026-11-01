@@ -8,6 +8,7 @@ default-run = "repuestos-autos"
 [features]
 default = []
 sqlcipher-build-probe = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
+production-encryption = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
 desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog"]
 
 [[bin]]

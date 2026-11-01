@@ -480,8 +480,8 @@ fn retry_returns_original_result_and_alerts_are_active_ordered_and_indexed() {
         .execute_batch(
             "INSERT INTO categories (id, name) VALUES (1, 'Filters'), (2, 'Spark plugs');
              INSERT INTO products (id, category_id, sku, name, active, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos, low_stock_threshold) VALUES
-                 (1, 1, 'TEST-001', 'Oil filter', 1, NULL, 3_000, 2_500, 1),
-                 (2, 2, 'TEST-002', 'Spark plug', 0, NULL, 2_000, 1_800, 1);
+                 (1, 1, 'TEST-001', 'Oil filter', 1, NULL, 3000, 2500, 1),
+                 (2, 2, 'TEST-002', 'Spark plug', 0, NULL, 2000, 1800, 1);
              INSERT INTO stock_balances (product_id, quantity) VALUES (1, 8), (2, 4);",
         )
         .unwrap();

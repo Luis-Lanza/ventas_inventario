@@ -73,7 +73,7 @@ pub struct CancelSaleCommandLine {
 }
 
 pub fn create_sale_return(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     request: CreateSaleReturnRequest,
 ) -> PostSaleCommandResponse {
     let request = match parse_return(request) {
@@ -91,7 +91,7 @@ pub fn create_sale_return(
 }
 
 pub fn cancel_sale(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     request: CancelSaleRequest,
 ) -> CancelSaleCommandResponse {
     let request = match parse_cancellation(request) {

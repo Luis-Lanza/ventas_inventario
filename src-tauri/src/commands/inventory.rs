@@ -80,7 +80,7 @@ pub struct InventoryAlert {
 }
 
 pub fn confirm_stock_entry_command(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     request: StockEntryRequest,
 ) -> Result<InventoryCommandResponse, String> {
     let request_id = match RequestId::parse(&request.request_id) {
@@ -106,11 +106,24 @@ pub fn confirm_stock_entry_command(
 }
 
 pub fn confirm_physical_count_command(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
     access: &CatalogAccessSession,
     request: PhysicalCountRequest,
 ) -> Result<InventoryCommandResponse, String> {
-    if let Err(error) = access.verify_password(&request.catalog_password) {
+    confirm_physical_count_with_verifier(connection, request, |password| access.verify_password(password))
+}
+
+/// Reuse the command's ordering, validation, error mapping and transaction path.
+/// The application supplies authority under its existing database write admission.
+pub(crate) fn confirm_physical_count_with_verifier(
+    connection: &rusqlite::Connection,
+    mut request: PhysicalCountRequest,
+    verify: impl FnOnce(&str) -> Result<(), CatalogAccessError>,
+) -> Result<InventoryCommandResponse, String> {
+    let password = zeroize::Zeroizing::new(std::mem::take(&mut request.catalog_password));
+    let verified = verify(&password);
+    drop(password);
+    if let Err(error) = verified {
         let (code, message) = match error {
             CatalogAccessError::Unauthorized | CatalogAccessError::NotConfigured => (
                 "catalog_password_invalid",
@@ -140,6 +153,16 @@ pub fn confirm_physical_count_command(
             Err(error) => InventoryCommandResponse::Error(map_error(error)),
         },
     )
+}
+
+/// Confirm the password and mutate under one database write admission, without
+/// granting a Catalog administration session or reentering the database mutex.
+pub fn confirm_physical_count_for_application(
+    state: &crate::DatabaseState,
+    access: &CatalogAccessSession,
+    request: PhysicalCountRequest,
+) -> Result<InventoryCommandResponse, String> {
+    state.confirm_physical_count(access, request)
 }
 
 pub fn list_inventory_alerts_command(

@@ -50,9 +50,9 @@ pub fn read_location_schema(connection: &Connection) -> Result<LocationSchemaCon
     Ok(LocationSchemaContract { revision, segments })
 }
 
-pub fn save_location_schema(connection: &mut Connection, input: SaveLocationSchemaInput) -> Result<LocationSchemaContract, LocationValidationError> {
+pub fn save_location_schema(connection: &Connection, input: SaveLocationSchemaInput) -> Result<LocationSchemaContract, LocationValidationError> {
     if input.expected_revision < 0 { return Err(LocationValidationError::StaleLocation); }
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)
+    let transaction = rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
         .map_err(|_| LocationValidationError::PersistenceFailure)?;
     let current = read_location_schema(&transaction)?;
     if current.revision != input.expected_revision { return Err(LocationValidationError::StaleLocation); }
@@ -76,8 +76,8 @@ pub fn save_location_schema(connection: &mut Connection, input: SaveLocationSche
     Ok(result)
 }
 
-pub fn create_product_location(connection: &mut Connection, input: CreateProductLocationInput) -> Result<ProductLocationContract, LocationValidationError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)
+pub fn create_product_location(connection: &Connection, input: CreateProductLocationInput) -> Result<ProductLocationContract, LocationValidationError> {
+    let transaction = rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
         .map_err(|_| LocationValidationError::PersistenceFailure)?;
     let schema = read_location_schema(&transaction)?;
     let schema = LocationSchema { revision: schema.revision, segments: schema.segments.iter().map(|segment| LocationSegment { id: segment.id, label: segment.label.clone(), position: segment.position }).collect() };
@@ -111,9 +111,9 @@ pub fn list_product_locations(connection: &Connection, include_inactive: bool) -
     }).collect()
 }
 
-pub fn set_location_activity(connection: &mut Connection, location_id: i64, expected_revision: i64, active: bool) -> Result<ProductLocationContract, LocationValidationError> {
+pub fn set_location_activity(connection: &Connection, location_id: i64, expected_revision: i64, active: bool) -> Result<ProductLocationContract, LocationValidationError> {
     if location_id <= 0 || expected_revision < 0 { return Err(LocationValidationError::StaleLocation); }
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| LocationValidationError::PersistenceFailure)?;
+    let transaction = rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate).map_err(|_| LocationValidationError::PersistenceFailure)?;
     let changed = transaction.execute("UPDATE product_locations SET active = ?1, revision = revision + 1 WHERE id = ?2 AND revision = ?3 AND revision < 9223372036854775807", params![active, location_id, expected_revision]);
     match changed {
         Ok(1) => (),
@@ -126,9 +126,9 @@ pub fn set_location_activity(connection: &mut Connection, location_id: i64, expe
     Ok(result)
 }
 
-pub fn delete_product_location(connection: &mut Connection, location_id: i64, expected_revision: i64) -> Result<(), LocationValidationError> {
+pub fn delete_product_location(connection: &Connection, location_id: i64, expected_revision: i64) -> Result<(), LocationValidationError> {
     if location_id <= 0 || expected_revision < 0 { return Err(LocationValidationError::MissingLocation); }
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| LocationValidationError::PersistenceFailure)?;
+    let transaction = rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate).map_err(|_| LocationValidationError::PersistenceFailure)?;
     let revision: Option<i64> = transaction.query_row("SELECT revision FROM product_locations WHERE id = ?1", [location_id], |row| row.get(0)).optional().map_err(|_| LocationValidationError::PersistenceFailure)?;
     match revision {
         None => return Err(LocationValidationError::MissingLocation),
@@ -141,7 +141,7 @@ pub fn delete_product_location(connection: &mut Connection, location_id: i64, ex
     transaction.commit().map_err(|_| LocationValidationError::PersistenceFailure)
 }
 
-pub fn assign_product_location(connection: &mut Connection, product_id: i64, expected_revision: i64, location_id: Option<i64>) -> Result<i64, LocationValidationError> {
+pub fn assign_product_location(connection: &Connection, product_id: i64, expected_revision: i64, location_id: Option<i64>) -> Result<i64, LocationValidationError> {
     if product_id <= 0 || expected_revision < 0 || location_id.is_some_and(|id| id <= 0) { return Err(LocationValidationError::MissingLocation); }
     if let Some(id) = location_id {
         let active: Option<bool> = connection.query_row("SELECT active FROM product_locations WHERE id = ?1", [id], |row| row.get(0)).optional().map_err(|_| LocationValidationError::PersistenceFailure)?;

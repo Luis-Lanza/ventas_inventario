@@ -34,6 +34,8 @@ struct DatabaseStateInner {
     writes_blocked: bool,
     // Fields drop in declaration order: close the connection before releasing ownership.
     _ownership: Option<infrastructure::filesystem::storage_ownership::StorageOwnership>,
+    #[cfg(feature = "production-encryption")]
+    encrypted_storage: Option<application::storage::Storage>,
 }
 
 pub struct DatabaseState(Mutex<DatabaseStateInner>, AtomicU64);
@@ -60,6 +62,24 @@ impl RestoreInstallOutcome {
 
 impl DatabaseState {
     /// Start the application against one exclusively owned storage directory.
+    #[cfg(feature = "production-encryption")]
+    pub fn open_owned_application(
+        root: &std::path::Path,
+    ) -> Result<Self, infrastructure::filesystem::storage_ownership::OwnershipError> {
+        let storage = application::storage::Storage::acquire_owned(root)?;
+        // Never invoke plaintext recovery or mark a locked connection Ready.
+        // Storage retains exclusive ownership even for blocked installations.
+        Ok(Self(Mutex::new(DatabaseStateInner {
+            config: infrastructure::sqlite::production_database_config(root),
+            connection: None,
+            status: DatabaseStatus::Unavailable,
+            writes_blocked: true,
+            _ownership: None,
+            encrypted_storage: Some(storage),
+        }), AtomicU64::new(1)))
+    }
+
+    #[cfg(not(feature = "production-encryption"))]
     pub fn open_owned_application(
         root: &std::path::Path,
     ) -> Result<Self, infrastructure::filesystem::storage_ownership::OwnershipError> {
@@ -91,6 +111,8 @@ impl DatabaseState {
             status: DatabaseStatus::Ready,
             writes_blocked: false,
             _ownership: None,
+            #[cfg(feature = "production-encryption")]
+            encrypted_storage: None,
         }), AtomicU64::new(0))
     }
 
@@ -161,6 +183,8 @@ impl DatabaseState {
             status: DatabaseStatus::Unavailable,
             writes_blocked: true,
             _ownership: None,
+            #[cfg(feature = "production-encryption")]
+            encrypted_storage: None,
         }), AtomicU64::new(1))
     }
 
@@ -172,7 +196,72 @@ impl DatabaseState {
         if state.status != DatabaseStatus::Ready {
             return Err("database_unavailable".into());
         }
+        #[cfg(feature = "production-encryption")]
+        if let Some(storage) = state.encrypted_storage.as_ref() {
+            return operation(storage.connection().map_err(|_| "database_unavailable")?);
+        }
         operation(state.connection.as_ref().ok_or("database_unavailable")?)
+    }
+
+    #[cfg(feature = "production-encryption")]
+    pub(crate) fn storage_status(&self) -> Result<application::storage::StorageStatus, application::storage::StorageError> {
+        use application::storage::StorageError;
+        let state = self.0.lock().map_err(|_| StorageError::Blocked)?;
+        Ok(state.encrypted_storage.as_ref().ok_or(StorageError::Denied)?.status())
+    }
+
+    #[cfg(feature = "production-encryption")]
+    fn storage_transition<T>(&self, operation: impl FnOnce(&mut application::storage::Storage) -> Result<T, application::storage::StorageError>) -> Result<T, application::storage::StorageError> {
+        use application::storage::{StorageError, StorageStatus};
+        let mut state = self.0.lock().map_err(|_| StorageError::Blocked)?;
+        let epoch = self.1.load(Ordering::SeqCst);
+        if epoch == u64::MAX { return Err(StorageError::Blocked); }
+        let storage = state.encrypted_storage.as_mut().ok_or(StorageError::Denied)?;
+        let was_ready = storage.status() == StorageStatus::Ready;
+        let result = operation(storage);
+        // A denied repeat operation must never reopen a blocked write epoch.
+        if !was_ready && storage.status() == StorageStatus::Ready {
+            state.status = DatabaseStatus::Ready;
+            state.writes_blocked = false;
+            self.1.store(epoch + 1, Ordering::SeqCst);
+        }
+        result
+    }
+
+    #[cfg(feature = "production-encryption")]
+    pub(crate) fn storage_begin_setup(&self, password: &str) -> Result<String, application::storage::StorageError> {
+        self.storage_transition(|storage| storage.begin_setup(password).map(str::to_owned))
+    }
+
+    #[cfg(feature = "production-encryption")]
+    pub(crate) fn storage_confirm_recovery(&self, recovery: &str) -> Result<(), application::storage::StorageError> {
+        self.storage_transition(|storage| storage.confirm_setup(recovery))
+    }
+
+    #[cfg(feature = "production-encryption")]
+    pub(crate) fn storage_unlock(&self, password: &str) -> Result<(), application::storage::StorageError> {
+        self.storage_transition(|storage| storage.unlock(password))
+    }
+
+    #[cfg(feature = "production-encryption")]
+    pub(crate) fn unlock_catalog_access(
+        &self,
+        access: &application::catalog::access::CatalogAccessSession,
+        password: &str,
+    ) -> Result<(), application::catalog::access::CatalogAccessError> {
+        use application::{catalog::access::CatalogAccessError, storage::StorageError};
+        let state = self.0.lock().map_err(|_| CatalogAccessError::Storage)?;
+        if state.status != DatabaseStatus::Ready || state.writes_blocked {
+            return Err(CatalogAccessError::Storage);
+        }
+        let storage = state.encrypted_storage.as_ref().ok_or(CatalogAccessError::Storage)?;
+        storage.verify_password(password).map_err(|error| match error {
+            StorageError::Authentication | StorageError::InvalidSecret => CatalogAccessError::Unauthorized,
+            _ => CatalogAccessError::Storage,
+        })?;
+        // Keep the database admission held until the separately locked session
+        // is granted. Business callbacks acquire these locks in the same order.
+        access.authorize_from_storage()
     }
 
     pub fn admit_write(&self) -> Result<WriteAdmission, String> {
@@ -183,7 +272,7 @@ impl DatabaseState {
 
     pub fn with_write<T>(
         &self,
-        operation: impl FnOnce(&mut rusqlite::Connection) -> Result<T, String>,
+        operation: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
     ) -> Result<T, String> {
         let admission = self.admit_write()?;
         self.with_admitted_write(admission, operation)
@@ -192,18 +281,66 @@ impl DatabaseState {
     pub fn with_admitted_write<T>(
         &self,
         admission: WriteAdmission,
-        operation: impl FnOnce(&mut rusqlite::Connection) -> Result<T, String>,
+        operation: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.with_admitted_write_state(admission, |state| {
+            #[cfg(feature = "production-encryption")]
+            if let Some(storage) = state.encrypted_storage.as_ref() {
+                return operation(storage.connection().map_err(|_| "database_unavailable")?);
+            }
+            operation(state.connection.as_ref().ok_or("database_unavailable")?)
+        })
+    }
+
+    // One shared gate keeps epochs/write blocks and the test rendezvous identical
+    // for ordinary writes and password-confirmed inventory writes.
+    fn with_admitted_write_state<T>(
+        &self,
+        admission: WriteAdmission,
+        operation: impl FnOnce(&DatabaseStateInner) -> Result<T, String>,
     ) -> Result<T, String> {
         #[cfg(test)]
         WRITE_WAIT_HOOK.with(|hook| {
             if let Some(hook) = hook.borrow_mut().take() { hook(); }
         });
-        let mut state = self.0.lock().map_err(|_| "persistence_failure")?;
+        let state = self.0.lock().map_err(|_| "persistence_failure")?;
         if state.status != DatabaseStatus::Ready || state.writes_blocked
             || admission.0 != self.1.load(Ordering::SeqCst) {
             return Err("database_unavailable".into());
         }
-        operation(state.connection.as_mut().ok_or("database_unavailable")?)
+        operation(&state)
+    }
+
+    pub(crate) fn confirm_physical_count(
+        &self,
+        access: &application::catalog::access::CatalogAccessSession,
+        request: commands::inventory::PhysicalCountRequest,
+    ) -> Result<commands::inventory::InventoryCommandResponse, String> {
+        let admission = self.admit_write()?;
+        self.with_admitted_write_state(admission, |state| {
+            #[cfg(feature = "production-encryption")]
+            if let Some(storage) = state.encrypted_storage.as_ref() {
+                use application::{catalog::access::CatalogAccessError, storage::StorageError};
+                let connection = storage.connection().map_err(|_| "database_unavailable")?;
+                return commands::inventory::confirm_physical_count_with_verifier(connection, request, |password| {
+                    storage.verify_password(password).map_err(|error| match error {
+                        StorageError::Authentication | StorageError::InvalidSecret => CatalogAccessError::Unauthorized,
+                        _ => CatalogAccessError::Storage,
+                    })
+                });
+            }
+            commands::inventory::confirm_physical_count_command(
+                state.connection.as_ref().ok_or("database_unavailable")?, access, request,
+            )
+        })
+    }
+
+    /// The legacy single-file protocol cannot preserve an encrypted envelope pair.
+    pub(crate) fn supports_legacy_backup(&self) -> bool {
+        #[cfg(feature = "production-encryption")]
+        { return self.0.lock().is_ok_and(|state| state.encrypted_storage.is_none()); }
+        #[cfg(not(feature = "production-encryption"))]
+        { true }
     }
 
     pub fn install_validated_stage(
@@ -266,6 +403,9 @@ impl DatabaseState {
         defer_admission: bool,
         clear_restore_state: impl FnOnce() -> Result<(), ()>,
     ) -> RestoreInstallOutcome {
+        if !self.supports_legacy_backup() {
+            return RestoreInstallOutcome::Unchanged("storage_unavailable");
+        }
         let Ok(mut state) = self.0.lock() else {
             return RestoreInstallOutcome::Unknown("database_unavailable");
         };
@@ -614,6 +754,60 @@ fn is_valid_database(path: &std::path::Path) -> bool {
         .is_ok_and(|connection| validate_restored_database(connection).is_ok())
 }
 
+#[cfg(all(test, feature = "production-encryption"))]
+mod encrypted_storage_integration_tests {
+    use super::*;
+
+    #[test]
+    fn encrypted_storage_integration_fresh_owned_startup_denies_business_until_confirmation() {
+        let root = tempfile::tempdir().unwrap();
+        let state = DatabaseState::open_owned_application(root.path()).unwrap();
+        assert_eq!(state.with_read(|db| commands::catalog::search_products(
+            db, commands::catalog::SearchProductsRequest { query: String::new() },
+        )), Err("database_unavailable".into()));
+        assert!(matches!(state.admit_write(), Err(error) if error == "database_unavailable"));
+        assert!(!root.path().join(identity::DATABASE_FILENAME).exists(),
+            "startup must not create an unkeyed database before recovery confirmation");
+        drop(state);
+        root.close().unwrap();
+    }
+
+    #[test]
+    fn encrypted_storage_integration_preserves_fixture_openers_and_owned_exclusion() {
+        use infrastructure::filesystem::storage_ownership::{OwnershipError, StorageOwnership};
+        let root = tempfile::tempdir().unwrap();
+        let state = DatabaseState::open_owned_application(root.path()).unwrap();
+        assert!(matches!(StorageOwnership::acquire(root.path()), Err(OwnershipError::InUse)));
+        assert!(matches!(DatabaseState::open_owned_application(root.path()), Err(OwnershipError::InUse)));
+        assert!(state.with_write(|_| Ok(())).is_err());
+        drop(state);
+        drop(StorageOwnership::acquire(root.path()).unwrap());
+        root.close().unwrap();
+
+        let fixture = tempfile::tempdir().unwrap();
+        let config = infrastructure::sqlite::production_database_config(fixture.path());
+        let plain = DatabaseState::open(config).unwrap();
+        assert!(plain.with_read(|db| commands::catalog::search_products(
+            db, commands::catalog::SearchProductsRequest { query: String::new() },
+        )).is_ok());
+        assert!(plain.with_write(|_| Ok(())).is_ok());
+        drop(plain);
+        fixture.close().unwrap();
+    }
+
+    #[test]
+    fn encrypted_storage_integration_missing_root_is_not_created_by_production_startup() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("absent-app-data");
+        let result = DatabaseState::open_owned_application(&root);
+        let refused = result.is_err();
+        drop(result);
+        assert!(refused, "encrypted startup requires an already established root");
+        assert!(!root.exists(), "startup must not create a new ancestor namespace");
+        parent.close().unwrap();
+    }
+}
+
 #[cfg(test)]
 mod database_state_tests {
     use std::{cell::Cell, fs};
@@ -665,6 +859,7 @@ mod database_state_tests {
         root.close().unwrap();
     }
 
+    #[cfg(not(feature = "production-encryption"))]
     #[test]
     fn owned_startup_rejects_competitor_before_creating_database() {
         use infrastructure::filesystem::storage_ownership::{OwnershipError, StorageOwnership};
@@ -1697,6 +1892,10 @@ pub(crate) fn catalog_authorization_failure(license: &commands::license::License
 #[cfg(feature = "desktop")]
 fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
+        storage_status_command,
+        storage_begin_setup_command,
+        storage_confirm_recovery_command,
+        storage_unlock_command,
         catalog_access_status_command,
         catalog_access_begin_setup_command,
         catalog_access_finish_setup_command,
@@ -1774,7 +1973,7 @@ pub fn run() -> Result<(), tauri::Error> {
             // Ownership precedes database recovery and Catalog/session initialization.
             let state = DatabaseState::open_owned_application(&app_data_directory)?;
             app.manage(state);
-            app.manage(application::catalog::access::CatalogAccessSession::open(
+            app.manage(application::catalog::access::CatalogAccessSession::open_for_application(
                 infrastructure::filesystem::catalog_access::CatalogAccessStore::new(&app_data_directory),
             ));
             app.manage(commands::license::LicenseCommandState::new(
@@ -1789,6 +1988,30 @@ pub fn run() -> Result<(), tauri::Error> {
             Ok(())
         })
         .run(tauri::generate_context!())
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn storage_status_command(state: tauri::State<'_, AppState>) -> commands::storage::StorageResponse {
+    commands::storage::status(&state)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn storage_begin_setup_command(state: tauri::State<'_, AppState>, request: commands::storage::PasswordRequest) -> commands::storage::StorageResponse {
+    commands::storage::begin_setup(&state, request)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn storage_confirm_recovery_command(state: tauri::State<'_, AppState>, request: commands::storage::ConfirmationRequest) -> commands::storage::StorageResponse {
+    commands::storage::confirm_recovery(&state, request)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn storage_unlock_command(state: tauri::State<'_, AppState>, request: commands::storage::PasswordRequest) -> commands::storage::StorageResponse {
+    commands::storage::unlock(&state, request)
 }
 
 #[cfg(feature = "desktop")]
@@ -1841,6 +2064,11 @@ fn import_license_command(state: tauri::State<'_, commands::license::LicenseComm
 async fn choose_backup_destination_command<R: Runtime>(
     window: tauri::WebviewWindow<R>,
 ) -> Result<commands::backup::BackupDestinationSelection, String> {
+    if !window.state::<AppState>().supports_legacy_backup() {
+        return Ok(commands::backup::BackupDestinationSelection::Error {
+            code: "storage_unavailable", message: "Backup storage is unavailable.",
+        });
+    }
     let app_handle = window.app_handle().clone();
     drop(window);
     let picker_app_handle = app_handle.clone();
@@ -1893,6 +2121,11 @@ async fn choose_backup_destination_command<R: Runtime>(
 async fn choose_restore_source_command<R: Runtime>(
     window: tauri::WebviewWindow<R>,
 ) -> Result<commands::backup::RestoreSourceSelection, String> {
+    if !window.state::<AppState>().supports_legacy_backup() {
+        return Ok(commands::backup::RestoreSourceSelection::Error {
+            code: "storage_unavailable", message: "Backup storage is unavailable.",
+        });
+    }
     let app_handle = window.app_handle().clone();
     drop(window);
     let picker_app_handle = app_handle.clone();
@@ -1955,9 +2188,9 @@ fn catalog_access_finish_setup_command(access: tauri::State<'_, application::cat
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn catalog_access_unlock_command(access: tauri::State<'_, application::catalog::access::CatalogAccessSession>, license: tauri::State<'_, commands::license::LicenseCommandState>, request: commands::catalog::CatalogSecretRequest) -> commands::catalog::CatalogAccessResponse {
+fn catalog_access_unlock_command(state: tauri::State<'_, AppState>, access: tauri::State<'_, application::catalog::access::CatalogAccessSession>, license: tauri::State<'_, commands::license::LicenseCommandState>, request: commands::catalog::CatalogSecretRequest) -> commands::catalog::CatalogAccessResponse {
     if license.authorize_business_operation().is_err() { return catalog_access_license_error(); }
-    commands::catalog::unlock_catalog(&access, request)
+    commands::catalog::unlock_catalog_for_application(&state, &access, request)
 }
 
 #[cfg(feature = "desktop")]
@@ -2117,6 +2350,7 @@ fn create_backup_command(
     commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
     request: commands::backup::CreateBackupRequest,
 ) -> commands::backup::BackupResponse {
+    if !state.supports_legacy_backup() { return commands::backup::BackupResponse::error("storage_unavailable"); }
     report_create_backup_entry();
     let response = match commands.lock() {
         Ok(mut commands) => commands::backup::create_backup(&state, &mut commands, request),
@@ -2134,6 +2368,7 @@ fn prepare_restore_command(
     commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
     request: commands::backup::PrepareRestoreRequest,
 ) -> commands::backup::BackupResponse {
+    if !state.supports_legacy_backup() { return commands::backup::BackupResponse::error("storage_unavailable"); }
     if license.authorize_business_operation().is_err() { return commands::backup::BackupResponse::error("license_required"); }
     let Ok(mut commands) = commands.lock() else {
         return commands::backup::BackupResponse::error("storage_unavailable");
@@ -2149,6 +2384,7 @@ fn confirm_restore_command(
     commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
     request: commands::backup::ConfirmRestoreRequest,
 ) -> commands::backup::BackupResponse {
+    if !state.supports_legacy_backup() { return commands::backup::BackupResponse::error("storage_unavailable"); }
     if license.authorize_business_operation().is_err() { return commands::backup::BackupResponse::confirm_rejected(&state, "license_required"); }
     let Ok(mut commands) = commands.lock() else {
         return commands::backup::BackupResponse::confirm_rejected(&state, "storage_unavailable");
@@ -2345,9 +2581,7 @@ fn confirm_physical_count_command(
     request: commands::inventory::PhysicalCountRequest,
 ) -> Result<commands::inventory::InventoryCommandResponse, String> {
     if license.authorize_business_operation().is_err() { return Ok(commands::inventory::InventoryCommandResponse::Error(commands::confirm_sale::CommandError { code: "license_required", message: "A valid license is required to change inventory." })); }
-    state.with_write(|connection| {
-        commands::inventory::confirm_physical_count_command(connection, &access, request)
-    })
+    commands::inventory::confirm_physical_count_for_application(&state, &access, request)
 }
 
 #[cfg(feature = "desktop")]

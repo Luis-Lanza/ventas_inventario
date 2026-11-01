@@ -4,3 +4,5 @@ pub mod inventory;
 pub mod license;
 pub mod reporting;
 pub mod sales;
+#[cfg(feature = "production-encryption")]
+pub(crate) mod storage;

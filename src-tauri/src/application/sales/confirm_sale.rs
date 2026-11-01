@@ -42,7 +42,7 @@ pub struct PersistedSaleSummary {
 }
 
 pub fn confirm_sale(
-    connection: &mut Connection,
+    connection: &Connection,
     request: ConfirmSaleRequest,
 ) -> Result<PersistedSaleSummary, String> {
     in_transaction(connection, |transaction| {
@@ -87,10 +87,10 @@ pub fn confirm_sale(
 }
 
 fn in_transaction<T>(
-    connection: &mut Connection,
+    connection: &Connection,
     operation: impl FnOnce(&Transaction) -> Result<T, String>,
 ) -> Result<T, String> {
-    let transaction = connection.transaction().map_err(database_error)?;
+    let transaction = Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Deferred).map_err(database_error)?;
     match operation(&transaction) {
         Ok(result) => transaction.commit().map(|_| result).map_err(database_error),
         Err(error) => transaction

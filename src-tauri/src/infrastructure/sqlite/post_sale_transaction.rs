@@ -3,11 +3,11 @@ use rusqlite::{Connection, DropBehavior, Transaction, TransactionBehavior};
 use crate::application::sales::{PostSaleError, PostSaleTransaction, PostSaleTransactionFactory};
 
 pub struct SqlitePostSaleTransactionFactory<'connection> {
-    connection: &'connection mut Connection,
+    connection: &'connection Connection,
 }
 
 impl<'connection> SqlitePostSaleTransactionFactory<'connection> {
-    pub fn new(connection: &'connection mut Connection) -> Self {
+    pub fn new(connection: &'connection Connection) -> Self {
         Self { connection }
     }
 }
@@ -45,8 +45,7 @@ impl PostSaleTransactionFactory for SqlitePostSaleTransactionFactory<'_> {
         Self: 'transaction;
 
     fn begin_immediate(&mut self) -> Result<Self::Transaction<'_>, PostSaleError> {
-        self.connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
+        Transaction::new_unchecked(self.connection, TransactionBehavior::Immediate)
             .map(|transaction| SqlitePostSaleTransaction { transaction })
             .map_err(|_| PostSaleError::PersistenceFailure)
     }
