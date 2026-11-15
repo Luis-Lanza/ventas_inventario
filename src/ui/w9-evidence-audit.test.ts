@@ -1478,12 +1478,79 @@ const preExistingUnrelatedOddTaskBaseline = new Set([
 // these records carries a W9 byte pin or an owned-profile evidence claim, so they may
 // change without a profile candidate; every other protected path still needs one.
 const oddDocsLifecycleAllowlist = new Set([
-  "odd/tasks/release-v1.2.0.md",
-  "odd/tasks/release-v1.2.2.md",
+  "odd/tasks/inherited/release-v1.2.0.md",
+  "odd/tasks/inherited/release-v1.2.2.md",
   "openspec/changes/detect-sale-idempotency-conflicts/proposal.md",
   "openspec/changes/detect-sale-idempotency-conflicts/specs/sales/spec.md",
   "openspec/changes/archive/2026-11-14-detect-sale-idempotency-conflicts/proposal.md",
   "openspec/changes/archive/2026-11-14-detect-sale-idempotency-conflicts/specs/sales/spec.md",
+  "odd/tasks/inherited/action-notifications.md",
+  "odd/tasks/inherited/adaptive-desktop-workspace.md",
+  "odd/tasks/inherited/bootstrap-demo-catalog.md",
+  "odd/tasks/inherited/bounded-confirmed-sale-receipt.md",
+  "odd/tasks/inherited/browsable-catalog-and-stock-alerts.md",
+  "odd/tasks/inherited/catalog-edit-modal-and-lifecycle.md",
+  "odd/tasks/inherited/catalog-mockup-reference.md",
+  "odd/tasks/inherited/catalog-redesign-handoff.md",
+  "odd/tasks/inherited/catalog-redesign-implementation.md",
+  "odd/tasks/inherited/catalog-search-request-sequence.md",
+  "odd/tasks/inherited/category-field-management.md",
+  "odd/tasks/inherited/compact-sales-checkout-dialog.md",
+  "odd/tasks/inherited/dashboard-mockup-reference.md",
+  "odd/tasks/inherited/dashboard-redesign-handoff.md",
+  "odd/tasks/inherited/dashboard-redesign.md",
+  "odd/tasks/inherited/dense-sales-checkout-rows.md",
+  "odd/tasks/inherited/dual-release-master-catalog-profit.md",
+  "odd/tasks/inherited/global-product-pricing.md",
+  "odd/tasks/inherited/history-correction-modals.md",
+  "odd/tasks/inherited/history-density-regression-correction.md",
+  "odd/tasks/inherited/history-list-and-detail-density.md",
+  "odd/tasks/inherited/history-receipt-style-detail.md",
+  "odd/tasks/inherited/independent-product-pane-scrolling.md",
+  "odd/tasks/inherited/inventory-defaults-prices-physical-count.md",
+  "odd/tasks/inherited/inventory-idempotency-conflicts.md",
+  "odd/tasks/inherited/inventory-prototype-capture-repair.md",
+  "odd/tasks/inherited/inventory-redesign-handoff.md",
+  "odd/tasks/inherited/offline-perpetual-license.md",
+  "odd/tasks/inherited/product-browser-initial-load-and-catalog-layout.md",
+  "odd/tasks/inherited/release-deployment-skill.md",
+  "odd/tasks/inherited/release-v1.1.1-installer-version.md",
+  "odd/tasks/inherited/release-v1.2.1.md",
+  "odd/tasks/inherited/release-v1.2.3.md",
+  "odd/tasks/inherited/release-v1.3.0.md",
+  "odd/tasks/inherited/release-v1.3.1.md",
+  "odd/tasks/inherited/release-v1.4.0.md",
+  "odd/tasks/inherited/remove-production-demo-catalog.md",
+  "odd/tasks/inherited/rename-metrics-presentation.md",
+  "odd/tasks/inherited/repeated-product-names.md",
+  "odd/tasks/inherited/request-identity-lifecycle.md",
+  "odd/tasks/inherited/sale-idempotency-conflicts.md",
+  "odd/tasks/inherited/sales-checkout-redesign.md",
+  "odd/tasks/inherited/sales-confirmed-mockup-reference.md",
+  "odd/tasks/inherited/sales-confirmed-receipt.md",
+  "odd/tasks/inherited/sales-dashboard-v1.md",
+  "odd/tasks/inherited/sales-full-image-zoom.md",
+  "odd/tasks/inherited/sales-mockup-reference.md",
+  "odd/tasks/inherited/sales-product-browser-parity.md",
+  "odd/tasks/inherited/sales-product-location-regression.md",
+  "odd/tasks/inherited/sales-purchase-price.md",
+  "odd/tasks/inherited/sales-ui-redesign.md",
+  "odd/tasks/inherited/spanish-pdf-reports.md",
+  "odd/tasks/inherited/sparse-content-vertical-density.md",
+  "odd/tasks/inherited/unificar-reportes-ganancia.md",
+  "odd/tasks/inherited/w9-evidence-policy-baseline.md",
+  "odd/tasks/inherited/wide-two-column-sales-checkout.md",
+  "odd/tasks/inherited/windows-executable-logo.md",
+  "odd/tasks/inherited/README.md",
+  "openspec/changes/detect-inventory-idempotency-conflicts/specs/operational-inventory-control/spec.md",
+]);
+
+// Files that legitimately travel with a documentation-lifecycle change but belong to
+// no owned evidence profile: the audit itself and the seam test that pins a documented
+// error code. Neither carries a W9 byte pin.
+const oddDocsLifecycleCompanionPaths = new Set([
+  "src/ui/w9-evidence-audit.test.ts",
+  "src-tauri/tests/inventory_commands.rs",
 ]);
 
 function excludePreExistingUnrelatedOddTaskBaseline(changedPaths: string[]): string[] {
@@ -1640,6 +1707,7 @@ function assertW9ProtectedDiffPolicy(
     "odd/tasks/dashboard-partial-gross-profit.md",
     "odd/tasks/configurable-low-stock-threshold.md",
     "odd/tasks/catalog-listing-parity.md",
+    "src-tauri/tests/inventory_commands.rs",
     ...oddDocsLifecycleAllowlist,
   ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
@@ -2041,7 +2109,7 @@ test("W9 binds the exact R3 gross-profit operations paths, diff, and task bytes"
   if (
     selection.status === "REJECTED" &&
     changedPaths.every(
-      (path) => oddDocsLifecycleAllowlist.has(path) || path === "src/ui/w9-evidence-audit.test.ts",
+      (path) => oddDocsLifecycleAllowlist.has(path) || oddDocsLifecycleCompanionPaths.has(path),
     )
   ) {
     t.skip("REJECTED: docs-lifecycle allowance and the policy file only; no owned-profile candidate");
@@ -2077,7 +2145,7 @@ test("W9 binds the exact Catalog access candidate diff and untracked task bytes"
   if (
     selection.status === "REJECTED" &&
     changedPaths.every(
-      (path) => oddDocsLifecycleAllowlist.has(path) || path === "src/ui/w9-evidence-audit.test.ts",
+      (path) => oddDocsLifecycleAllowlist.has(path) || oddDocsLifecycleCompanionPaths.has(path),
     )
   ) {
     t.skip("REJECTED: docs-lifecycle allowance and the policy file only; no owned-profile candidate");
