@@ -165,3 +165,63 @@ fn inventory_commands_preserve_persisted_results_and_only_expose_stable_errors()
         vec![1, 2]
     );
 }
+
+#[test]
+fn corrupted_stock_entry_identity_surfaces_persistence_failure_at_the_command_seam() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let request_id = "550e8400-e29b-41d4-a716-446655440260";
+    let InventoryCommandResponse::Success(_) =
+        confirm_stock_entry_command(&mut connection, entry(request_id)).unwrap()
+    else {
+        panic!("expected a successful stock entry")
+    };
+
+    // Simulate a legacy or damaged row: the immutability trigger is dropped only
+    // inside this fixture so the persisted identity can disagree with its payload,
+    // which is exactly the state the fail-closed read path exists for.
+    connection
+        .execute_batch("DROP TRIGGER inventory_movements_immutable_update;")
+        .unwrap();
+    let corrupted = connection
+        .execute(
+            "UPDATE inventory_movements SET payload_sha256 = 'broken' WHERE request_id = ?1",
+            [request_id],
+        )
+        .unwrap();
+    assert_eq!(corrupted, 1);
+    let before = (
+        connection
+            .query_row("SELECT quantity FROM stock_balances WHERE product_id = 1", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        connection
+            .query_row("SELECT COUNT(*) FROM inventory_movements", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+    );
+
+    let InventoryCommandResponse::Error(error) =
+        confirm_stock_entry_command(&mut connection, entry(request_id)).unwrap()
+    else {
+        panic!("expected a persistence failure")
+    };
+
+    assert_eq!(
+        (error.code, error.message),
+        (
+            "persistence_failure",
+            "The inventory operation could not be completed."
+        )
+    );
+    let after = (
+        connection
+            .query_row("SELECT quantity FROM stock_balances WHERE product_id = 1", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        connection
+            .query_row("SELECT COUNT(*) FROM inventory_movements", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+    );
+    assert_eq!(after, before, "a corrupted identity must not change stock or add a movement");
+}

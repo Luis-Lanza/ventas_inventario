@@ -25,17 +25,18 @@ Only request-bearing `stock_entry` and `adjustment` operations MUST require a re
 - THEN this change does not require inventory idempotency identity fields for that movement
 - AND its existing movement contract remains unchanged
 
-### Requirement: Version 1 Inventory Canonical Identity
+### Requirement: Versioned Inventory Canonical Identity
 
-Each newly persisted request-bearing inventory operation MUST persist operation kind, payload version `1`, the canonical payload, and a matching lowercase hexadecimal SHA-256 digest. Version 1 MUST be a Rust-owned deterministic UTF-8 length-delimited encoding with this fixed field order: `inventory/v1` marker, operation kind, product ID, requested quantity or count, and operation-specific data. A stock entry MUST encode the exact optional-note state (`null` or `value` followed by the note); an adjustment MUST encode its domain-normalized nonblank reason. The request ID, prior balance, resulting balance, calculated delta, timestamp, source reference, and other persisted effects MUST be excluded from the identity.
+Each newly persisted request-bearing inventory operation MUST persist operation kind, its payload version, the canonical payload, and a matching lowercase hexadecimal SHA-256 digest. Identities are versioned because price inputs are part of what makes two requests different: a stock entry persists version `3`, a Rust-owned deterministic UTF-8 length-delimited encoding with this fixed field order: `inventory/v3` marker, operation kind, product ID, requested quantity, the exact optional purchase, sale and minimum price state (`null` or `value` followed by the amount), and the exact optional-note state (`null` or `value` followed by the note). Legacy version `2` identities (marker `inventory/v2`, required purchase price) and version `1` stock-entry identities (marker `inventory/v1`) MUST remain valid on read and MUST NOT be rewritten or upgraded. A physical count persists version `1` with marker `inventory/v1`, operation kind, product ID, requested count and its domain-normalized nonblank reason. The request ID, prior balance, resulting balance, calculated delta, timestamp, source reference, and other persisted effects MUST be excluded from the identity.
 
 #### Scenario: Persist a stable stock-entry identity
 
-- GIVEN a valid stock entry with a product, positive whole-unit quantity, and optional note
+- GIVEN a valid stock entry with a product, positive whole-unit quantity, optional prices and optional note
 - WHEN its identity is built
-- THEN the payload uses the version-1 fixed field order and length-delimited UTF-8 encoding
+- THEN the payload uses the version-3 fixed field order and length-delimited UTF-8 encoding
 - AND the digest is SHA-256 of that payload rendered in lowercase hexadecimal
 - AND changing only the request ID does not change the identity
+- AND two entries that differ only in purchase, sale or minimum price have different identities
 
 #### Scenario: Persist a stable adjustment identity
 
