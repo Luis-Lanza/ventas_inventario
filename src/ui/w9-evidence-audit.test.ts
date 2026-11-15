@@ -1542,7 +1542,8 @@ const oddDocsLifecycleAllowlist = new Set([
   "odd/tasks/inherited/wide-two-column-sales-checkout.md",
   "odd/tasks/inherited/windows-executable-logo.md",
   "odd/tasks/inherited/README.md",
-  "openspec/changes/detect-inventory-idempotency-conflicts/specs/operational-inventory-control/spec.md",
+  "openspec/changes/archive/2026-11-14-detect-inventory-idempotency-conflicts/proposal.md",
+  "openspec/changes/archive/2026-11-14-detect-inventory-idempotency-conflicts/specs/operational-inventory-control/spec.md",
 ]);
 
 // Files that legitimately travel with a documentation-lifecycle change but belong to
