@@ -40,10 +40,16 @@ function assertTicket14PackageAllowlist(
   delete baselineRoot.devDependencies["@types/jsdom"];
   assert.deepEqual(currentRoot, baselineRoot, "unexpected package-lock root drift");
 
+  // Non-breaking security refreshes of transitive development dependencies:
+  // source-map-js 1.2.1 -> 1.2.2 (event-loop DoS) and undici 8.10.1 -> 8.12.4
+  // (WebSocket/EventSource DoS and TLS validation advisories). Neither ships in the
+  // installed application; both are pulled in by the jsdom/postcss test and build chain.
   const allowedLockEntries = new Set([
     "node_modules/@types/jsdom",
     "node_modules/@types/jsdom/node_modules/undici-types",
     "node_modules/@types/tough-cookie",
+    "node_modules/source-map-js",
+    "node_modules/undici",
   ]);
   const packageKeys = new Set([...Object.keys(currentLock.packages), ...Object.keys(baselineLock.packages)]);
   for (const key of packageKeys) {
@@ -1546,12 +1552,15 @@ const oddDocsLifecycleAllowlist = new Set([
   "openspec/changes/archive/2026-11-14-detect-inventory-idempotency-conflicts/specs/operational-inventory-control/spec.md",
 ]);
 
-// Files that legitimately travel with a documentation-lifecycle change but belong to
-// no owned evidence profile: the audit itself and the seam test that pins a documented
-// error code. Neither carries a W9 byte pin.
+// Files that legitimately accompany a maintenance change carrying no owned evidence
+// profile: the audit itself, the seam test that pins a documented error code, the
+// top-level README, and the dependency lockfile. None of them carries a W9 byte pin,
+// and every one of them still has to pass the protected-path allowlist above.
 const oddDocsLifecycleCompanionPaths = new Set([
   "src/ui/w9-evidence-audit.test.ts",
   "src-tauri/tests/inventory_commands.rs",
+  "README.md",
+  "package-lock.json",
 ]);
 
 function excludePreExistingUnrelatedOddTaskBaseline(changedPaths: string[]): string[] {
@@ -1569,6 +1578,7 @@ function assertW9ProtectedDiffPolicy(
   capabilityDiff = "",
 ) {
   const allowedPaths = new Set([
+    "README.md",
     "package.json",
     "package-lock.json",
     "src-tauri/src/lib.rs",
