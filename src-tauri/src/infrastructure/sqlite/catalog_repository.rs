@@ -772,7 +772,7 @@ fn is_complete_demo_state(transaction: &Transaction<'_>, plan: &BootstrapDemoPla
         (
             2,
             2,
-            fts_content("BUJ-001", "Bujia archivada", "Bujias", None, false),
+            fts_content("BUJ-001", "Bujia archivada", "Bujias", None, true),
         ),
     ];
     expected_fts.extend(plan.products.iter().enumerate().map(|(index, product)| {
